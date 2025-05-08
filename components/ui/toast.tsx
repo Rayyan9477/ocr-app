@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useEffect } from "react"
-import { X, AlertCircle, CheckCircle, Info } from "lucide-react"
+import { X, AlertCircle, CheckCircle, Info, AlertTriangle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export type ToastActionElement = React.ReactNode
@@ -13,7 +13,7 @@ export interface ToastProps {
   title?: React.ReactNode
   description?: React.ReactNode
   action?: ToastActionElement
-  variant?: "default" | "destructive" | "success"
+  variant?: "default" | "destructive" | "success" | "warning"
 }
 
 export function Toasts() {
@@ -45,6 +45,9 @@ export function Toasts() {
         } else if (toast.variant === "success") {
           bgColor = "bg-white border-green-200"
           icon = <CheckCircle className="h-5 w-5 text-green-500" />
+        } else if (toast.variant === "warning") {
+          bgColor = "bg-white border-yellow-200"
+          icon = <AlertTriangle className="h-5 w-5 text-yellow-500" />
         }
 
         return (

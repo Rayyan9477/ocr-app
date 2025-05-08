@@ -22,33 +22,47 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install OCRmyPDF and its dependencies
 RUN apt-get update && apt-get install -y \
-    python3-pip \
-    python3-venv \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    tesseract-ocr-fra \
-    tesseract-ocr-deu \
-    tesseract-ocr-spa \
-    tesseract-ocr-ita \
-    tesseract-ocr-rus \
-    tesseract-ocr-chi-sim \
-    tesseract-ocr-jpn \
-    ghostscript \
-    unpaper \
-    pngquant \
-    qpdf \
-    liblept5 \
-    libffi-dev \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
+    python3-pip=20.0.2-5ubuntu1.11 \
+    python3-venv=3.8.2-0ubuntu2 \
+    tesseract-ocr=4.1.1-2build2 \
+    tesseract-ocr-eng=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-fra=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-deu=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-spa=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-ita=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-rus=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-chi-sim=1:4.00~git30-7274cfa-1 \
+    tesseract-ocr-jpn=1:4.00~git30-7274cfa-1 \
+    # Build the latest Ghostscript from source instead of using the package
+    build-essential \
+    wget \
+    unpaper=6.1-2build1 \
+    pngquant=2.12.6-1 \
+    qpdf=10.1.0-1 \
+    liblept5=1.79.0-1 \
+    libffi-dev=3.3-4 \
+    libsm6=2:1.2.3-1 \
+    libxext6=2:1.3.4-0ubuntu1 \
+    libxrender-dev=1:0.9.10-1 \
+    jbig2enc=0.29-1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Download, compile and install the latest Ghostscript version
+RUN cd /tmp && \
+    wget https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10020/ghostscript-10.02.0.tar.gz && \
+    tar -xzf ghostscript-10.02.0.tar.gz && \
+    cd ghostscript-10.02.0 && \
+    ./configure && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf ghostscript-10.02.0*
 
 # Create a virtual environment and install OCRmyPDF
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip==25.1.1 && \
     pip install --no-cache-dir ocrmypdf==15.4.3
 
 # Final image combining frontend and OCR
@@ -63,12 +77,14 @@ COPY --from=ocr /usr/bin/gs /usr/bin/
 COPY --from=ocr /usr/bin/unpaper /usr/bin/
 COPY --from=ocr /usr/bin/pngquant /usr/bin/
 COPY --from=ocr /usr/bin/qpdf /usr/bin/
+COPY --from=ocr /usr/bin/jbig2enc /usr/bin/
+RUN ln -sf /usr/bin/jbig2enc /usr/bin/jbig2
 
 # Install Node.js
 RUN apt-get update && apt-get install -y \
-    curl \
+    curl=7.81.0-1ubuntu1.15 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y nodejs=20.11.1-1nodesource1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

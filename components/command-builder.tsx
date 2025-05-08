@@ -11,9 +11,13 @@ interface CommandBuilderProps {
     deskew: boolean
     skipText: boolean
     force: boolean
+    redoOcr: boolean
+    removeBackground: boolean
+    clean: boolean
     optimize: number
     outputFormat: string
     rotate: string
+    pdfRenderer: string
   }
   onChange: (options: any) => void
 }
@@ -101,6 +105,44 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
           </Label>
           <Switch id="force" checked={options.force} onCheckedChange={(checked) => handleChange("force", checked)} />
         </div>
+        
+        <div className="flex items-center justify-between">
+          <Label htmlFor="redoOcr" className="cursor-pointer">
+            Redo OCR (Remove existing OCR)
+          </Label>
+          <Switch id="redoOcr" checked={options.redoOcr} onCheckedChange={(checked) => handleChange("redoOcr", checked)} />
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <Label htmlFor="removeBackground" className="cursor-pointer">
+            Remove Background
+          </Label>
+          <Switch id="removeBackground" checked={options.removeBackground} onCheckedChange={(checked) => handleChange("removeBackground", checked)} />
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <Label htmlFor="clean" className="cursor-pointer">
+            Clean Pages
+          </Label>
+          <Switch id="clean" checked={options.clean} onCheckedChange={(checked) => handleChange("clean", checked)} />
+        </div>
+      </div>
+      
+      <div className="space-y-2">
+        <Label htmlFor="pdfRenderer">PDF Renderer</Label>
+        <Select value={options.pdfRenderer} onValueChange={(value) => handleChange("pdfRenderer", value)}>
+          <SelectTrigger id="pdfRenderer">
+            <SelectValue placeholder="Select PDF renderer" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="auto">Auto (Default)</SelectItem>
+            <SelectItem value="hocr">HOCR</SelectItem>
+            <SelectItem value="sandwich">Sandwich</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground mt-1">
+          Different renderers may produce better results for different documents
+        </p>
       </div>
     </div>
   )

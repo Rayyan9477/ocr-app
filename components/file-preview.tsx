@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -13,13 +13,17 @@ export function FilePreview({ originalFile, processedFilePath }: FilePreviewProp
   const [originalUrl, setOriginalUrl] = useState<string | null>(null)
 
   // Create object URL for the original file when it changes
-  useState(() => {
-    if (originalFile) {
-      const url = URL.createObjectURL(originalFile)
-      setOriginalUrl(url)
-      return () => URL.revokeObjectURL(url)
+  useEffect(() => {
+    if (!originalFile) {
+      setOriginalUrl(null)
+      return
     }
-  })
+    const url = URL.createObjectURL(originalFile)
+    setOriginalUrl(url)
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [originalFile])
 
   if (!originalFile && !processedFilePath) {
     return null

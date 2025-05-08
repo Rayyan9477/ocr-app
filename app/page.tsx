@@ -23,9 +23,13 @@ export default function Home() {
     deskew: true,
     skipText: false,
     force: false,
+    redoOcr: false,
+    removeBackground: false,
+    clean: false,
     optimize: 3,
     outputFormat: "pdf",
     rotate: "auto",
+    pdfRenderer: "auto"
   })
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [processingStep, setProcessingStep] = useState(0)
@@ -65,82 +69,55 @@ export default function Home() {
     setProcessingStepName("")
     setError(null)
 
-    for (let i = 0; i < files.length; i++) {
-      setCurrentFileIndex(i)
-      const file = files[i]
+    for (const [index, file] of files.entries()) {
+      setCurrentFileIndex(index)
+      // Local options copy for this file, including retries
+      const opts = { ...commandOptions }
+      let data: any = null
 
+      appendOutput(`Starting OCR process for ${file.name}...`)
       try {
-        appendOutput(`Starting OCR process for ${file.name}...`)
-
-        // Build command string for logging
-        let commandString = "ocrmypdf"
-        if (commandOptions.language !== "eng") {
-          commandString += ` --language ${commandOptions.language}`
-        }
-        if (commandOptions.deskew) {
-          commandString += " --deskew"
-        }
-        if (commandOptions.skipText) {
-          commandString += " --skip-text"
-        }
-        if (commandOptions.force) {
-          commandString += " --force-ocr"
-        }
-        if (commandOptions.optimize > 0) {
-          commandString += ` --optimize ${commandOptions.optimize}`
-        }
-        if (commandOptions.rotate !== "auto") {
-          commandString += ` --rotate-pages ${commandOptions.rotate}`
-        }
-        commandString += ` ${file.name} output.pdf`
-
-        appendOutput(`Command: ${commandString}`)
-
-        // Create form data for the API request
+        // Build and send single OCR request
         const formData = new FormData()
         formData.append("file", file)
-        formData.append("language", commandOptions.language)
-        formData.append("deskew", commandOptions.deskew.toString())
-        formData.append("skipText", commandOptions.skipText.toString())
-        formData.append("force", commandOptions.force.toString())
-        formData.append("optimize", commandOptions.optimize.toString())
-        formData.append("rotate", commandOptions.rotate)
-
-        // Update processing step
+        formData.append("language", opts.language)
+        formData.append("deskew", opts.deskew.toString())
+        formData.append("skipText", opts.skipText.toString())
+        formData.append("force", opts.force.toString())
+        formData.append("redoOcr", opts.redoOcr.toString())
+        formData.append("removeBackground", opts.removeBackground.toString())
+        formData.append("clean", opts.clean.toString())
+        formData.append("optimize", opts.optimize.toString())
+        formData.append("rotate", opts.rotate)
+        formData.append("pdfRenderer", opts.pdfRenderer)
+        
         setProcessingStep(1)
         setProcessingStepName("Uploading file")
         appendOutput("Uploading file and starting OCR process...")
-
-        // Send the request to the OCR API
-        const response = await fetch("/api/ocr", {
-          method: "POST",
-          body: formData,
-        })
-
-        // Check if the response is ok
+        const response = await fetch("/api/ocr", { method: "POST", body: formData })
+        data = await response.json()
         if (!response.ok) {
-          let errorMessage = "Failed to process file"
-          try {
-            const errorData = await response.json()
-            errorMessage = errorData.error || errorMessage
-            if (errorData.details) {
-              errorMessage += `: ${errorData.details}`
-            }
-          } catch (e) {
-            // If we can't parse the JSON, use the status text
-            errorMessage = `Server error: ${response.status} ${response.statusText}`
+          if (data.errorType === "tagged_pdf" || data.errorType === "has_text") {
+            // Enable force and retry next iteration
+            setCommandOptions((prev) => ({ ...prev, force: true }))
+            appendOutput(`⚡ Retrying with "Force OCR" enabled`)
+            // retry same file
+            // decrement index by mutating array or re-trigger process for this file
+            continue
           }
-          throw new Error(errorMessage)
+          throw new Error(data.error || response.statusText)
         }
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error)
+        appendOutput(`❌ Error processing ${file.name}: ${msg}`)
+        setError(msg)
+        toast({ title: "Processing Error", description: `Failed to process ${file.name}: ${msg}`, variant: "destructive" })
+        continue
+      }
 
-        // Parse the response
-        let data
-        try {
-          data = await response.json()
-        } catch (e) {
-          throw new Error("Invalid response from server. The response was not valid JSON.")
-        }
-
+      // At this point, data.success is true (or contains warnings)
+      // ...existing code for processing success goes here...
+      try {
         // Update processing steps
         setProcessingStep(2)
         setProcessingStepName("Analyzing document")

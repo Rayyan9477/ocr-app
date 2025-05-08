@@ -35,6 +35,17 @@ const ensureDirectories = async () => {
       throw new Error("Upload directory is not writable")
     }
 
+    // Also verify processed directory is writable
+    try {
+      const testProc = join(processedDir, "test-write-permission.txt")
+      await writeFile(testProc, "test")
+      await readFile(testProc)
+      console.log("Processed directory is writable")
+    } catch (error) {
+      console.error("Processed directory is not writable:", error)
+      throw new Error("Processed directory is not writable")
+    }
+
     return { uploadDir, processedDir }
   } catch (error) {
     console.error("Error ensuring directories:", error)
@@ -68,10 +79,14 @@ export async function POST(request: NextRequest) {
     const deskew = formData.get("deskew") === "true"
     const skipText = formData.get("skipText") === "true"
     const force = formData.get("force") === "true"
+    const redoOcr = formData.get("redoOcr") === "true"
+    const removeBackground = formData.get("removeBackground") === "true"
+    const clean = formData.get("clean") === "true"
     const optimize = Number.parseInt((formData.get("optimize") as string) || "3")
     const rotate = (formData.get("rotate") as string) || "auto"
+    const pdfRenderer = (formData.get("pdfRenderer") as string) || "auto"
 
-    console.log("OCR options:", { language, deskew, skipText, force, optimize, rotate })
+    console.log("OCR options:", { language, deskew, skipText, force, redoOcr, removeBackground, clean, optimize, rotate, pdfRenderer })
 
     // Create unique filename
     const timestamp = Date.now()
@@ -108,42 +123,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // For demonstration purposes, we'll simulate the OCR process
-    // This ensures the application works without OCRmyPDF installed
-    try {
-      console.log("Simulating OCR process")
-
-      // Create the output file by copying the input file
-      const inputPath = join(uploadDir, inputFilePath)
-      const outputPath = join(processedDir, outputFilePath)
-
-      const inputBuffer = await readFile(inputPath)
-      await writeFile(outputPath, inputBuffer)
-
-      console.log(`Created simulated output file at ${outputPath}`)
-
-      // Verify output file was created
-      const outputStats = await stat(outputPath)
-      console.log(`Output file size: ${outputStats.size} bytes`)
-
-      // Simulate stdout and stderr
-      const stdout = `[00:00:00] INFO    ruffus.cmdline: Task enters queue: ocrmypdf\n[00:00:01] INFO    ocrmypdf.api: Processing: ${inputPath}\n[00:00:02] INFO    ocrmypdf.api: Output file: ${outputPath}\n[00:00:03] INFO    ocrmypdf.api: Completed processing ${inputPath}`
-      const stderr = ""
-
-      return NextResponse.json({
-        success: true,
-        inputFile: inputFilePath,
-        outputFile: outputFilePath,
-        stdout,
-        stderr,
-      })
-    } catch (error) {
-      console.error("Error in OCR simulation:", error)
-      return NextResponse.json({ error: "Failed to process file", details: (error as Error).message }, { status: 500 })
-    }
-
     // In a real deployment with OCRmyPDF installed, use this code instead:
-    /*
     try {
       // Build OCRmyPDF command
       let command = `ocrmypdf`
@@ -163,6 +143,15 @@ export async function POST(request: NextRequest) {
       if (force) {
         command += ` --force-ocr`
       }
+      if (redoOcr) {
+        command += ` --redo-ocr`
+      }
+      if (removeBackground) {
+        command += ` --remove-background`
+      }
+      if (clean) {
+        command += ` --clean`
+      }
       
       if (optimize > 0) {
         command += ` --optimize ${optimize}`
@@ -170,6 +159,9 @@ export async function POST(request: NextRequest) {
       
       if (rotate !== "auto") {
         command += ` --rotate-pages ${rotate}`
+      }
+      if (pdfRenderer !== "auto") {
+        command += ` --pdf-renderer ${pdfRenderer}`
       }
       
       const inputPath = join(uploadDir, inputFilePath)
@@ -188,14 +180,49 @@ export async function POST(request: NextRequest) {
         stdout,
         stderr,
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error executing OCRmyPDF:", error)
+      const stderrOutput = (error as any).stderr || ''
+      // Detect if PDF already has text, retry with skip-text
+      if (stderrOutput.toLowerCase().includes('already contains text')) {
+        console.log('Auto-retrying OCR with --skip-text due to existing text')
+        try {
+          // retry command with skip-text
+          const retryCmd = command + ' --skip-text'
+          console.log(`Retry command: ${retryCmd}`)
+          const { stdout: rstdout, stderr: rstderr } = await execPromise(retryCmd)
+          return NextResponse.json({ success: true, inputFile: inputFilePath, outputFile: outputFilePath, stdout: rstdout, stderr: rstderr })
+        } catch (retryError: any) {
+          console.error('Retry with skip-text failed:', retryError)
+          return NextResponse.json(
+            { success: false, errorType: 'has_text', error: 'PDF already contains text and skip-text retry failed', details: retryError.message },
+            { status: 500 }
+          )
+        }
+      }
+      // Detect tagged PDF error, retry with force-ocr
+      if (/tagged pdf/i.test(stderrOutput)) {
+        console.log('Auto-retrying OCR with --force-ocr due to tagged PDF')
+        try {
+          // retry command with force-ocr
+          const retryCmd = command + ' --force-ocr'
+          console.log(`Retry command: ${retryCmd}`)
+          const { stdout: rstdout, stderr: rstderr } = await execPromise(retryCmd)
+          return NextResponse.json({ success: true, inputFile: inputFilePath, outputFile: outputFilePath, stdout: rstdout, stderr: rstderr })
+        } catch (retryError: any) {
+          console.error('Retry with force-ocr failed:', retryError)
+          return NextResponse.json(
+            { success: false, errorType: 'tagged_pdf', error: 'PDF is a tagged PDF and force-ocr retry failed', details: retryError.message },
+            { status: 500 }
+          )
+        }
+      }
+      // Generic OCR error
       return NextResponse.json(
-        { error: "Failed to execute OCRmyPDF", details: (error as Error).message },
+        { error: 'Failed to execute OCRmyPDF', details: (error as Error).message },
         { status: 500 }
       )
     }
-    */
   } catch (error) {
     console.error("Unhandled error in OCR API route:", error)
     return NextResponse.json({ error: "Internal server error", details: (error as Error).message }, { status: 500 })

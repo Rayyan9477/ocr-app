@@ -9,7 +9,7 @@ import type { ToastActionElement, ToastProps } from "@/components/ui/toast"
 const TOAST_LIMIT = 1
 const TOAST_REMOVE_DELAY = 1000000
 
-type ToastVariant = "default" | "destructive" | "success"
+type ToastVariant = "default" | "destructive" | "success" | "warning"
 
 type ToasterToast = ToastProps & {
   id: string
@@ -17,6 +17,8 @@ type ToasterToast = ToastProps & {
   description?: React.ReactNode
   action?: ToastActionElement
   variant?: ToastVariant
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 const actionTypes = {
