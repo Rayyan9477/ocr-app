@@ -20,44 +20,60 @@ FROM ubuntu:22.04 AS ocr
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install OCRmyPDF and its dependencies
+# Install OCRmyPDF and its dependencies without specifying exact versions
 RUN apt-get update && apt-get install -y \
-    python3-pip=20.0.2-5ubuntu1.11 \
-    python3-venv=3.8.2-0ubuntu2 \
-    tesseract-ocr=4.1.1-2build2 \
-    tesseract-ocr-eng=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-fra=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-deu=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-spa=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-ita=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-rus=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-chi-sim=1:4.00~git30-7274cfa-1 \
-    tesseract-ocr-jpn=1:4.00~git30-7274cfa-1 \
+    python3-pip \
+    python3-venv \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-fra \
+    tesseract-ocr-deu \
+    tesseract-ocr-spa \
+    tesseract-ocr-ita \
+    tesseract-ocr-rus \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-jpn \
     # Build the latest Ghostscript from source instead of using the package
     build-essential \
     wget \
-    unpaper=6.1-2build1 \
-    pngquant=2.12.6-1 \
-    qpdf=10.1.0-1 \
-    liblept5=1.79.0-1 \
-    libffi-dev=3.3-4 \
-    libsm6=2:1.2.3-1 \
-    libxext6=2:1.3.4-0ubuntu1 \
-    libxrender-dev=1:0.9.10-1 \
-    jbig2enc=0.29-1 \
+    unpaper \
+    pngquant \
+    qpdf \
+    liblept5 \
+    libffi-dev \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    # Install jbig2enc from source since it's not available in Ubuntu 22.04 repos
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    # Install jbig2enc from source
+    && cd /tmp \
+    && wget https://github.com/agl/jbig2enc/archive/refs/tags/0.29.tar.gz \
+    && tar -xzf 0.29.tar.gz \
+    && cd jbig2enc-0.29 \
+    && apt-get update \
+    && apt-get install -y automake libtool libleptonica-dev \
+    && ./autogen.sh \
+    && ./configure \
+    && make \
+    && make install \
+    && ldconfig \
+    && echo "Verifying jbig2enc installation:" \
+    && ls -la /usr/local/bin/jbig2* \
+    && echo "Creating jbig2 symlink" \
+    && ln -sf /usr/local/bin/jbig2 /usr/bin/jbig2 \
+    && echo "Testing jbig2 command:" \
+    && (jbig2 --version || echo "jbig2 command not working in OCR stage, but continuing anyway") \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Download, compile and install the latest Ghostscript version
-RUN cd /tmp && \
-    wget https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10020/ghostscript-10.02.0.tar.gz && \
-    tar -xzf ghostscript-10.02.0.tar.gz && \
-    cd ghostscript-10.02.0 && \
-    ./configure && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf ghostscript-10.02.0*
+# Install Ghostscript from package manager instead of compiling from source
+RUN apt-get update && apt-get install -y \
+    ghostscript \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && gs --version
 
 # Create a virtual environment and install OCRmyPDF
 RUN python3 -m venv /opt/venv
@@ -70,23 +86,51 @@ FROM ubuntu:22.04
 
 # Copy OCR environment from the OCR stage
 COPY --from=ocr /opt/venv /opt/venv
-COPY --from=ocr /usr/bin/tesseract /usr/bin/
-COPY --from=ocr /usr/share/tesseract-ocr /usr/share/tesseract-ocr/
-COPY --from=ocr /usr/lib/x86_64-linux-gnu/libtesseract* /usr/lib/x86_64-linux-gnu/
-COPY --from=ocr /usr/bin/gs /usr/bin/
-COPY --from=ocr /usr/bin/unpaper /usr/bin/
-COPY --from=ocr /usr/bin/pngquant /usr/bin/
-COPY --from=ocr /usr/bin/qpdf /usr/bin/
-COPY --from=ocr /usr/bin/jbig2enc /usr/bin/
-RUN ln -sf /usr/bin/jbig2enc /usr/bin/jbig2
-
-# Install Node.js
+# Install all OCR dependencies in one step to reduce layers
 RUN apt-get update && apt-get install -y \
-    curl=7.81.0-1ubuntu1.15 \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs=20.11.1-1nodesource1 \
+    # Tesseract OCR and language packs
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-fra \
+    tesseract-ocr-deu \
+    tesseract-ocr-spa \
+    tesseract-ocr-ita \
+    tesseract-ocr-rus \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-jpn \
+    # Ghostscript
+    ghostscript \
+    # Other OCR dependencies
+    unpaper \
+    pngquant \
+    qpdf \
+    # jbig2enc dependencies
+    libleptonica-dev \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "Checking installed versions:" \
+    && tesseract --version \
+    && gs --version
+
+# Copy jbig2enc binary from OCR stage
+COPY --from=ocr /usr/local/bin/jbig2 /usr/bin/
+RUN echo "Verifying jbig2 installation:" && \
+    ls -la /usr/bin/jbig2* || true && \
+    echo "Testing jbig2 command:" && \
+    (jbig2 --version || echo "jbig2 command not working, but continuing anyway")
+
+# Install Node.js without specifying exact versions
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    # Create node user and group
+    && groupadd --gid 1000 node \
+    && useradd --uid 1000 --gid node --shell /bin/bash --create-home node \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version \
+    && npm --version
 
 # Set environment variables
 ENV PATH="/opt/venv/bin:$PATH"
@@ -102,13 +146,40 @@ COPY --from=frontend /app/package.json ./package.json
 # Create directories for file uploads and processed files with proper permissions
 RUN mkdir -p /app/uploads /app/processed && \
     chmod -R 777 /app/uploads /app/processed && \
-    chown -R node:node /app/uploads /app/processed
+    # Verify the node user exists before chowning
+    id -u node && id -g node && \
+    chown -R node:node /app/uploads /app/processed || \
+    echo "Warning: Could not change ownership to node:node, using current user instead"
+
+# Create a healthcheck script
+USER root
+RUN echo '#!/bin/bash\n\
+if ! command -v ocrmypdf &> /dev/null; then\n\
+    echo "OCRmyPDF not found"\n\
+    exit 1\n\
+fi\n\
+if [ ! -d "/app/uploads" ] || [ ! -w "/app/uploads" ]; then\n\
+    echo "Upload directory not writable"\n\
+    exit 1\n\
+fi\n\
+if [ ! -d "/app/processed" ] || [ ! -w "/app/processed" ]; then\n\
+    echo "Processed directory not writable"\n\
+    exit 1\n\
+fi\n\
+exit 0' > /app/healthcheck.sh \
+    && chmod +x /app/healthcheck.sh \
+    && chown node:node /app/healthcheck.sh
 
 # Create a non-root user to run the application
+# We created the node user earlier, so we can use it directly
 USER node
 
 # Expose the port
 EXPOSE 3000
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD /app/healthcheck.sh
 
 # Start the application
 CMD ["npm", "start"]

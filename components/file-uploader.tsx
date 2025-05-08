@@ -25,31 +25,60 @@ export function FileUploader({ onFileUpload, files, onRemoveFile }: FileUploader
     setIsDragging(false)
   }
 
+  const validateFileSize = (file: File): boolean => {
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    return file.size <= MAX_FILE_SIZE;
+  };
+
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
+    e.preventDefault();
+    setIsDragging(false);
 
-    const droppedFiles = Array.from(e.dataTransfer.files).filter((file) => file.type === "application/pdf")
+    // Filter for PDF files
+    const pdfFiles = Array.from(e.dataTransfer.files).filter(
+      (file) => file.type === "application/pdf"
+    );
 
-    if (droppedFiles.length > 0) {
-      onFileUpload(droppedFiles)
+    // Filter out files that are too large
+    const validFiles = pdfFiles.filter((file) => {
+      const isValid = validateFileSize(file);
+      if (!isValid) {
+        alert(`File "${file.name}" is too large (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum size is 100MB.`);
+      }
+      return isValid;
+    });
+
+    if (validFiles.length > 0) {
+      onFileUpload(validFiles);
     }
-  }
+  };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFiles = Array.from(e.target.files).filter((file) => file.type === "application/pdf")
+      // Filter for PDF files
+      const pdfFiles = Array.from(e.target.files).filter(
+        (file) => file.type === "application/pdf"
+      );
 
-      if (selectedFiles.length > 0) {
-        onFileUpload(selectedFiles)
+      // Filter out files that are too large
+      const validFiles = pdfFiles.filter((file) => {
+        const isValid = validateFileSize(file);
+        if (!isValid) {
+          alert(`File "${file.name}" is too large (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum size is 100MB.`);
+        }
+        return isValid;
+      });
+
+      if (validFiles.length > 0) {
+        onFileUpload(validFiles);
       }
 
       // Reset file input
       if (fileInputRef.current) {
-        fileInputRef.current.value = ""
+        fileInputRef.current.value = "";
       }
     }
-  }
+  };
 
   const handleButtonClick = () => {
     if (fileInputRef.current) {
@@ -70,6 +99,7 @@ export function FileUploader({ onFileUpload, files, onRemoveFile }: FileUploader
       >
         <Upload className="mx-auto h-12 w-12 text-gray-400" />
         <p className="mt-2 text-sm text-gray-600">Drag and drop PDF files here, or click to select files</p>
+        <p className="mt-1 text-xs text-gray-500">Maximum file size: 100MB</p>
         <input
           type="file"
           ref={fileInputRef}

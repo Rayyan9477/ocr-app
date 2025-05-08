@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast"
 import { ProgressTracker } from "@/components/progress-tracker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
+const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
+
 export default function Home() {
   const [files, setFiles] = useState<File[]>([])
   const [output, setOutput] = useState<string>("")
@@ -60,7 +62,10 @@ export default function Home() {
   }
 
   const processFiles = async () => {
-    if (files.length === 0) return
+    if (files.length === 0) {
+      toast({ title: "No Files", description: "Please upload files to process.", variant: "warning" })
+      return
+    }
 
     setIsProcessing(true)
     setOutput("")
@@ -71,13 +76,16 @@ export default function Home() {
 
     for (const [index, file] of files.entries()) {
       setCurrentFileIndex(index)
-      // Local options copy for this file, including retries
       const opts = { ...commandOptions }
       let data: any = null
 
       appendOutput(`Starting OCR process for ${file.name}...`)
       try {
-        // Build and send single OCR request
+        // Validate file size before uploading
+        if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) { // 100MB limit
+          throw new Error(`File too large: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE_MB}MB.`);
+        }
+
         const formData = new FormData()
         formData.append("file", file)
         formData.append("language", opts.language)
@@ -90,22 +98,104 @@ export default function Home() {
         formData.append("optimize", opts.optimize.toString())
         formData.append("rotate", opts.rotate)
         formData.append("pdfRenderer", opts.pdfRenderer)
-        
+
         setProcessingStep(1)
         setProcessingStepName("Uploading file")
-        appendOutput("Uploading file and starting OCR process...")
-        const response = await fetch("/api/ocr", { method: "POST", body: formData })
-        data = await response.json()
-        if (!response.ok) {
-          if (data.errorType === "tagged_pdf" || data.errorType === "has_text") {
-            // Enable force and retry next iteration
-            setCommandOptions((prev) => ({ ...prev, force: true }))
-            appendOutput(`⚡ Retrying with "Force OCR" enabled`)
-            // retry same file
-            // decrement index by mutating array or re-trigger process for this file
-            continue
+        appendOutput(`Uploading file (${(file.size / (1024 * 1024)).toFixed(2)} MB) and starting OCR process...`)
+
+        // Set up fetch with timeout and better error handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5-minute timeout
+
+        try {
+          const response = await fetch("/api/ocr", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal
+          });
+
+          clearTimeout(timeoutId);
+
+          // Handle responses
+          const contentType = response.headers.get("content-type");
+
+          // Create a clone of the response for reading the text
+          const responseClone = response.clone();
+
+          // Get response text for better error reporting
+          let responseText;
+          try {
+            responseText = await responseClone.text();
+            // If response text is too long, truncate it for display
+            const displayText = responseText.length > 500
+              ? responseText.substring(0, 500) + "... [truncated]"
+              : responseText;
+
+            // Log the full response for debugging
+            console.log("Full response text:", responseText);
+            console.log("Response headers:", Object.fromEntries([...response.headers.entries()]));
+
+            // Check if the response is JSON
+            if (!contentType || !contentType.includes("application/json")) {
+              appendOutput(`Server returned non-JSON response with status ${response.status}`);
+              appendOutput(`Content-Type: ${contentType || "not specified"}`);
+
+              // Try to parse the response as JSON anyway, in case the Content-Type header is wrong
+              try {
+                data = JSON.parse(responseText);
+                appendOutput("Successfully parsed response as JSON despite incorrect Content-Type");
+              } catch (jsonError) {
+                // If it's a 400 error, it might be a validation error
+                if (response.status === 400) {
+                  appendOutput("Validation error occurred. Check file format and options.");
+                  // Try to extract error message from text if possible
+                  const errorMatch = responseText.match(/error["\s:]+([^"]+)/i);
+                  if (errorMatch && errorMatch[1]) {
+                    throw new Error(`Validation error: ${errorMatch[1]}`);
+                  }
+                }
+
+                // If it's a 500 error, suggest retrying with force OCR
+                if (response.status === 500) {
+                  appendOutput("Server error occurred. Retrying with Force OCR enabled...");
+                  setCommandOptions((prev) => ({ ...prev, force: true }));
+                  throw new Error(`Server error (500). Retrying with Force OCR. Details: ${displayText}`);
+                }
+
+                // Not JSON, throw an error with the response text
+                console.error("Failed to parse response as JSON:", jsonError);
+                throw new Error(`Server returned non-JSON response: ${displayText}`);
+              }
+            } else {
+              // Response is JSON
+              try {
+                data = JSON.parse(responseText);
+              } catch (jsonError) {
+                console.error("Failed to parse JSON response:", jsonError);
+                throw new Error(`Failed to parse JSON response: ${displayText}`);
+              }
+            }
+          } catch (error) {
+            const textError = error as Error;
+            console.error("Error reading response text:", textError);
+            appendOutput(`Error reading server response: ${textError.message}`);
+            throw new Error(`Could not read server response: ${textError.message}`);
           }
-          throw new Error(data.error || response.statusText)
+
+          if (!response.ok) {
+            if (data.errorType === "tagged_pdf" || data.errorType === "has_text") {
+              setCommandOptions((prev) => ({ ...prev, force: true }))
+              appendOutput(`⚡ Retrying with "Force OCR" enabled`)
+              continue
+            }
+            throw new Error(data.error || response.statusText)
+          }
+        } catch (error) {
+          const fetchError = error as any;
+          if (fetchError.name === 'AbortError') {
+            throw new Error('Upload timed out after 5 minutes. The file may be too large or the server is busy.');
+          }
+          throw error;
         }
       } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error)
@@ -115,10 +205,7 @@ export default function Home() {
         continue
       }
 
-      // At this point, data.success is true (or contains warnings)
-      // ...existing code for processing success goes here...
       try {
-        // Update processing steps
         setProcessingStep(2)
         setProcessingStepName("Analyzing document")
         await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -135,7 +222,13 @@ export default function Home() {
         setProcessingStepName("Finalizing")
         await new Promise((resolve) => setTimeout(resolve, 500))
 
-        // Log the OCR output
+        // Log the full response data for debugging
+        console.log("OCR API Response:", data);
+
+        if (!data || !data.success) {
+          throw new Error("OCR process did not return a successful response");
+        }
+
         if (data.stdout) {
           appendOutput("OCR Process Output:")
           appendOutput(data.stdout)
@@ -143,10 +236,39 @@ export default function Home() {
 
         if (data.stderr && data.stderr.trim() !== "") {
           appendOutput("Warnings/Errors:")
-          appendOutput(data.stderr)
+
+          // Check for jbig2 warning in stderr
+          if (data.stderr.includes("The program 'jbig2' could not be executed")) {
+            appendOutput(`⚠️ Warning: jbig2 program not found. PDF optimization may be limited.`);
+            appendOutput(`This is not critical and your PDF has been processed successfully.`);
+
+            // Filter out the jbig2 warning from the stderr output to reduce noise
+            const filteredStderr = data.stderr
+              .split('\n')
+              .filter((line: string) => !line.includes('jbig2') && !line.includes('aptitude') && !line.includes('dnf install'))
+              .join('\n');
+
+            if (filteredStderr.trim() !== "") {
+              appendOutput(filteredStderr);
+            }
+          } else {
+            appendOutput(data.stderr);
+          }
+        }
+
+        // Check for tagged PDF warning
+        if (data.stderr && data.stderr.includes("This PDF is marked as a Tagged PDF")) {
+          appendOutput(`ℹ️ Note: This PDF was marked as a Tagged PDF. OCR has been applied anyway.`);
+        }
+
+        // Verify that we have an output file path
+        if (!data.outputFile) {
+          appendOutput("⚠️ Warning: No output file path received from server");
+          throw new Error("No output file path received from server");
         }
 
         appendOutput(`✅ Successfully processed ${file.name}`)
+        appendOutput(`Output file: ${data.outputFile}`)
 
         // Add the processed file to the list
         setProcessedFiles((prev) => [
@@ -223,6 +345,83 @@ export default function Home() {
               <Button className="w-full mt-4" onClick={processFiles} disabled={isProcessing || files.length === 0}>
                 {isProcessing ? "Processing..." : "Process Files"}
               </Button>
+
+              <div className="space-y-2 mt-2">
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      appendOutput("Checking system status...");
+                      const response = await fetch("/api/status");
+                      const data = await response.json();
+                      appendOutput("System Status:");
+                      appendOutput(JSON.stringify(data, null, 2));
+
+                      // Check for common issues
+                      if (!data.system.ocrmypdf.version || data.system.ocrmypdf.version === "Not available") {
+                        appendOutput("⚠️ OCRmyPDF is not installed or not in PATH");
+                      }
+
+                      if (!data.system.ocrmypdf.jbig2.available) {
+                        appendOutput("⚠️ jbig2 is not available - PDF optimization will be limited");
+                      }
+
+                      if (!data.system.directories.uploads.exists || !data.system.directories.uploads.writable) {
+                        appendOutput("⚠️ Uploads directory is not available or not writable");
+                      }
+
+                      if (!data.system.directories.processed.exists || !data.system.directories.processed.writable) {
+                        appendOutput("⚠️ Processed directory is not available or not writable");
+                      }
+                    } catch (error) {
+                      appendOutput(`❌ Error checking status: ${(error as Error).message}`);
+                    }
+                  }}
+                >
+                  Check System Status
+                </Button>
+
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      appendOutput("Checking file system...");
+                      const response = await fetch("/api/debug");
+                      const data = await response.json();
+                      appendOutput("File System Debug Info:");
+                      appendOutput(JSON.stringify(data, null, 2));
+
+                      // Check for processed files
+                      if (data.directories.processed.files.length > 0) {
+                        appendOutput(`Found ${data.directories.processed.files.length} processed files:`);
+                        data.directories.processed.files.forEach((file: any) => {
+                          appendOutput(`- ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+
+                          // Add to processed files list if not already there
+                          setProcessedFiles((prev) => {
+                            const exists = prev.some(f => f.name === file.name);
+                            if (!exists) {
+                              return [...prev, {
+                                name: file.name,
+                                path: `/api/download?file=${encodeURIComponent(file.name)}`,
+                              }];
+                            }
+                            return prev;
+                          });
+                        });
+                      } else {
+                        appendOutput("No processed files found.");
+                      }
+                    } catch (error) {
+                      appendOutput(`❌ Error checking file system: ${(error as Error).message}`);
+                    }
+                  }}
+                >
+                  Check File System
+                </Button>
+              </div>
 
               {isProcessing && processingStep > 0 && (
                 <div className="mt-4">

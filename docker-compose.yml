@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  ocr-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./processed:/app/processed
+    environment:
+      - NODE_ENV=production
+      # Add environment variables to help with debugging
+      - DEBUG=true
+      - NEXT_TELEMETRY_DISABLED=1
+      - NODE_OPTIONS=--max-old-space-size=4096
+    # Increase memory limits to handle large file uploads and processing
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 2G
+    # Ensure proper file permissions
+    user: "node"
+    # Add healthcheck to monitor the application
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
