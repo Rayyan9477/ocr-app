@@ -25,10 +25,30 @@ export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
       setDownloading(file.name)
 
       // First check if the file exists by making a HEAD request
-      const checkResponse = await fetch(file.path, { method: "HEAD" })
+      // Use try/catch for the fetch operation itself
+      try {
+        const checkResponse = await fetch(file.path, { method: "HEAD" })
 
-      if (!checkResponse.ok) {
-        throw new Error(`File not found or not accessible (${checkResponse.status})`)
+        if (!checkResponse.ok) {
+          // If the server returns an error status code
+          const contentType = checkResponse.headers.get('content-type');
+          
+          // If the error response is JSON, try to parse it for more details
+          if (contentType && contentType.includes('application/json')) {
+            try {
+              const errorData = await checkResponse.json();
+              throw new Error(errorData.error || `File not found or not accessible (${checkResponse.status})`);
+            } catch (jsonError) {
+              // If JSON parsing fails, just use the status code
+              throw new Error(`File not found or not accessible (${checkResponse.status})`);
+            }
+          } else {
+            throw new Error(`File not found or not accessible (${checkResponse.status})`);
+          }
+        }
+      } catch (fetchError) {
+        // Handle network errors or JSON parsing errors
+        throw new Error(`Error checking file: ${(fetchError as Error).message}`);
       }
 
       // Create a direct link to the file

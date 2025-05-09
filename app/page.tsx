@@ -117,69 +117,71 @@ export default function Home() {
           clearTimeout(timeoutId);
 
           // Handle responses
-          const contentType = response.headers.get("content-type");
-
-          // Create a clone of the response for reading the text
+          const contentType = response.headers.get("content-type");          // Create a clone of the response for reading the text
           const responseClone = response.clone();
-
-          // Get response text for better error reporting
-          let responseText;
+          
+          // Use a more robust method to handle both JSON and non-JSON responses
           try {
-            responseText = await responseClone.text();
-            // If response text is too long, truncate it for display
-            const displayText = responseText.length > 500
-              ? responseText.substring(0, 500) + "... [truncated]"
-              : responseText;
-
-            // Log the full response for debugging
-            console.log("Full response text:", responseText);
-            console.log("Response headers:", Object.fromEntries([...response.headers.entries()]));
-
-            // Check if the response is JSON
-            if (!contentType || !contentType.includes("application/json")) {
+            // First try to parse as JSON, and if that fails, fall back to text
+            // This technique uses response.clone() to avoid consuming the original response
+            data = await response.clone().json().catch(async (jsonError) => {
+              // Get the response as text if JSON parsing fails
+              const text = await responseClone.text();
+              
+              // If response text is too long, truncate it for display
+              const displayText = text.length > 500
+                ? text.substring(0, 500) + "... [truncated]"
+                : text;
+              
+              // Log for debugging
+              console.log("Full response text:", text);
+              console.log("Response headers:", Object.fromEntries([...response.headers.entries()]));
+              console.log("Content-Type:", contentType);
+              
               appendOutput(`Server returned non-JSON response with status ${response.status}`);
               appendOutput(`Content-Type: ${contentType || "not specified"}`);
-
-              // Try to parse the response as JSON anyway, in case the Content-Type header is wrong
+              
+              // Check for specific status codes
+              if (response.status === 400) {
+                appendOutput("Validation error occurred. Check file format and options.");
+                // Try to extract error message from text if possible
+                const errorMatch = text.match(/error["\s:]+([^"]+)/i);
+                if (errorMatch && errorMatch[1]) {
+                  throw new Error(`Validation error: ${errorMatch[1]}`);
+                }
+                // If no specific error message found, provide a general one
+                throw new Error(`Validation error: ${displayText}`);
+              }
+              
+              // Handle server errors
+              if (response.status === 500) {
+                appendOutput("Server error occurred. Retrying with Force OCR enabled...");
+                setCommandOptions((prev) => ({ ...prev, force: true }));
+                throw new Error(`Server error (500). Retrying with Force OCR. Details: ${displayText}`);
+              }
+              
+              // For non-JSON successful responses (unlikely in this API)
+              if (response.ok) {
+                appendOutput("Server responded with non-JSON success message:");
+                appendOutput(displayText);
+                return { success: true, message: displayText };
+              }
+              
+              // Try to parse as JSON one more time
               try {
-                data = JSON.parse(responseText);
-                appendOutput("Successfully parsed response as JSON despite incorrect Content-Type");
-              } catch (jsonError) {
-                // If it's a 400 error, it might be a validation error
-                if (response.status === 400) {
-                  appendOutput("Validation error occurred. Check file format and options.");
-                  // Try to extract error message from text if possible
-                  const errorMatch = responseText.match(/error["\s:]+([^"]+)/i);
-                  if (errorMatch && errorMatch[1]) {
-                    throw new Error(`Validation error: ${errorMatch[1]}`);
-                  }
-                }
-
-                // If it's a 500 error, suggest retrying with force OCR
-                if (response.status === 500) {
-                  appendOutput("Server error occurred. Retrying with Force OCR enabled...");
-                  setCommandOptions((prev) => ({ ...prev, force: true }));
-                  throw new Error(`Server error (500). Retrying with Force OCR. Details: ${displayText}`);
-                }
-
-                // Not JSON, throw an error with the response text
+                return JSON.parse(text);
+              } catch {
+                // If still not JSON, throw an error with the response text
                 console.error("Failed to parse response as JSON:", jsonError);
                 throw new Error(`Server returned non-JSON response: ${displayText}`);
               }
-            } else {
-              // Response is JSON
-              try {
-                data = JSON.parse(responseText);
-              } catch (jsonError) {
-                console.error("Failed to parse JSON response:", jsonError);
-                throw new Error(`Failed to parse JSON response: ${displayText}`);
-              }
-            }
+            });
+              // Log the successfully parsed data
+            console.log("Successfully parsed response data:", data);
           } catch (error) {
-            const textError = error as Error;
-            console.error("Error reading response text:", textError);
-            appendOutput(`Error reading server response: ${textError.message}`);
-            throw new Error(`Could not read server response: ${textError.message}`);
+            console.error("Error handling response:", error);
+            appendOutput(`Error processing server response: ${error instanceof Error ? error.message : String(error)}`);
+            throw error instanceof Error ? error : new Error(String(error));
           }
 
           if (!response.ok) {
@@ -349,12 +351,19 @@ export default function Home() {
               <div className="space-y-2 mt-2">
                 <Button
                   className="w-full"
-                  variant="outline"
-                  onClick={async () => {
+                  variant="outline"                  onClick={async () => {
                     try {
                       appendOutput("Checking system status...");
                       const response = await fetch("/api/status");
-                      const data = await response.json();
+                      
+                      // Use robust handling for both JSON and non-JSON responses
+                      const data = await response.clone().json().catch(async (jsonError) => {
+                        const text = await response.text();
+                        console.error("Failed to parse status response as JSON:", jsonError, text);
+                        appendOutput(`Server returned non-JSON response: ${text.substring(0, 500)}`);
+                        throw new Error(`Failed to parse server response as JSON`);
+                      });
+                      
                       appendOutput("System Status:");
                       appendOutput(JSON.stringify(data, null, 2));
 
@@ -384,12 +393,19 @@ export default function Home() {
 
                 <Button
                   className="w-full"
-                  variant="outline"
-                  onClick={async () => {
+                  variant="outline"                  onClick={async () => {
                     try {
                       appendOutput("Checking file system...");
                       const response = await fetch("/api/debug");
-                      const data = await response.json();
+                      
+                      // Use robust handling for both JSON and non-JSON responses
+                      const data = await response.clone().json().catch(async (jsonError) => {
+                        const text = await response.text();
+                        console.error("Failed to parse debug response as JSON:", jsonError, text);
+                        appendOutput(`Server returned non-JSON response: ${text.substring(0, 500)}`);
+                        throw new Error(`Failed to parse server response as JSON`);
+                      });
+                      
                       appendOutput("File System Debug Info:");
                       appendOutput(JSON.stringify(data, null, 2));
 
