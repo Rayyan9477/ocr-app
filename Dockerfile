@@ -20,7 +20,7 @@ FROM ubuntu:22.04 AS ocr
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install OCRmyPDF and its dependencies without specifying exact versions
+# Install OCRmyPDF and its dependencies
 RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-rus \
     tesseract-ocr-chi-sim \
     tesseract-ocr-jpn \
-    # Build the latest Ghostscript from source instead of using the package
+    # Build dependencies
     build-essential \
     wget \
     unpaper \
@@ -44,10 +44,10 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    # Install jbig2enc from source since it's not available in Ubuntu 22.04 repos
+    # Install jbig2enc from source (version 0.29)
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    # Install jbig2enc from source
+    # Install jbig2enc from source with specific version
     && cd /tmp \
     && wget https://github.com/agl/jbig2enc/archive/refs/tags/0.29.tar.gz \
     && tar -xzf 0.29.tar.gz \
@@ -68,14 +68,14 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ghostscript from package manager instead of compiling from source
+# Install Ghostscript
 RUN apt-get update && apt-get install -y \
     ghostscript \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && gs --version
 
-# Create a virtual environment and install OCRmyPDF
+# Create a virtual environment and install OCRmyPDF with specific version
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip==25.1.1 && \
@@ -91,20 +91,10 @@ RUN apt-get update && apt-get install -y \
     # Tesseract OCR and language packs
     tesseract-ocr \
     tesseract-ocr-eng \
-    tesseract-ocr-fra \
-    tesseract-ocr-deu \
-    tesseract-ocr-spa \
-    tesseract-ocr-ita \
-    tesseract-ocr-rus \
-    tesseract-ocr-chi-sim \
-    tesseract-ocr-jpn \
-    # Ghostscript
     ghostscript \
-    # Other OCR dependencies
     unpaper \
     pngquant \
     qpdf \
-    # jbig2enc dependencies
     libleptonica-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
@@ -119,7 +109,7 @@ RUN echo "Verifying jbig2 installation:" && \
     echo "Testing jbig2 command:" && \
     (jbig2 --version || echo "jbig2 command not working, but continuing anyway")
 
-# Install Node.js without specifying exact versions
+# Install Node.js
 RUN apt-get update && apt-get install -y \
     curl \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \

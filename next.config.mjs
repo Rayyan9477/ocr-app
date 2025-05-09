@@ -13,7 +13,7 @@ const nextConfig = {
   // The api configuration here is deprecated in Next.js 13+
   // Add experimental settings for large data handling
   experimental: {
-    serverComponentsExternalPackages: ['sharp'],
+    serverExternalPackages: ['sharp'],
     largePageDataBytes: 128 * 1024 * 1024, // 128MB
   },
 }
