@@ -3,6 +3,7 @@ import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises"
 import { join } from "path"
 import { exec } from "child_process"
 import { existsSync } from "fs"
+import appConfig from "@/lib/config"
 
 // Configure Next.js to handle large files
 export const config = {
@@ -25,8 +26,8 @@ const createJsonResponse = (data: any, status: number = 200) => {
   );
 }
 
-// Add timeout to command execution (10 minutes)
-const maxExecutionTime = 10 * 60 * 1000; // 10 minutes in milliseconds
+// Add timeout to command execution (configurable via environment)
+const maxExecutionTime = appConfig.ocrTimeout; // Default: 10 minutes in milliseconds
 const execWithTimeout = async (cmd: string, timeout: number) => {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     // Use a different approach for Windows compatibility
@@ -191,11 +192,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate file size
-    if (file.size > 100 * 1024 * 1024) { // 100MB limit
+    if (file.size > appConfig.maxUploadSize * 1024 * 1024) { // Convert MB to bytes
       console.error(`File too large: ${file.size} bytes`);
       return createJsonResponse({
         success: false,
-        error: "File too large, maximum size is 100MB",
+        error: `File too large, maximum size is ${appConfig.maxUploadSize}MB`,
         details: `File size: ${(file.size / (1024 * 1024)).toFixed(2)} MB`
       }, 400);
     }
@@ -203,7 +204,7 @@ export async function POST(request: NextRequest) {
     console.log(`File received: ${file.name}, size: ${file.size} bytes`)
 
     // Get command options from form data
-    const language = (formData.get("language") as string) || "eng"
+    const language = (formData.get("language") as string) || appConfig.defaultLanguage
     const deskew = formData.get("deskew") === "true"
     const skipText = formData.get("skipText") === "true"
     const force = formData.get("force") === "true"
@@ -380,7 +381,7 @@ export async function POST(request: NextRequest) {
 
       // Check if jbig2 is available and disable optimization if not
       try {
-        const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout("jbig2 --version || echo 'not found'", 5000);
+        const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
         if (jbig2Version.includes('not found') || jbig2Error) {
           console.log("jbig2 not found, disabling optimization");
           // Remove any optimize flags if jbig2 is not available
@@ -490,7 +491,7 @@ export async function POST(request: NextRequest) {
 
           // Check if jbig2 is available and disable optimization if not
           try {
-            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout("jbig2 --version || echo 'not found'", 5000);
+            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
             if (jbig2Version.includes('not found') || jbig2Error) {
               console.log("jbig2 not found, disabling optimization in retry command");
               // Remove any optimize flags if jbig2 is not available
@@ -587,7 +588,7 @@ export async function POST(request: NextRequest) {
 
           // Check if jbig2 is available and disable optimization if not
           try {
-            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout("jbig2 --version || echo 'not found'", 5000);
+            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
             if (jbig2Version.includes('not found') || jbig2Error) {
               console.log("jbig2 not found, disabling optimization in retry command");
               // Remove any optimize flags if jbig2 is not available

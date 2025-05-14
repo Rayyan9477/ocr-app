@@ -4,6 +4,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
+import { SettingsLayout } from "@/components/settings-layout"
+import { Languages, RotateCw, BookOpen, FileOutput, Cog, Gauge, Zap } from "lucide-react"
 
 interface CommandBuilderProps {
   options: {
@@ -29,8 +31,12 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="language">OCR Language</Label>
+      <SettingsLayout 
+        title="OCR Language" 
+        icon={<Languages className="h-4 w-4" />}
+        description="Select the language for OCR text recognition"
+        tooltip="Choose the primary language of the document for best OCR results"
+      >
         <Select value={options.language} onValueChange={(value) => handleChange("language", value)}>
           <SelectTrigger id="language">
             <SelectValue placeholder="Select language" />
@@ -46,10 +52,14 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
             <SelectItem value="jpn">Japanese</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </SettingsLayout>
 
-      <div className="space-y-2">
-        <Label htmlFor="rotate">Page Rotation</Label>
+      <SettingsLayout 
+        title="Page Rotation" 
+        icon={<RotateCw className="h-4 w-4" />}
+        description="Control how pages are rotated during processing"
+        tooltip="Auto will automatically detect and fix page orientation"
+      >
         <Select value={options.rotate} onValueChange={(value) => handleChange("rotate", value)}>
           <SelectTrigger id="rotate">
             <SelectValue placeholder="Select rotation option" />
@@ -62,10 +72,14 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
             <SelectItem value="270">270°</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </SettingsLayout>
 
-      <div className="space-y-2">
-        <Label htmlFor="optimize">Optimization Level (0-3)</Label>
+      <SettingsLayout 
+        title="Optimization Level" 
+        icon={<Gauge className="h-4 w-4" />}
+        description="Higher values result in smaller files but may reduce quality"
+        tooltip="0=None, 1=Basic, 2=Medium, 3=Aggressive optimization"
+      >
         <div className="flex items-center space-x-2">
           <Slider
             id="optimize"
@@ -76,60 +90,80 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
             onValueChange={(value) => handleChange("optimize", value[0])}
             className="flex-1"
           />
-          <span className="w-8 text-center">{options.optimize}</span>
+          <span className="w-8 text-center font-medium">{options.optimize}</span>
         </div>
-      </div>
+      </SettingsLayout>
 
-      <div className="space-y-4 pt-2">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="deskew" className="cursor-pointer">
-            Deskew Pages
-          </Label>
-          <Switch id="deskew" checked={options.deskew} onCheckedChange={(checked) => handleChange("deskew", checked)} />
-        </div>
+      <SettingsLayout 
+        title="PDF Processing Options" 
+        icon={<Cog className="h-4 w-4" />}
+        description="Configure how PDFs are processed"
+        tooltip="These options control the OCR behavior and output quality"
+      >
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="deskew" className="cursor-pointer text-sm">
+              Deskew Pages
+            </Label>
+            <Switch id="deskew" checked={options.deskew} onCheckedChange={(checked) => handleChange("deskew", checked)} />
+          </div>
 
-        <div className="flex items-center justify-between">
-          <Label htmlFor="skipText" className="cursor-pointer">
-            Skip Text Detection
-          </Label>
-          <Switch
-            id="skipText"
-            checked={options.skipText}
-            onCheckedChange={(checked) => handleChange("skipText", checked)}
-          />
-        </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="skipText" className="cursor-pointer text-sm">
+              Skip Text Detection
+            </Label>
+            <Switch
+              id="skipText"
+              checked={options.skipText}
+              onCheckedChange={(checked) => handleChange("skipText", checked)}
+            />
+          </div>
 
-        <div className="flex items-center justify-between">
-          <Label htmlFor="force" className="cursor-pointer">
-            Force OCR
-          </Label>
-          <Switch id="force" checked={options.force} onCheckedChange={(checked) => handleChange("force", checked)} />
+          <div className="flex items-center justify-between">
+            <Label htmlFor="force" className="cursor-pointer text-sm">
+              Force OCR
+            </Label>
+            <Switch id="force" checked={options.force} onCheckedChange={(checked) => handleChange("force", checked)} />
+          </div>
+          
+          <div className="flex items-center justify-between">
+            <Label htmlFor="redoOcr" className="cursor-pointer text-sm">
+              Redo OCR
+            </Label>
+            <Switch id="redoOcr" checked={options.redoOcr} onCheckedChange={(checked) => handleChange("redoOcr", checked)} />
+          </div>
         </div>
-        
-        <div className="flex items-center justify-between">
-          <Label htmlFor="redoOcr" className="cursor-pointer">
-            Redo OCR (Remove existing OCR)
-          </Label>
-          <Switch id="redoOcr" checked={options.redoOcr} onCheckedChange={(checked) => handleChange("redoOcr", checked)} />
-        </div>
-        
-        <div className="flex items-center justify-between">
-          <Label htmlFor="removeBackground" className="cursor-pointer">
-            Remove Background
-          </Label>
-          <Switch id="removeBackground" checked={options.removeBackground} onCheckedChange={(checked) => handleChange("removeBackground", checked)} />
-        </div>
-        
-        <div className="flex items-center justify-between">
-          <Label htmlFor="clean" className="cursor-pointer">
-            Clean Pages
-          </Label>
-          <Switch id="clean" checked={options.clean} onCheckedChange={(checked) => handleChange("clean", checked)} />
-        </div>
-      </div>
+      </SettingsLayout>
       
-      <div className="space-y-2">
-        <Label htmlFor="pdfRenderer">PDF Renderer</Label>
+      <SettingsLayout 
+        title="Image Enhancement" 
+        icon={<Zap className="h-4 w-4" />}
+        description="Options to improve image quality"
+        tooltip="These settings can improve OCR results for difficult documents"
+      >
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="removeBackground" className="cursor-pointer text-sm">
+              Remove Background
+            </Label>
+            <Switch id="removeBackground" checked={options.removeBackground} onCheckedChange={(checked) => handleChange("removeBackground", checked)} />
+          </div>
+          
+          <div className="flex items-center justify-between">
+            <Label htmlFor="clean" className="cursor-pointer text-sm">
+              Clean Pages
+            </Label>
+            <Switch id="clean" checked={options.clean} onCheckedChange={(checked) => handleChange("clean", checked)} />
+          </div>
+        </div>
+      </SettingsLayout>
+      
+      <SettingsLayout 
+        title="PDF Renderer" 
+        icon={<FileOutput className="h-4 w-4" />}
+        description="Select the PDF rendering engine"
+        tooltip="Different renderers may produce better results for different documents"
+      >
         <Select value={options.pdfRenderer} onValueChange={(value) => handleChange("pdfRenderer", value)}>
           <SelectTrigger id="pdfRenderer">
             <SelectValue placeholder="Select PDF renderer" />
@@ -140,10 +174,7 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
             <SelectItem value="sandwich">Sandwich</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground mt-1">
-          Different renderers may produce better results for different documents
-        </p>
-      </div>
+      </SettingsLayout>
     </div>
   )
 }

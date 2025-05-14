@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background -->
+  <rect x="0" y="0" width="512" height="512" rx="64" fill="#f8fafc" />
+  
+  <!-- Main circular gradient background -->
+  <circle cx="256" cy="256" r="220" fill="url(#mainGradient)" />
+  
+  <!-- Document with text -->
+  <g transform="translate(116, 116) scale(0.55)">
+    <!-- Document -->
+    <path d="M400 32H112c-26.5 0-48 21.5-48 48v352c0 26.5 21.5 48 48 48h288c26.5 0 48-21.5 48-48V80c0-26.5-21.5-48-48-48z" fill="#ffffff"/>
+    <path d="M400 32H112c-26.5 0-48 21.5-48 48v352c0 26.5 21.5 48 48 48h288c26.5 0 48-21.5 48-48V80c0-26.5-21.5-48-48-48zm0 394c0 3.3-2.7 6-6 6H118c-3.3 0-6-2.7-6-6V86c0-3.3 2.7-6 6-6h276c3.3 0 6 2.7 6 6v340z" fill="#1e40af"/>
+    
+    <!-- Text lines -->
+    <rect x="140" y="120" width="220" height="16" rx="4" fill="#3b82f6" />
+    <rect x="140" y="160" width="180" height="16" rx="4" fill="#3b82f6" />
+    <rect x="140" y="200" width="240" height="16" rx="4" fill="#3b82f6" />
+    <rect x="140" y="240" width="200" height="16" rx="4" fill="#3b82f6" />
+    <rect x="140" y="280" width="220" height="16" rx="4" fill="#3b82f6" />
+    <rect x="140" y="320" width="160" height="16" rx="4" fill="#3b82f6" />
+  </g>
+  
+  <!-- Magnifying glass -->
+  <g transform="translate(300, 300)">
+    <!-- Glass -->
+    <circle cx="0" cy="0" r="75" fill="none" stroke="#1e40af" stroke-width="24" />
+    <!-- Handle -->
+    <line x1="52" y1="52" x2="100" y2="100" stroke="#1e40af" stroke-width="24" stroke-linecap="round" />
+    <!-- OCR text inside magnifying glass -->
+    <text x="-40" y="10" font-family="Arial, sans-serif" font-weight="bold" font-size="32" fill="#1e40af">OCR</text>
+  </g>
+  
+  <!-- Define gradients -->
+  <defs>
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dbeafe" />
+      <stop offset="100%" stop-color="#bfdbfe" />
+    </linearGradient>
+  </defs>
+</svg>

@@ -83,11 +83,51 @@ const config: Config = {
   				to: {
   					height: '0'
   				}
-  			}
+  			},
+        'bounce-slow': {
+          '0%, 100%': { 
+            transform: 'translateY(-5%)',
+            animationTimingFunction: 'cubic-bezier(0.8, 0, 1, 1)'
+          },
+          '50%': {
+            transform: 'translateY(0)',
+            animationTimingFunction: 'cubic-bezier(0, 0, 0.2, 1)'
+          }
+        },
+        'pulse-glow': {
+          '0%, 100%': { 
+            opacity: '1',
+            filter: 'brightness(1)'
+          },
+          '50%': { 
+            opacity: '0.7',
+            filter: 'brightness(1.2)'
+          }
+        },
+        'spin-slow': {
+          from: {
+            transform: 'rotate(0deg)'
+          },
+          to: {
+            transform: 'rotate(360deg)'
+          }
+        },
+        'shrink-x': {
+          from: {
+            width: '100%'
+          },
+          to: {
+            width: '0%'
+          }
+        }
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+        'bounce-slow': 'bounce-slow 3s infinite',
+        'pulse-glow': 'pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'spin-slow': 'spin-slow 15s linear infinite',
+        'shrink-x': 'shrink-x 5s linear forwards'
   		}
   	}
   },

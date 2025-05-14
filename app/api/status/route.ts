@@ -4,6 +4,8 @@ import { join } from "path"
 import { existsSync } from "fs"
 import { exec } from "child_process"
 import { promisify } from "util"
+import os from "os"
+import appConfig from "@/lib/config"
 
 const execPromise = promisify(exec);
 
@@ -18,6 +20,31 @@ const createJsonResponse = (data: any, status: number = 200) => {
       }
     }
   );
+}
+
+// Helper function to format bytes
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Helper function to format uptime
+function formatUptime(uptime: number): string {
+  const days = Math.floor(uptime / 86400);
+  const hours = Math.floor((uptime % 86400) / 3600);
+  const minutes = Math.floor((uptime % 3600) / 60);
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+  if (hours > 0) parts.push(`${hours} hour${hours !== 1 ? 's' : ''}`);
+  if (minutes > 0) parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+  
+  return parts.join(', ');
 }
 
 export async function GET() {
@@ -45,7 +72,7 @@ export async function GET() {
 
       // Check jbig2 availability
       try {
-        const { stdout: jbig2Out, stderr: jbig2Err } = await execPromise("jbig2 --version || echo 'not found'");
+        const { stdout: jbig2Out, stderr: jbig2Err } = await execPromise(`${appConfig.jbig2Path} --version || echo 'not found'`);
         jbig2Available = !jbig2Out.includes('not found');
         jbig2Version = jbig2Out.trim();
         jbig2Error = jbig2Err || null;
@@ -72,12 +99,36 @@ export async function GET() {
       // Filter for PDF files
       pdfFiles = files.filter((file) => file.endsWith(".pdf"))
     }
+    
+    // Get system information
+    const systemInfo = {
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+      cpus: os.cpus().length,
+      memory: {
+        total: formatBytes(os.totalmem()),
+        free: formatBytes(os.freemem()),
+        percentFree: Math.round((os.freemem() / os.totalmem()) * 100)
+      },
+      uptime: formatUptime(os.uptime())
+    };
+    
+    // All critical components must be healthy
+    const isHealthy = (
+      ocrmypdfVersion !== "Not available" && 
+      !ocrmypdfError && 
+      uploadDirExists && 
+      processedDirExists && 
+      uploadDirWritable && 
+      processedDirWritable
+    );
 
     return createJsonResponse({
-      success: true,
+      status: isHealthy ? "healthy" : "unhealthy",
+      timestamp: new Date().toISOString(),
       system: {
-        platform: process.platform,
-        nodeVersion: process.version,
+        ...systemInfo,
         ocrmypdf: {
           version: ocrmypdfVersion,
           path: ocrmypdfPath,

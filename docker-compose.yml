@@ -5,33 +5,50 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ocr-app:1.0.0
+      args:
+        # Set target architecture if needed (amd64, arm64)
+        TARGETARCH: ${TARGETARCH:-amd64}
+    image: ocr-application:${APP_VERSION:-1.0.0}
+    container_name: ocr-app
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     volumes:
-      - ./uploads:/app/uploads
-      - ./processed:/app/processed
+      # Mount persistent volumes for uploads and processed files
+      - ${UPLOADS_DIR:-./uploads}:/app/uploads
+      - ${PROCESSED_DIR:-./processed}:/app/processed
     environment:
+      # Application configuration
       - NODE_ENV=production
-      # Add environment variables to help with debugging
-      - DEBUG=true
+      - PORT=${PORT:-3000}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-100}
+      # Performance & debugging
+      - DEBUG=${DEBUG:-false}
       - NEXT_TELEMETRY_DISABLED=1
-      - NODE_OPTIONS=--max-old-space-size=4096
+      - NODE_OPTIONS=--max-old-space-size=${NODE_MEMORY:-4096}
+      # OCR configuration
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-eng}
+      - ENABLE_OPTIMIZATION=${ENABLE_OPTIMIZATION:-true}
+      - JBIG2_PATH=/usr/bin/jbig2
     # Increase memory limits to handle large file uploads and processing
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '2'
+          memory: ${CONTAINER_MEMORY:-4G}
+          cpus: ${CONTAINER_CPUS:-'2'}
         reservations:
-          memory: 2G
+          memory: ${CONTAINER_MEMORY_RESERVATION:-2G}
     # Ensure proper file permissions
-    user: "node"
+    user: "${CONTAINER_USER:-node}"
     # Add healthcheck to monitor the application
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-3000}/api/status"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

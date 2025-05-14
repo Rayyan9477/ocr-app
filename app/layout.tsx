@@ -8,9 +8,14 @@ import { Toasts } from "@/components/ui/toast"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "OCRmyPDF Application",
+  title: "OCR Application",
   description: "A comprehensive OCR application for PDF files",
-    generator: 'v0.dev'
+  generator: 'Next.js',
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/ocr-logo.svg',
+  }
 }
 
 export default function RootLayout({
