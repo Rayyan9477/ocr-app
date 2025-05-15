@@ -83,13 +83,57 @@ export async function GET() {
       ocrmypdfError = (ocrError as Error).message;
     }
 
-    // Check directory permissions
-    const uploadDirWritable = await checkDirectoryWritable(uploadDir);
-    const processedDirWritable = await checkDirectoryWritable(processedDir);
-
     // Check if directories exist
     const uploadDirExists = existsSync(uploadDir);
     const processedDirExists = existsSync(processedDir);
+
+    // Enhanced directory permission checks
+    const checkDirectoryPermissions = async (dirPath: string) => {
+      if (!existsSync(dirPath)) {
+        return {
+          exists: false,
+          writable: false,
+          permissions: null,
+          userCanWrite: false,
+          error: "Directory does not exist"
+        };
+      }
+
+      try {
+        // Check if directory is writable by writing a test file
+        const testFile = join(dirPath, "test-permission-check.txt");
+        await writeFile(testFile, "test");
+        await unlink(testFile);
+        
+        // Get directory permissions for reporting
+        let permissions = null;
+        try {
+          const { stdout } = await execPromise(`ls -la "${dirPath}" | head -n 2 | tail -n 1`);
+          permissions = stdout.trim();
+        } catch (e) {
+          // Continue if getting permissions fails
+        }
+        
+        return {
+          exists: true,
+          writable: true, 
+          permissions,
+          userCanWrite: true,
+          error: null
+        };
+      } catch (error) {
+        return {
+          exists: true,
+          writable: false,
+          permissions: null,
+          userCanWrite: false,
+          error: (error as Error).message
+        };
+      }
+    };
+
+    const uploadDirPermissions = await checkDirectoryPermissions(uploadDir);
+    const processedDirPermissions = await checkDirectoryPermissions(processedDir);
 
     // Get processed files
     let pdfFiles: string[] = [];
@@ -118,10 +162,10 @@ export async function GET() {
     const isHealthy = (
       ocrmypdfVersion !== "Not available" && 
       !ocrmypdfError && 
-      uploadDirExists && 
-      processedDirExists && 
-      uploadDirWritable && 
-      processedDirWritable
+      uploadDirPermissions.exists && 
+      processedDirPermissions.exists && 
+      uploadDirPermissions.writable && 
+      processedDirPermissions.writable
     );
 
     return createJsonResponse({
@@ -140,16 +184,8 @@ export async function GET() {
           }
         },
         directories: {
-          uploads: {
-            exists: uploadDirExists,
-            writable: uploadDirWritable,
-            path: uploadDir
-          },
-          processed: {
-            exists: processedDirExists,
-            writable: processedDirWritable,
-            path: processedDir
-          }
+          uploads: uploadDirPermissions,
+          processed: processedDirPermissions
         }
       },
       files: pdfFiles.map((file) => ({

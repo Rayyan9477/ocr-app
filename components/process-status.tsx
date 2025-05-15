@@ -2,13 +2,23 @@
 
 import { useState } from "react"
 import { Card } from "@/components/ui/card"
-import { FileCheck, Download } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
-import { useToast } from "@/hooks/use-toast"
+import {
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 
 interface ProcessedFile {
   name: string
   path: string
+  size?: number
+  processedAt?: string
+  pages?: number
 }
 
 interface ProcessStatusProps {
@@ -18,93 +28,133 @@ interface ProcessStatusProps {
 
 export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
   const [downloading, setDownloading] = useState<string | null>(null)
-  const { toast } = useToast()
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return 'Unknown size'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let size = bytes
+    let unitIndex = 0
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024
+      unitIndex++
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`
+  }
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Recently'
+    return new Date(dateString).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
 
   const handleDownload = async (file: ProcessedFile) => {
     try {
       setDownloading(file.name)
+      setDownloadProgress(0)
+      setError(null)
 
-      // First check if the file exists by making a HEAD request
-      // Use try/catch for the fetch operation itself
-      try {
-        const checkResponse = await fetch(file.path, { method: "HEAD" })
+      const response = await fetch(file.path)
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status} ${response.statusText}`)
+      }
+      if (!response.body) throw new Error('No response body')
 
-        if (!checkResponse.ok) {
-          // If the server returns an error status code
-          const contentType = checkResponse.headers.get('content-type');
-          
-          // If the error response is JSON, try to parse it for more details
-          if (contentType && contentType.includes('application/json')) {
-            try {
-              const errorData = await checkResponse.json();
-              throw new Error(errorData.error || `File not found or not accessible (${checkResponse.status})`);
-            } catch (jsonError) {
-              // If JSON parsing fails, just use the status code
-              throw new Error(`File not found or not accessible (${checkResponse.status})`);
-            }
-          } else {
-            throw new Error(`File not found or not accessible (${checkResponse.status})`);
-          }
+      const contentLength = Number(response.headers.get('content-length'))
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let receivedLength = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        chunks.push(value)
+        receivedLength += value.length
+
+        if (contentLength) {
+          setDownloadProgress((receivedLength / contentLength) * 100)
         }
-      } catch (fetchError) {
-        // Handle network errors or JSON parsing errors
-        throw new Error(`Error checking file: ${(fetchError as Error).message}`);
       }
 
-      // Create a direct link to the file
-      const link = document.createElement("a")
-      link.href = file.path
-      link.setAttribute("download", file.name)
-      link.setAttribute("target", "_blank")
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-
-      toast({
-        title: "Download Started",
-        description: `Downloading ${file.name}`,
-        variant: "success",
-      })
+      const blob = new Blob(chunks)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      
     } catch (error) {
-      toast({
-        title: "Download Error",
-        description: `Failed to download ${file.name}: ${(error as Error).message}`,
-        variant: "destructive",
-      })
+      console.error('Download error:', error)
+      setError(error instanceof Error ? error.message : String(error))
     } finally {
       setDownloading(null)
+      setDownloadProgress(0)
     }
   }
 
   return (
     <div className="space-y-4">
-      {files.length === 0 && !isProcessing ? (
-        <div className="text-center py-12 border-2 border-dashed rounded-md">
-          <FileCheck className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No processed files yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Process some PDF files to see them here</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {files.map((file, index) => (
-            <Card key={index} className="p-4 flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <FileCheck className="h-5 w-5 text-green-500" />
-                <span className="truncate max-w-[300px]">{file.name}</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-1"
-                onClick={() => handleDownload(file)}
-                disabled={downloading === file.name}
-              >
-                <Download className="h-4 w-4" />
-                {downloading === file.name ? "Downloading..." : "Download"}
-              </Button>
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      
+      {files.length > 0 && (
+        <div className="grid gap-4">
+          {files.map((file) => (
+            <Card key={file.name}>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">
+                  {file.name}
+                </CardTitle>
+                {file.processedAt && (
+                  <CardDescription>
+                    Processed: {new Date(file.processedAt).toLocaleString()}
+                  </CardDescription>
+                )}
+              </CardHeader>
+              <CardContent>
+                {downloading === file.name ? (
+                  <div className="space-y-2">
+                    <Progress value={downloadProgress} className="w-full" />
+                    <p className="text-sm text-muted-foreground">
+                      Downloading... {downloadProgress.toFixed(0)}%
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    className="w-full sm:w-auto"
+                    onClick={() => handleDownload(file)}
+                    disabled={isProcessing}
+                  >
+                    Download
+                  </Button>
+                )}
+              </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {!files.length && !isProcessing && (
+        <Alert>
+          <AlertDescription>
+            No processed files yet. Upload and process files to see them here.
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   )

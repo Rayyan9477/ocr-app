@@ -21,6 +21,9 @@ services:
       - NODE_ENV=production
       - PORT=${PORT:-3000}
       - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-100}
+      # Directories
+      - UPLOADS_DIR=/app/uploads
+      - PROCESSED_DIR=/app/processed
       # Performance & debugging
       - DEBUG=${DEBUG:-false}
       - NEXT_TELEMETRY_DISABLED=1

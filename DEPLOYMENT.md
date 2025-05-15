@@ -141,10 +141,37 @@ The application can be configured using environment variables:
 
 2. **Permission issues with upload/processed directories:**
    
-   Ensure proper permissions:
+   The application requires write access to the uploads and processed directories. There are several ways to ensure proper permissions:
+   
+   a) For local development:
    ```bash
-   chmod -R 777 uploads processed  # For development
-   # For production, set appropriate user/group permissions
+   # Run the provided permissions script
+   ./ensure-permissions.sh
+   
+   # Or manually set permissions
+   chmod -R 777 uploads processed
+   ```
+   
+   b) For Docker deployment:
+   - The container automatically sets the proper permissions via the entrypoint script
+   - You can also ensure host directory permissions using:
+   ```bash
+   sudo chown -R 1000:1000 ./uploads ./processed  # 1000 is usually the node user's UID in the container
+   chmod -R 755 ./uploads ./processed
+   ```
+   
+   c) For Kubernetes deployment:
+   - Use initContainers to set permissions:
+   ```yaml
+   initContainers:
+     - name: volume-permissions
+       image: busybox
+       command: ["sh", "-c", "chmod -R 777 /app/uploads /app/processed"]
+       volumeMounts:
+         - name: uploads-volume
+           mountPath: /app/uploads
+         - name: processed-volume
+           mountPath: /app/processed
    ```
 
 3. **Container networking issues:**

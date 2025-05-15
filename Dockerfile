@@ -182,13 +182,17 @@ COPY --from=frontend /app/package.json ./package.json
 COPY --from=frontend /app/next.config.mjs ./next.config.mjs
 COPY ./healthcheck.sh /app/healthcheck.sh
 
+# Copy the entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Create directories for file uploads and processed files with proper permissions
 RUN mkdir -p /app/uploads /app/processed && \
     chmod -R 777 /app/uploads /app/processed && \
     chmod +x /app/healthcheck.sh && \
     # Verify the node user exists before chowning
     id -u node && id -g node && \
-    chown -R node:node /app/uploads /app/processed /app/healthcheck.sh || \
+    chown -R node:node /app/uploads /app/processed /app/healthcheck.sh /app/entrypoint.sh || \
     echo "Warning: Could not change ownership to node:node, using current user instead"
 
 # Create a healthcheck script
@@ -224,6 +228,9 @@ EXPOSE ${PORT}
 # Add healthcheck using our custom script
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD /app/healthcheck.sh
+
+# Set the entrypoint to our script
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Start the application
 CMD ["npm", "start"]

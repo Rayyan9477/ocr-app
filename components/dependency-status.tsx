@@ -13,6 +13,14 @@ interface Dependency {
   optional?: boolean;
 }
 
+interface DirectoryStatus {
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  permissions?: string;
+  error?: string;
+}
+
 interface DependencyStatusProps {
   showAll?: boolean;
   className?: string;
@@ -24,6 +32,8 @@ export function DependencyStatus({ showAll = false, className }: DependencyStatu
   const [error, setError] = useState<string | null>(null);
   const [allRequired, setAllRequired] = useState(false);
   const [allAvailable, setAllAvailable] = useState(false);
+  const [directories, setDirectories] = useState<DirectoryStatus[]>([]);
+  const [directoriesOk, setDirectoriesOk] = useState(false);
 
   useEffect(() => {
     const checkDependencies = async () => {
@@ -41,6 +51,12 @@ export function DependencyStatus({ showAll = false, className }: DependencyStatu
           setDependencies(data.dependencies);
           setAllRequired(data.allRequiredAvailable);
           setAllAvailable(data.allDependenciesAvailable);
+          
+          // Set directory status if available
+          if (data.directories) {
+            setDirectories(data.directories);
+            setDirectoriesOk(data.directoriesOk);
+          }
         } else {
           setError(data.error || 'Unknown error checking dependencies');
         }
@@ -224,6 +240,63 @@ export function DependencyStatus({ showAll = false, className }: DependencyStatu
             ) : (
               <div className="py-2 text-center text-muted-foreground">
                 All dependencies are installed and working correctly.
+              </div>
+            )}
+
+            {/* Display directory status */}
+            {showAll && directories.length > 0 && (
+              <div className="mt-6 space-y-4">
+                <h3 className="text-sm font-medium">Directory Permissions</h3>
+                <div className="space-y-3">
+                  {directories.map((dir, index) => (
+                    <div 
+                      key={index}
+                      className={cn(
+                        "rounded-md border p-3",
+                        dir.writable ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50",
+                        "animate-in slide-in-from-bottom duration-300"
+                      )}
+                      style={{ animationDelay: `${index * 100}ms` }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium truncate pr-2">
+                          {dir.path.split('/').pop() || dir.path}
+                        </div>
+                        <Badge variant={dir.writable ? "default" : "destructive"}>
+                          {dir.writable ? (
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                          ) : (
+                            <XCircle className="h-3 w-3 mr-1" />
+                          )}
+                          {dir.writable ? 'Writable' : 'Not Writable'}
+                        </Badge>
+                      </div>
+                      
+                      <div className="mt-1 text-xs text-muted-foreground truncate">
+                        {dir.path}
+                      </div>
+                      
+                      {dir.error && (
+                        <div className="mt-1 text-xs text-destructive">
+                          {dir.error}
+                        </div>
+                      )}
+                      
+                      {dir.permissions && (
+                        <div className="mt-1 text-xs font-mono">
+                          {dir.permissions}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                
+                {!directoriesOk && (
+                  <div className="mt-2 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4 inline mr-1" />
+                    Directory permission issues detected. Processing may fail.
+                  </div>
+                )}
               </div>
             )}
           </>

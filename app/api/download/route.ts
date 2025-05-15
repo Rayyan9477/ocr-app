@@ -2,9 +2,7 @@ import { NextResponse } from "next/server"
 import { readFile, stat } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
-import { ReadableStream } from "stream/web"
-import { headers } from "next/headers"
-import { createReadStream, readFileSync } from "fs"
+import { createReadStream } from "fs"
 
 // Add a helper function to create consistent JSON responses
 const createJsonResponse = (data: any, status: number = 200) => {
@@ -28,7 +26,7 @@ export async function GET(request: Request) {
     if (!fileName) {
       return createJsonResponse({
         success: false,
-        error: "No file specified",
+        error: "No file specified"
       }, 400);
     }
 
@@ -45,6 +43,7 @@ export async function GET(request: Request) {
       return createJsonResponse({
         success: false,
         error: "File not found",
+        details: `File ${sanitizedFileName} does not exist`
       }, 404);
     }
 
@@ -52,9 +51,17 @@ export async function GET(request: Request) {
       // Get file information
       const fileInfo = await stat(filePath);
       
-      // Read file
+      if (fileInfo.size === 0) {
+        return createJsonResponse({
+          success: false,
+          error: "File is empty",
+          details: `File ${sanitizedFileName} has zero size`
+        }, 400);
+      }
+
+      // Read file buffer
       const fileBuffer = await readFile(filePath);
-      
+
       // Return file with appropriate headers
       return new Response(fileBuffer, {
         status: 200,
@@ -62,6 +69,7 @@ export async function GET(request: Request) {
           "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${sanitizedFileName}"`,
           "Content-Length": fileInfo.size.toString(),
+          "Accept-Ranges": "bytes"
         },
       });
     } catch (fileError) {
@@ -69,7 +77,7 @@ export async function GET(request: Request) {
       return createJsonResponse({
         success: false,
         error: "Error reading file",
-        details: (fileError as Error).message,
+        details: (fileError as Error).message
       }, 500);
     }
   } catch (error) {
@@ -77,7 +85,7 @@ export async function GET(request: Request) {
     return createJsonResponse({
       success: false,
       error: "Internal server error",
-      details: (error as Error).message,
+      details: (error as Error).message
     }, 500);
   }
 }

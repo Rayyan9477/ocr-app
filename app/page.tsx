@@ -38,6 +38,7 @@ export default function Home() {
     rotate: "auto",
     pdfRenderer: "auto"
   })
+  const [lastSubmittedFormData, setLastSubmittedFormData] = useState<FormData | null>(null)
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [processingStep, setProcessingStep] = useState(0)
   const [processingStepName, setProcessingStepName] = useState("")
@@ -51,6 +52,7 @@ export default function Home() {
     description: "",
     variant: "default" as "default" | "success" | "error" | "warning" | "info",
   })
+  const [overallProgress, setOverallProgress] = useState(0)
 
   const { toast } = useToast()
   const terminalRef = useRef<HTMLDivElement>(null)
@@ -79,10 +81,18 @@ export default function Home() {
   }
 
   const appendOutput = (text: string) => {
-    setOutput((prev) => prev + text + "\n")
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight
-    }
+    setOutput((prev) => {
+      const newOutput = prev ? `${prev}\n${text}` : text
+      if (terminalRef.current) {
+        setTimeout(() => {
+          terminalRef.current?.scrollTo({
+            top: terminalRef.current.scrollHeight,
+            behavior: "smooth"
+          })
+        }, 100)
+      }
+      return newOutput
+    })
   }
 
   // Enhance dependency check to include jbig2 and provide installation instructions
@@ -164,73 +174,285 @@ export default function Home() {
     setCommandOptions(updatedOptions);
   };
 
-  // Enhance error handling for OCRmyPDF execution with retry logic
-  const executeOcrWithRetry = async (formData: FormData, fileName: string, retry: boolean = false) => {
+  interface OcrResponse {
+    success: boolean;
+    outputFile?: string;
+    fileSize?: number;
+    stdout?: string;
+    stderr?: string;
+    error?: string;
+    details?: string;
+    errorType?: 'has_text' | 'tagged_pdf';
+    command?: string;
+    timestamp?: string;
+  }
+
+  interface ProcessedFile {
+    name: string;
+    path: string;
+    processedAt: string;
+    size: number | null;
+  }
+
+  const executeOcrWithRetry = async (formData: FormData, fileName: string, retry: boolean = false): Promise<OcrResponse> => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5-minute timeout
-  
+      const timeoutId = setTimeout(() => controller.abort(), 600000); // 10-minute timeout
+      
+      appendOutput(`Starting OCR process for ${fileName}...`);
+      
       const response = await fetch("/api/ocr", {
         method: "POST",
         body: formData,
         signal: controller.signal,
       });
-  
+      
       clearTimeout(timeoutId);
-  
-      // Get the response as text first so we can log it
-      const responseText = await response.text();
-      console.log("OCR API Response:", responseText);
       
-      // Try to parse as JSON
-      let data;
+      // Clone the response so we can read it multiple times
+      const responseForText = response.clone();
+      const responseForJson = response.clone();
+      
+      // Try to parse as JSON first, regardless of status code
       try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        appendOutput(`⚠️ Error parsing server response: ${responseText}`);
-        throw new Error(`Server returned invalid JSON: ${responseText}`);
-      }
-
-      if (!response.ok) {
-        // Log the detailed error information
-        console.error("OCRmyPDF failed:", data);
+        const data: OcrResponse = await responseForJson.json();
         
-        // Add the error details and command to the output log
-        if (data.details) {
-          appendOutput(`⚠️ OCR Error Details: ${data.details}`);
+        // Check if the response was successful or has a structured error
+        if (!response.ok) {
+          // Handle error responses with valid JSON structure
+          appendOutput(`⚠️ Server responded with status ${response.status}: ${data.error || 'Unknown error'}`);
+          
+          // Even with an error status, the file might have been processed successfully
+          if (data.outputFile) {
+            appendOutput(`✅ Despite error, server indicates file was processed: ${data.outputFile}`);
+            return data; // Return data with outputFile info
+          }
+          
+          // If this is a known error type like "has_text" that could benefit from retry
+          if (data.errorType === 'has_text' && !retry) {
+            appendOutput("Attempting retry with force-ocr option...");
+            return await handleSuccessResponse(data, fileName, retry);
+          }
+          
+          // Just return the data - it contains structured error information
+          return data;
         }
         
-        if (data.command) {
-          appendOutput(`ℹ️ Command executed: ${data.command}`);
+        const result = await handleSuccessResponse(data, fileName, retry);
+        return result;
+      } catch (jsonError) {
+        console.error("JSON parse error:", jsonError);
+        
+        // If the response status is not OK, we should handle that first
+        if (!response.ok) {
+          appendOutput(`⚠️ Server returned status ${response.status}. Checking if processing continued...`);
+        } else {
+          appendOutput(`⚠️ Server response couldn't be parsed as JSON despite status ${response.status}.`);
         }
-  
-        // Check for PriorOcrFoundError and retry with --force-ocr if not already retried
-        if (!retry && data.errorType === 'has_text') {
-          appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr.");
-          formData.set("force", "true");
-          return await executeOcrWithRetry(formData, fileName, true);
+        
+        // If JSON parsing fails, read as text
+        const responseText = await responseForText.text();
+        appendOutput(`Raw response: ${responseText.substring(0, 200)}...`);
+        
+        // Check if file was actually processed despite the JSON error or HTTP status
+        // Extract the base filename without extension
+        const baseFileName = fileName.split('.').slice(0, -1).join('.');
+        // Try potential filename formats (with and without timestamp)
+        const timestamp = fileName.match(/(\d{13})\.pdf$/)?.[1] || '';
+        
+        // Try with timestamp first (server adds timestamps)
+        const potentialOutputFiles = [
+          // If filename already includes timestamp: baseFileName_ocr.pdf
+          `${baseFileName}_ocr.pdf`,
+          // If the server generated timestamp: baseFileName_timestamp_ocr.pdf
+          timestamp ? `${baseFileName}_ocr.pdf` : null,
+          // General case with pattern based on logs: baseFileName_timestamp_ocr.pdf 
+          // (get latest files from filesystem)
+        ].filter(Boolean);
+        
+        // Try each potential filename
+        let checkResponse = null;
+        let foundFile = null;
+        
+        for (const file of potentialOutputFiles) {
+          if (!file) continue;
+          checkResponse = await fetch(`/api/download?file=${encodeURIComponent(file)}`);
+          if (checkResponse.ok) {
+            foundFile = file;
+            break;
+          }
         }
-  
-        throw new Error(data.error || `Failed to execute OCRmyPDF: ${responseText}`);
+        
+        // If still not found, try checking processed directory for any matching files
+        if (!checkResponse?.ok) {
+          const statusResponse = await fetch('/api/status');
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            const matchingFiles = statusData.files?.filter((f: any) => 
+              f.name.includes(baseFileName.replace(/\d+$/, '')) && f.name.includes('_ocr.pdf')
+            );
+            
+            if (matchingFiles?.length > 0) {
+              foundFile = matchingFiles[0].name;
+              checkResponse = await fetch(`/api/download?file=${encodeURIComponent(foundFile)}`);
+            }
+          }
+        }
+        
+        if (checkResponse?.ok && foundFile) {
+          appendOutput("✅ File was processed successfully despite response issues");
+          appendOutput(`📄 Output file available: ${foundFile}`);
+          
+          // Add to processed files even if we had a JSON parsing error
+          const newProcessedFile: ProcessedFile = {
+            name: foundFile,
+            path: `/api/download?file=${encodeURIComponent(foundFile)}`,
+            processedAt: new Date().toISOString(),
+            size: null,
+          };
+          
+          setProcessedFiles(prev => [...prev, newProcessedFile]);
+          
+          return {
+            success: true,
+            outputFile: foundFile
+          };
+        }
+        
+        throw new Error(`Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
       }
-      
-      // If there's stdout or stderr, add it to the terminal output
-      if (data.stdout) {
-        appendOutput(`📋 OCR Output: ${data.stdout}`);
-      }
-      
-      if (data.stderr) {
-        appendOutput(`⚠️ OCR Warnings: ${data.stderr}`);
-      }
-  
-      return data;
     } catch (error) {
       console.error("Error during OCR execution:", error);
-      throw error instanceof Error ? error : new Error(String(error));
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          appendOutput(`❌ OCR process timed out for ${fileName}`);
+        } else if (!error.message.includes('HTTP error')) {
+          // Only log non-HTTP errors as they were already handled
+          appendOutput(`❌ Error: ${error.message}`);
+        }
+        throw error;
+      }
+      throw new Error('Unknown error during OCR execution');
     }
   };
 
-  // Update processFiles to log reasons for disabling options
+  // Helper function to handle successful JSON response
+  const handleSuccessResponse = async (data: OcrResponse, fileName: string, retry: boolean): Promise<OcrResponse> => {
+    if (!data.success) {
+      // Handle known error types and retry if needed
+      if (data.errorType === 'has_text' && !retry) {
+        appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr...");
+        const newFormData = new FormData();
+        newFormData.append("file", files[currentFileIndex]);
+        newFormData.append("force", "true");
+        
+        // Copy other form data properties from commandOptions
+        if (lastSubmittedFormData) {
+          for (const [key, value] of Array.from(lastSubmittedFormData.entries())) {
+            if (key !== "file" && key !== "force") {
+              newFormData.append(key, value as string);
+            }
+          }
+        } else {
+          // Fallback to command options
+          const opts = commandOptions;
+          newFormData.append("language", opts.language);
+          newFormData.append("deskew", opts.deskew.toString());
+          newFormData.append("skipText", opts.skipText.toString());
+          newFormData.append("redoOcr", opts.redoOcr.toString());
+          newFormData.append("removeBackground", opts.removeBackground.toString());
+          newFormData.append("clean", opts.clean.toString());
+          newFormData.append("optimize", opts.optimize.toString());
+          newFormData.append("rotate", opts.rotate);
+          newFormData.append("pdfRenderer", opts.pdfRenderer);
+        }
+        
+        return await executeOcrWithRetry(newFormData, fileName, true);
+      } else if (data.errorType === 'tagged_pdf') {
+        appendOutput(`⚠️ ${data.error || 'PDF is a tagged PDF'}: ${data.details || ''}`);
+        throw new Error(data.error || "PDF is a tagged PDF");
+      } else {
+        // For other error types, display the error and throw
+        appendOutput(`❌ OCR process failed: ${data.error || 'Unknown error'}`);
+        if (data.details) {
+          appendOutput(`Details: ${data.details}`);
+        }
+        throw new Error(data.error || "OCR process failed");
+      }
+    }
+
+    // Process successful response
+    if (data.stdout) {
+      appendOutput(`📋 OCR Output: ${data.stdout}`);
+    }
+    if (data.stderr) {
+      appendOutput(`⚠️ OCR Warnings: ${data.stderr}`);
+    }
+    if (!data.outputFile) {
+      appendOutput("⚠️ Warning: No output file path received from server");
+      throw new Error("No output file path received from server");
+    }
+    
+    appendOutput(`✅ Successfully processed ${fileName}`);
+    appendOutput(`📄 Output file: ${data.outputFile}`);
+    
+    const newProcessedFile: ProcessedFile = {
+      name: data.outputFile,
+      path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
+      processedAt: new Date().toISOString(),
+      size: data.fileSize ?? null,
+    };
+    
+    setProcessedFiles(prev => [...prev, newProcessedFile]);
+    
+    return data;
+  };
+
+  // Check directory permissions before starting OCR
+  const checkDirectoryPermissions = async (): Promise<boolean> => {
+    try {
+      appendOutput("Checking directory permissions...");
+      
+      const response = await fetch('/api/check-dependencies');
+      if (!response.ok) {
+        appendOutput("⚠️ Failed to check directory permissions");
+        return true; // Proceed with caution
+      }
+      
+      const data = await response.json();
+      
+      // Check if directories are writable
+      if (data.directories && !data.directoriesOk) {
+        const nonWritableDirs = data.directories.filter((dir: any) => !dir.writable);
+        
+        if (nonWritableDirs.length > 0) {
+          appendOutput("❌ Directory permission issues detected:");
+          nonWritableDirs.forEach((dir: any) => {
+            appendOutput(`  - ${dir.path}: ${dir.error || 'Not writable'}`);
+          });
+          
+          // Show error notification
+          setNotificationProps({
+            title: "Permission Error",
+            description: `The application doesn't have permission to write to required directories. This will cause OCR processing to fail.`,
+            variant: "error"
+          });
+          setShowNotification(true);
+          
+          return false;
+        }
+      }
+      
+      appendOutput("✅ Directory permissions check passed");
+      return true;
+    } catch (error) {
+      console.error("Error checking directory permissions:", error);
+      appendOutput("⚠️ Failed to check directory permissions");
+      return true; // Proceed with caution
+    }
+  };
+
+  // Enhance error handling for OCRmyPDF execution with retry logic
   const processFiles = async () => {
     if (files.length === 0) {
       setNotificationProps({
@@ -242,13 +464,25 @@ export default function Home() {
       return;
     }
 
+    // Check directory permissions before starting OCR
+    const hasPermissions = await checkDirectoryPermissions();
+    if (!hasPermissions) {
+      setNotificationProps({
+        title: "Permission Error",
+        description: "The application doesn't have permission to write to required directories. This will cause OCR processing to fail.",
+        variant: "destructive"
+      });
+      setShowNotification(true);
+      return;
+    }
+
     setIsProcessing(true);
     setOutput("");
     setCurrentFileIndex(0);
     setProcessingStep(0);
     setShowLoadingScreen(true);
     setLoadingMessage("Preparing OCR process...");
-    setLoadingProgress(5);
+    setOverallProgress(0)
     
     // Show notification that processing has started
     setNotificationProps({
@@ -290,6 +524,9 @@ export default function Home() {
         formData.append("rotate", opts.rotate);
         formData.append("pdfRenderer", opts.pdfRenderer);
 
+        // Store the formData for potential retries
+        setLastSubmittedFormData(formData);
+
         setProcessingStep(1);
         setProcessingStepName("Uploading file");
         appendOutput(`Uploading file (${(file.size / (1024 * 1024)).toFixed(2)} MB) and starting OCR process...`);
@@ -323,10 +560,28 @@ export default function Home() {
         }
         
         if (data.stderr) {
-          appendOutput(`⚠️ Process warnings: ${data.stderr}`);
+          // Split into lines for better formatting
+          const stderrLines = data.stderr.split('\n');
+          let hasDiacritics = false;
+          let hasJbig2Issue = false;
+
+          for (const line of stderrLines) {
+            if (line.trim()) {
+              appendOutput(`⚠️ ${line.trim()}`);
+              if (line.includes("lots of diacritics")) {
+                hasDiacritics = true;
+              }
+              if (line.includes("jbig2 not found")) {
+                hasJbig2Issue = true;
+              }
+            }
+          }
           
-          if (data.stderr.includes("lots of diacritics")) {
+          if (hasDiacritics) {
             appendOutput("⚠️ Detected poor OCR quality due to diacritics. Consider adjusting language settings.");
+          }
+          if (hasJbig2Issue) {
+            appendOutput("⚠️ JBIG2 optimization disabled. Install jbig2enc for better compression.");
           }
         }
 
@@ -375,9 +630,7 @@ export default function Home() {
     setIsProcessing(false);
     setProcessingStep(0);
     setProcessingStepName("");
-    
-    // Finish loading with a nice transition
-    setLoadingProgress(100);
+    setOverallProgress(100)
     setLoadingMessage("Processing completed successfully!");
     
     // Delay hiding the loading screen for a better UX
@@ -517,104 +770,133 @@ export default function Home() {
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-1">
-          <Card className={cn(
-            "animate-in slide-in-from-left duration-500", 
-            files.length === 0 ? "shadow-md hover:shadow-lg border-primary/20" : ""
-          )}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileIcon className="h-5 w-5" />
-                Files
-              </CardTitle>
-            </CardHeader>
-            <CardContent className={cn(
-              files.length === 0 && !isProcessing ? "animate-pulse-glow" : ""
+      <div className={cn(
+        "container mx-auto p-4 space-y-4",
+        showLoadingScreen ? "mt-24" : "mt-4" // Add top margin when loading screen is visible
+      )}>
+        {showNotification && (
+          <BrandedNotification
+            title={notificationProps.title}
+            description={notificationProps.description}
+            variant={notificationProps.variant as any}
+            onClose={() => setShowNotification(false)}
+          />
+        )}
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <DependencyStatus />
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="md:col-span-1">
+            <Card className={cn(
+              "animate-in slide-in-from-left duration-500", 
+              files.length === 0 ? "shadow-md hover:shadow-lg border-primary/20" : ""
             )}>
-              <FileUploader onFileUpload={handleFileUpload} files={files} onRemoveFile={handleRemoveFile} />
-            </CardContent>
-          </Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileIcon className="h-5 w-5" />
+                  Files
+                </CardTitle>
+              </CardHeader>
+              <CardContent className={cn(
+                files.length === 0 && !isProcessing ? "animate-pulse-glow" : ""
+              )}>
+                <FileUploader onFileUpload={handleFileUpload} files={files} onRemoveFile={handleRemoveFile} />
+              </CardContent>
+            </Card>
 
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                OCR Options
-              </CardTitle>
-            </CardHeader>
-            <CardContent className={cn(
-              "transition-all duration-500", 
-              files.length > 0 && !isProcessing ? "animate-pulse-glow" : ""
-            )}>
-              <CommandBuilder options={commandOptions} onChange={handleCommandChange} />
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  OCR Options
+                </CardTitle>
+              </CardHeader>
+              <CardContent className={cn(
+                "transition-all duration-500", 
+                files.length > 0 && !isProcessing ? "animate-pulse-glow" : ""
+              )}>
+                <CommandBuilder options={commandOptions} onChange={handleCommandChange} />
 
-              <Button
-                className="w-full mt-4 group relative overflow-hidden transition-all duration-300 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary"
-                onClick={processFiles}
-                disabled={isProcessing || files.length === 0}
-              >
-                <div className="absolute inset-0 w-full h-full transition-all duration-300 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full opacity-30"></div>
-                <div className="flex items-center justify-center gap-2">
-                  {isProcessing ? (
-                    <>
-                      <div className="h-5 w-5 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      {files.length > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <svg 
-                            className="h-5 w-5 animate-pulse-glow" 
-                            viewBox="0 0 24 24" 
-                            fill="none" 
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                          <span>Start OCR Process</span>
-                        </div>
-                      ) : (
-                        <span>Upload Files First</span>
-                      )}
-                    </>
-                  )}
-                </div>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+                <Button
+                  className="w-full mt-4 group relative overflow-hidden transition-all duration-300 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary"
+                  onClick={processFiles}
+                  disabled={isProcessing || files.length === 0}
+                >
+                  <div className="absolute inset-0 w-full h-full transition-all duration-300 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full opacity-30"></div>
+                  <div className="flex items-center justify-center gap-2">
+                    {isProcessing ? (
+                      <>
+                        <div className="h-5 w-5 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
+                        <span>Processing...</span>
+                      </>
+                    ) : (
+                      <>
+                        {files.length > 0 ? (
+                          <div className="flex items-center gap-2">
+                            <svg 
+                              className="h-5 w-5 animate-pulse-glow" 
+                              viewBox="0 0 24 24" 
+                              fill="none" 
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            <span>Start OCR Process</span>
+                          </div>
+                        ) : (
+                          <span>Upload Files First</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
 
-        <div className="md:col-span-2">
-          <Tabs defaultValue="terminal">
-            <TabsList className="mb-4">
-              <TabsTrigger value="terminal">
-                <TerminalIcon className="h-4 w-4 mr-2" />
-                Terminal Output
-              </TabsTrigger>
-              <TabsTrigger value="status">
-                <Download className="h-4 w-4 mr-2" />
-                Processed Files
-              </TabsTrigger>
-              <TabsTrigger value="info">
-                <Info className="h-4 w-4 mr-2" />
-                System Info
-              </TabsTrigger>
-            </TabsList>
+          <div className="md:col-span-2">
+            <Tabs defaultValue="terminal">
+              <TabsList className="mb-4">
+                <TabsTrigger value="terminal">
+                  <TerminalIcon className="h-4 w-4 mr-2" />
+                  Terminal Output
+                </TabsTrigger>
+                <TabsTrigger value="status">
+                  <Download className="h-4 w-4 mr-2" />
+                  Processed Files
+                </TabsTrigger>
+                <TabsTrigger value="info">
+                  <Info className="h-4 w-4 mr-2" />
+                  System Info
+                </TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="terminal">
-              <Terminal ref={terminalRef} output={output} />
-            </TabsContent>
+              <TabsContent value="terminal">
+                <Terminal 
+                  ref={terminalRef}
+                  output={output}
+                  progress={overallProgress}
+                  status={loadingMessage}
+                />
+              </TabsContent>
 
-            <TabsContent value="status">
-              <ProcessStatus files={processedFiles} isProcessing={isProcessing} />
-            </TabsContent>
-            
-            <TabsContent value="info">
-              <DependencyStatus showAll={true} className="animate-in fade-in-50 duration-300" />
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="status">
+                <ProcessStatus files={processedFiles} isProcessing={isProcessing} />
+              </TabsContent>
+              
+              <TabsContent value="info">
+                <DependencyStatus showAll={true} className="animate-in fade-in-50 duration-300" />
+              </TabsContent>
+            </Tabs>
+          </div>
         </div>
       </div>
     </main>

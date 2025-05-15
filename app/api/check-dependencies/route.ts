@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { writeFile, unlink } from "fs/promises";
+import { existsSync } from "fs";
+import { join } from "path";
 import appConfig from "@/lib/config";
 
 const execPromise = promisify(exec);
@@ -27,9 +30,18 @@ interface DependencyCheck {
   optional?: boolean;
 }
 
+interface DirectoryStatus {
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  permissions?: string;
+  error?: string;
+}
+
 export async function GET() {
   try {
     const dependencies: DependencyCheck[] = [];
+    const directories: DirectoryStatus[] = [];
 
     // Check OCRmyPDF
     try {
@@ -130,15 +142,28 @@ export async function GET() {
       });
     }
 
+    // Check directory permissions
+    const uploadDir = join(process.cwd(), "uploads");
+    const processedDir = join(process.cwd(), "processed");
+    
+    const uploadDirStatus = await checkDirectoryPermissions(uploadDir);
+    const processedDirStatus = await checkDirectoryPermissions(processedDir);
+    
+    directories.push(uploadDirStatus);
+    directories.push(processedDirStatus);
+
     return createJsonResponse({
       success: true,
       dependencies,
+      directories,
       // Only required dependencies must be available for the system to work
       allRequiredAvailable: dependencies
         .filter(dep => !dep.optional)
         .every(dep => dep.available),
       // Include overall status too
-      allDependenciesAvailable: dependencies.every(dep => dep.available)
+      allDependenciesAvailable: dependencies.every(dep => dep.available),
+      // Directory permissions status
+      directoriesOk: directories.every(dir => dir.writable)
     });
   } catch (error) {
     console.error("Error checking dependencies:", error);
@@ -149,3 +174,45 @@ export async function GET() {
     }, 500);
   }
 }
+
+// Check directory permissions
+const checkDirectoryPermissions = async (dirPath: string): Promise<DirectoryStatus> => {
+  if (!existsSync(dirPath)) {
+    return {
+      path: dirPath,
+      exists: false,
+      writable: false,
+      error: "Directory does not exist"
+    };
+  }
+
+  try {
+    // Check if directory is writable by writing a test file
+    const testFile = join(dirPath, "test-permission-check.txt");
+    await writeFile(testFile, "test");
+    await unlink(testFile);
+    
+    // Get directory permissions for reporting
+    let permissions: string | undefined = undefined;
+    try {
+      const { stdout } = await execPromise(`ls -la "${dirPath}" | head -n 2 | tail -n 1`);
+      permissions = stdout.trim() || undefined;
+    } catch (e) {
+      // Continue if getting permissions fails
+    }
+    
+    return {
+      path: dirPath,
+      exists: true,
+      writable: true, 
+      permissions,
+    };
+  } catch (error) {
+    return {
+      path: dirPath,
+      exists: true,
+      writable: false,
+      error: (error as Error).message
+    };
+  }
+};

@@ -9,7 +9,7 @@ import appConfig from "@/lib/config"
 export const config = {
   api: {
     bodyParser: false,
-    responseLimit: false, // No limit on response size
+    responseLimit: false,
   },
 }
 
@@ -20,29 +20,26 @@ const createJsonResponse = (data: any, status: number = 200) => {
     {
       status,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       }
     }
   );
 }
 
-// Add timeout to command execution (configurable via environment)
-const maxExecutionTime = appConfig.ocrTimeout; // Default: 10 minutes in milliseconds
+// Add timeout to command execution
+const maxExecutionTime = appConfig.ocrTimeout;
 const execWithTimeout = async (cmd: string, timeout: number) => {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    // Use a different approach for Windows compatibility
     const execOptions = {
       maxBuffer: 10 * 1024 * 1024,
       windowsHide: true
     };
 
-    // On Windows, we need to handle command differently
     const isWindows = process.platform === 'win32';
     const finalCmd = isWindows ? cmd : cmd;
 
     const execProcess = exec(finalCmd, execOptions, (error: any, stdout: string, stderr: string) => {
       if (error) {
-        // Add more context to the error
         error.message = `Command execution failed: ${error.message}\nStdout: ${stdout}\nStderr: ${stderr}`;
         reject(error);
       } else {
@@ -54,7 +51,6 @@ const execWithTimeout = async (cmd: string, timeout: number) => {
     const timeoutId = setTimeout(() => {
       if (execProcess.pid) {
         try {
-          // On Windows, this will terminate the process
           process.kill(execProcess.pid);
         } catch (killError) {
           console.error("Error killing process:", killError);
@@ -63,12 +59,10 @@ const execWithTimeout = async (cmd: string, timeout: number) => {
       reject(new Error(`Command execution timed out after ${timeout / 1000} seconds`));
     }, timeout);
 
-    // Clear timeout if process completes
     execProcess.on('close', () => {
       clearTimeout(timeoutId);
     });
 
-    // Log any stderr output in real-time for debugging
     execProcess.stderr?.on('data', (data) => {
       console.log(`OCRmyPDF stderr: ${data}`);
     });
@@ -81,50 +75,56 @@ const ensureDirectories = async () => {
     const uploadDir = join(process.cwd(), "uploads")
     const processedDir = join(process.cwd(), "processed")
 
+    // Create directories if they don't exist
     if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true })
+      await mkdir(uploadDir, { recursive: true, mode: 0o777 })
       console.log(`Created upload directory: ${uploadDir}`)
+    } else {
+      // Try to set permissions on existing directory if possible (works in most environments)
+      try {
+        // For systems that support chmod
+        const { exec: execCallback } = await import('child_process');
+        const { promisify } = await import('util');
+        const execPromise = promisify(execCallback);
+        await execPromise(`chmod -R 777 "${uploadDir}"`);
+        console.log(`Updated permissions for upload directory: ${uploadDir}`);
+      } catch (chmodError) {
+        console.log(`Note: Could not update permissions for ${uploadDir}. This is expected in some environments.`);
+      }
     }
 
     if (!existsSync(processedDir)) {
-      await mkdir(processedDir, { recursive: true })
+      await mkdir(processedDir, { recursive: true, mode: 0o777 })
       console.log(`Created processed directory: ${processedDir}`)
+    } else {
+      // Try to set permissions on existing directory if possible
+      try {
+        // For systems that support chmod
+        const { exec: execCallback } = await import('child_process');
+        const { promisify } = await import('util');
+        const execPromise = promisify(execCallback);
+        await execPromise(`chmod -R 777 "${processedDir}"`);
+        console.log(`Updated permissions for processed directory: ${processedDir}`);
+      } catch (chmodError) {
+        console.log(`Note: Could not update permissions for ${processedDir}. This is expected in some environments.`);
+      }
     }
 
     // Check if directories are writable
     try {
       const testFile = join(uploadDir, "test-write-permission.txt")
       await writeFile(testFile, "test")
-      await readFile(testFile)
-
-      // Clean up test file
-      try {
-        await unlink(testFile);
-      } catch (cleanupError) {
-        console.warn("Could not remove test file from upload directory:", cleanupError);
-        // Non-fatal error, continue execution
-      }
-
+      await unlink(testFile)
       console.log("Upload directory is writable")
     } catch (error) {
       console.error("Upload directory is not writable:", error)
       throw new Error("Upload directory is not writable")
     }
 
-    // Also verify processed directory is writable
     try {
-      const testProc = join(processedDir, "test-write-permission.txt")
-      await writeFile(testProc, "test")
-      await readFile(testProc)
-
-      // Clean up test file
-      try {
-        await unlink(testProc);
-      } catch (cleanupError) {
-        console.warn("Could not remove test file from processed directory:", cleanupError);
-        // Non-fatal error, continue execution
-      }
-
+      const testFile = join(processedDir, "test-write-permission.txt")
+      await writeFile(testFile, "test")
+      await unlink(testFile)
       console.log("Processed directory is writable")
     } catch (error) {
       console.error("Processed directory is not writable:", error)
@@ -142,11 +142,9 @@ export async function POST(request: NextRequest) {
   console.log("OCR API route called")
 
   try {
-    // Ensure directories exist before processing
     const { uploadDir, processedDir } = await ensureDirectories()
     console.log("Directories ensured")
 
-    // Parse form data with error handling
     let formData;
     try {
       formData = await request.formData();
@@ -160,13 +158,13 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
 
-    const file = formData.get("file") as File
-
-    if (!file) {
-      console.error("No file provided in form data")
+    const file = formData.get("file")
+    if (!file || !(file instanceof File)) {
+      console.error("No file or invalid file provided")
       return createJsonResponse({
         success: false,
-        error: "No file provided"
+        error: "No valid file provided",
+        details: "Please provide a valid PDF file"
       }, 400)
     }
 
@@ -191,8 +189,7 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
 
-    // Validate file size
-    if (file.size > appConfig.maxUploadSize * 1024 * 1024) { // Convert MB to bytes
+    if (file.size > appConfig.maxUploadSize * 1024 * 1024) {
       console.error(`File too large: ${file.size} bytes`);
       return createJsonResponse({
         success: false,
@@ -215,35 +212,21 @@ export async function POST(request: NextRequest) {
     const rotate = (formData.get("rotate") as string) || "auto"
     const pdfRenderer = (formData.get("pdfRenderer") as string) || "auto"
 
-    console.log("OCR options:", { language, deskew, skipText, force, redoOcr, removeBackground, clean, optimize, rotate, pdfRenderer })
-
-    // Create unique filename with better sanitization
     const timestamp = Date.now()
     const originalFilename = file.name
-
-    // Extract extension first
-    const fileExtension = originalFilename.split(".").pop()?.toLowerCase() || "pdf"
-
-    // Generate a base filename without the extension and with special characters removed
-    // Use a more thorough sanitization approach
     const baseFilename = originalFilename
-      .substring(0, originalFilename.length - fileExtension.length - 1) // Remove extension
-      .replace(/[^a-zA-Z0-9]/g, "_") // Replace ANY non-alphanumeric char with underscore
-      .replace(/_+/g, "_") // Replace multiple underscores with a single one
-      .replace(/^_|_$/g, "") // Remove leading/trailing underscores
-      .substring(0, 100); // Limit length to avoid path issues
+      .replace(/\.pdf$/i, '')
+      .replace(/[^a-z0-9]/gi, '_')
+      .substring(0, 100)
 
-    // Create final filenames
     const safeFilename = `${baseFilename}_${timestamp}`
-    const inputFilePath = `${safeFilename}.${fileExtension}`
+    const inputFilePath = `${safeFilename}.${fileExt}`
     const outputFilePath = `${safeFilename}_ocr.pdf`
 
     console.log(`Original filename: ${originalFilename}`)
-    console.log(`Sanitized filename: ${safeFilename}.${fileExtension}`)
-
+    console.log(`Sanitized filename: ${safeFilename}.${fileExt}`)
     console.log("File paths:", { inputFilePath, outputFilePath })
 
-    // Save the uploaded file
     try {
       console.log("Starting file conversion to buffer...");
       let bytes;
@@ -260,11 +243,9 @@ export async function POST(request: NextRequest) {
       }
 
       const buffer = Buffer.from(bytes);
-      console.log(`Buffer created with size: ${buffer.length} bytes`);
-
       const inputPath = join(uploadDir, inputFilePath);
+      const outputPath = join(processedDir, outputFilePath);
 
-      // Write file in chunks to avoid memory issues with large files
       try {
         await writeFile(inputPath, buffer);
         console.log(`File saved to ${inputPath}`);
@@ -277,394 +258,185 @@ export async function POST(request: NextRequest) {
         }, 500);
       }
 
-      // Verify file was saved correctly
-      try {
-        const fileStats = await stat(inputPath);
-        console.log(`File size on disk: ${fileStats.size} bytes`);
+      const command = await buildOCRCommand({
+        inputPath,
+        outputPath,
+        language,
+        deskew,
+        skipText,
+        force,
+        redoOcr,
+        removeBackground,
+        clean,
+        optimize,
+        rotate,
+        pdfRenderer
+      });
 
-        if (fileStats.size === 0) {
-          throw new Error("File was saved but has zero size");
+      console.log(`Executing command: ${command}`);
+
+      try {
+        const { stdout, stderr } = await execWithTimeout(command, maxExecutionTime);
+        console.log("OCR process completed");
+
+        if (!existsSync(outputPath)) {
+          throw new Error(`OCR process completed but output file was not created: ${outputPath}`);
         }
 
-        if (fileStats.size !== buffer.length) {
-          console.warn(`Warning: File size on disk (${fileStats.size}) differs from buffer size (${buffer.length})`);
-        }
-      } catch (statError) {
-        console.error("Error verifying saved file:", statError);
-        return createJsonResponse({
-          success: false,
-          error: "Failed to verify saved file",
-          details: (statError as Error).message
-        }, 500);
-      }
-    } catch (error) {
-      console.error("Unexpected error during file saving process:", error);
-      return createJsonResponse({
-        success: false,
-        error: "Failed to save uploaded file",
-        details: (error as Error).message
-      }, 500);
-    }
-
-    // Define variables outside the try block so they're accessible in catch
-    let command = "";
-    const inputPath = join(uploadDir, inputFilePath);
-    const outputPath = join(processedDir, outputFilePath);
-
-    // Properly escape paths for command line based on platform
-    const isWindows = process.platform === 'win32';
-
-    // Windows needs different escaping than Unix
-    let escapedInputPath, escapedOutputPath;
-
-    if (isWindows) {
-      // For Windows, use double quotes and escape any existing quotes
-      escapedInputPath = inputPath.replace(/"/g, '\\"');
-      escapedOutputPath = outputPath.replace(/"/g, '\\"');
-    } else {
-      // For Unix, escape spaces and special characters
-      escapedInputPath = inputPath.replace(/([\s'"\[\](){}$&*?])/g, '\\$1');
-      escapedOutputPath = outputPath.replace(/([\s'"\[\](){}$&*?])/g, '\\$1');
-    }
-
-    try {
-      // Build OCRmyPDF command
-      command = `ocrmypdf`
-
-      if (language !== "eng") {
-        command += ` --language ${language}`
-      }
-
-      if (deskew) {
-        command += ` --deskew`
-      }
-
-      if (skipText) {
-        command += ` --skip-text`
-      }
-
-      if (force) {
-        command += ` --force-ocr`
-      }
-      if (redoOcr) {
-        command += ` --redo-ocr`
-      }
-      if (removeBackground) {
-        command += ` --remove-background`
-      }
-      if (clean) {
-        command += ` --clean`
-      }
-
-      if (optimize > 0) {
-        command += ` --optimize ${optimize}`
-      }
-
-      if (rotate !== "auto") {
-        command += ` --rotate-pages ${rotate}`
-      }
-      if (pdfRenderer !== "auto") {
-        command += ` --pdf-renderer ${pdfRenderer}`
-      }
-
-      // Add quotes differently based on platform
-      if (isWindows) {
-        // For Windows, use double quotes
-        command += ` "${escapedInputPath}" "${escapedOutputPath}"`
-      } else {
-        // For Unix, use single quotes which handle spaces better
-        command += ` '${escapedInputPath}' '${escapedOutputPath}'`
-      }
-
-      // Log the full command for debugging
-      console.log(`Full command to execute: ${command}`)
-
-      // Check if jbig2 is available and disable optimization if not
-      try {
-        const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
-        if (jbig2Version.includes('not found') || jbig2Error) {
-          console.log("jbig2 not found, disabling optimization");
-          // Remove any optimize flags if jbig2 is not available
-          command = command.replace(/--optimize \d+/g, '');
-        }
-      } catch (jbig2Error) {
-        console.log("Error checking jbig2:", jbig2Error);
-        // Remove any optimize flags if there was an error checking jbig2
-        command = command.replace(/--optimize \d+/g, '');
-      }
-
-      console.log(`Executing command: ${command}`)
-
-      const { stdout, stderr } = await execWithTimeout(command, maxExecutionTime);
-      console.log("OCR process completed");
-
-      // Check if output file was actually created
-      if (!existsSync(outputPath)) {
-        throw new Error(`OCR process completed but output file was not created: ${outputPath}`);
-      }
-
-      // Verify output file size
-      try {
         const outputStats = await stat(outputPath);
-        console.log(`Output file size: ${outputStats.size} bytes`);
-
         if (outputStats.size === 0) {
           throw new Error("Output file was created but has zero size");
         }
-      } catch (statError) {
-        console.error("Error verifying output file:", statError);
-        throw new Error(`Failed to verify output file: ${(statError as Error).message}`);
-      }
 
-      // Truncate stdout and stderr to prevent JSON response size issues
-      const MAX_LOG_LENGTH = 10000; // Limit to 10K characters
-      const truncatedStdout = stdout.length > MAX_LOG_LENGTH
-        ? stdout.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-        : stdout;
-      const truncatedStderr = stderr.length > MAX_LOG_LENGTH
-        ? stderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-        : stderr;
+        const MAX_LOG_LENGTH = 10000;
+        const truncatedStdout = stdout.length > MAX_LOG_LENGTH
+          ? stdout.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
+          : stdout;
+        const truncatedStderr = stderr.length > MAX_LOG_LENGTH
+          ? stderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
+          : stderr;
 
-      return createJsonResponse({
-        success: true,
-        inputFile: inputFilePath,
-        outputFile: outputFilePath,
-        stdout: truncatedStdout,
-        stderr: truncatedStderr,
-      })
-    } catch (error: any) {
-      console.error("Error executing OCRmyPDF:", error)
-      const stderrOutput = (error as any).stderr || ''
-      // Detect if PDF already has text, retry with skip-text
-      if (stderrOutput.toLowerCase().includes('already contains text')) {
-        console.log('Auto-retrying OCR with --skip-text due to existing text')
-        try {
-          // retry command with skip-text - rebuild the command to ensure proper escaping
-          let retryCmd = `ocrmypdf`
+        return createJsonResponse({
+          success: true,
+          inputFile: inputFilePath,
+          outputFile: outputFilePath,
+          fileSize: outputStats.size,
+          stdout: truncatedStdout,
+          stderr: truncatedStderr,
+          command,
+          timestamp: new Date().toISOString()
+        });
+      } catch (execError: any) {
+        console.error("Error executing OCRmyPDF:", execError);
+        const errorMessage = execError.message || String(execError);
+        const stderrOutput = execError.stderr || '';
 
-          if (language !== "eng") {
-            retryCmd += ` --language ${language}`
-          }
-
-          if (deskew) {
-            retryCmd += ` --deskew`
-          }
-
-          // Add skip-text flag
-          retryCmd += ` --skip-text`
-
-          if (force) {
-            retryCmd += ` --force-ocr`
-          }
-          if (redoOcr) {
-            retryCmd += ` --redo-ocr`
-          }
-          if (removeBackground) {
-            retryCmd += ` --remove-background`
-          }
-          if (clean) {
-            retryCmd += ` --clean`
-          }
-
-          if (optimize > 0) {
-            retryCmd += ` --optimize ${optimize}`
-          }
-
-          if (rotate !== "auto") {
-            retryCmd += ` --rotate-pages ${rotate}`
-          }
-          if (pdfRenderer !== "auto") {
-            retryCmd += ` --pdf-renderer ${pdfRenderer}`
-          }
-
-          // Add quotes differently based on platform
-          if (isWindows) {
-            // For Windows, use double quotes
-            retryCmd += ` "${escapedInputPath}" "${escapedOutputPath}"`
-          } else {
-            // For Unix, use single quotes which handle spaces better
-            retryCmd += ` '${escapedInputPath}' '${escapedOutputPath}'`
-          }
-
-          // Log the full retry command for debugging
-          console.log(`Full retry command to execute: ${retryCmd}`)
-
-          // Check if jbig2 is available and disable optimization if not
-          try {
-            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
-            if (jbig2Version.includes('not found') || jbig2Error) {
-              console.log("jbig2 not found, disabling optimization in retry command");
-              // Remove any optimize flags if jbig2 is not available
-              retryCmd = retryCmd.replace(/--optimize \d+/g, '');
-            }
-          } catch (jbig2Error) {
-            console.log("Error checking jbig2 in retry:", jbig2Error);
-            // Remove any optimize flags if there was an error checking jbig2
-            retryCmd = retryCmd.replace(/--optimize \d+/g, '');
-          }
-          console.log(`Retry command: ${retryCmd}`)
-          const { stdout: rstdout, stderr: rstderr } = await execWithTimeout(retryCmd, maxExecutionTime)
-
-          // Truncate stdout and stderr to prevent JSON response size issues
-          const MAX_LOG_LENGTH = 10000; // Limit to 10K characters
-          const truncatedStdout = rstdout.length > MAX_LOG_LENGTH
-            ? rstdout.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-            : rstdout;
-          const truncatedStderr = rstderr.length > MAX_LOG_LENGTH
-            ? rstderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-            : rstderr;
-
-          return createJsonResponse({
-            success: true,
-            inputFile: inputFilePath,
-            outputFile: outputFilePath,
-            stdout: truncatedStdout,
-            stderr: truncatedStderr
-          })
-        } catch (retryError: any) {
-          console.error('Retry with skip-text failed:', retryError)
+        if (stderrOutput.toLowerCase().includes('already contains text')) {
           return createJsonResponse({
             success: false,
             errorType: 'has_text',
-            error: 'PDF already contains text and skip-text retry failed',
-            details: retryError instanceof Error ? retryError.message : String(retryError)
-          }, 500)
+            error: 'PDF already contains text',
+            details: errorMessage
+          }, 400);
         }
-      }
-      // Detect tagged PDF error, retry with force-ocr
-      if (/tagged pdf/i.test(stderrOutput)) {
-        console.log('Auto-retrying OCR with --force-ocr due to tagged PDF')
-        try {
-          // retry command with force-ocr - rebuild the command to ensure proper escaping
-          let retryCmd = `ocrmypdf`
 
-          if (language !== "eng") {
-            retryCmd += ` --language ${language}`
-          }
-
-          if (deskew) {
-            retryCmd += ` --deskew`
-          }
-
-          if (skipText) {
-            retryCmd += ` --skip-text`
-          }
-
-          // Add force-ocr flag
-          retryCmd += ` --force-ocr`
-
-          if (redoOcr) {
-            retryCmd += ` --redo-ocr`
-          }
-          if (removeBackground) {
-            retryCmd += ` --remove-background`
-          }
-          if (clean) {
-            retryCmd += ` --clean`
-          }
-
-          if (optimize > 0) {
-            retryCmd += ` --optimize ${optimize}`
-          }
-
-          if (rotate !== "auto") {
-            retryCmd += ` --rotate-pages ${rotate}`
-          }
-          if (pdfRenderer !== "auto") {
-            retryCmd += ` --pdf-renderer ${pdfRenderer}`
-          }
-
-          // Add quotes differently based on platform
-          if (isWindows) {
-            // For Windows, use double quotes
-            retryCmd += ` "${escapedInputPath}" "${escapedOutputPath}"`
-          } else {
-            // For Unix, use single quotes which handle spaces better
-            retryCmd += ` '${escapedInputPath}' '${escapedOutputPath}'`
-          }
-
-          // Log the full retry command for debugging
-          console.log(`Full retry command to execute: ${retryCmd}`)
-
-          // Check if jbig2 is available and disable optimization if not
-          try {
-            const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
-            if (jbig2Version.includes('not found') || jbig2Error) {
-              console.log("jbig2 not found, disabling optimization in retry command");
-              // Remove any optimize flags if jbig2 is not available
-              retryCmd = retryCmd.replace(/--optimize \d+/g, '');
-            }
-          } catch (jbig2Error) {
-            console.log("Error checking jbig2 in retry:", jbig2Error);
-            // Remove any optimize flags if there was an error checking jbig2
-            retryCmd = retryCmd.replace(/--optimize \d+/g, '');
-          }
-
-          console.log(`Retry command: ${retryCmd}`)
-          const { stdout: rstdout, stderr: rstderr } = await execWithTimeout(retryCmd, maxExecutionTime)
-
-          // Truncate stdout and stderr to prevent JSON response size issues
-          const MAX_LOG_LENGTH = 10000; // Limit to 10K characters
-          const truncatedStdout = rstdout.length > MAX_LOG_LENGTH
-            ? rstdout.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-            : rstdout;
-          const truncatedStderr = rstderr.length > MAX_LOG_LENGTH
-            ? rstderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
-            : rstderr;
-
-          return createJsonResponse({
-            success: true,
-            inputFile: inputFilePath,
-            outputFile: outputFilePath,
-            stdout: truncatedStdout,
-            stderr: truncatedStderr
-          })
-        } catch (retryError: any) {
-          console.error('Retry with force-ocr failed:', retryError)
+        if (stderrOutput.toLowerCase().includes('tagged pdf')) {
           return createJsonResponse({
             success: false,
             errorType: 'tagged_pdf',
-            error: 'PDF is a tagged PDF and force-ocr retry failed',
-            details: retryError instanceof Error ? retryError.message : String(retryError)
-          }, 500)
+            error: 'PDF is a tagged PDF',
+            details: errorMessage
+          }, 400);
         }
+
+        return createJsonResponse({
+          success: false,
+          error: 'OCR process failed',
+          details: errorMessage
+        }, 500);
       }
-      // Generic OCR error
+    } catch (error) {
+      console.error("Unexpected error during OCR process:", error);
       return createJsonResponse({
         success: false,
-        error: 'Failed to execute OCRmyPDF',
-        details: error instanceof Error ? error.message : String(error),
-        command: command // Include the command for debugging
-      }, 500)
+        error: "OCR process failed",
+        details: error instanceof Error ? error.message : String(error)
+      }, 500);
     }
   } catch (error) {
-    console.error("Unhandled error in OCR API route:", error)
-
-    // Ensure we always return a valid JSON response
-    try {
-      // Create a safe error message that can be serialized to JSON
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error && process.env.NODE_ENV === 'development'
-        ? error.stack
-        : undefined;
-
-      // Ensure the response is properly formatted as JSON
-      return createJsonResponse({
-        success: false,
-        error: "Internal server error",
-        details: errorMessage,
-        stack: errorStack
-      }, 500);
-    } catch (jsonError) {
-      // If JSON serialization fails, still return a JSON response with minimal data
-      console.error("Failed to create JSON error response:", jsonError);
-      return createJsonResponse({
-        success: false,
-        error: "Internal server error",
-        details: "Failed to serialize error details"
-      }, 500);
-    }
+    console.error("Unhandled error in OCR API route:", error);
+    return createJsonResponse({
+      success: false,
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : String(error)
+    }, 500);
   }
+}
+
+// Helper function to build OCR command
+async function buildOCRCommand({
+  inputPath,
+  outputPath,
+  language,
+  deskew,
+  skipText,
+  force,
+  redoOcr,
+  removeBackground,
+  clean,
+  optimize,
+  rotate,
+  pdfRenderer
+}: {
+  inputPath: string;
+  outputPath: string;
+  language: string;
+  deskew: boolean;
+  skipText: boolean;
+  force: boolean;
+  redoOcr: boolean;
+  removeBackground: boolean;
+  clean: boolean;
+  optimize: number;
+  rotate: string;
+  pdfRenderer: string;
+}) {
+  const isWindows = process.platform === 'win32';
+  const escapedInputPath = isWindows ? inputPath : inputPath.replace(/ /g, '\\ ');
+  const escapedOutputPath = isWindows ? outputPath : outputPath.replace(/ /g, '\\ ');
+
+  let command = `ocrmypdf`;
+
+  if (language !== "eng") {
+    command += ` --language ${language}`;
+  }
+  if (deskew) {
+    command += ` --deskew`;
+  }
+  if (skipText) {
+    command += ` --skip-text`;
+  }
+  if (force) {
+    command += ` --force-ocr`;
+  }
+  if (redoOcr) {
+    command += ` --redo-ocr`;
+  }
+  if (removeBackground) {
+    command += ` --remove-background`;
+  }
+  if (clean) {
+    command += ` --clean`;
+  }
+  if (optimize > 0) {
+    command += ` --optimize ${optimize}`;
+  }
+  if (rotate !== "auto") {
+    command += ` --rotate-pages ${rotate}`;
+  }
+  if (pdfRenderer !== "auto") {
+    command += ` --pdf-renderer ${pdfRenderer}`;
+  }
+
+  // Check if jbig2 is available and disable optimization if not
+  try {
+    const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
+    if (jbig2Version.includes('not found') || jbig2Error) {
+      console.log("jbig2 not found, disabling optimization");
+      command = command.replace(/--optimize \d+/g, '');
+    }
+  } catch (jbig2Error) {
+    console.log("Error checking jbig2:", jbig2Error);
+    command = command.replace(/--optimize \d+/g, '');
+  }
+
+  if (isWindows) {
+    command += ` "${escapedInputPath}" "${escapedOutputPath}"`;
+  } else {
+    command += ` '${escapedInputPath}' '${escapedOutputPath}'`;
+  }
+
+  return command;
 }
 
 export async function GET() {
