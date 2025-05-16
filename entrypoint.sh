@@ -14,6 +14,14 @@ echo "==> Setting up OCR application"
 echo "==> Ensuring directories exist"
 mkdir -p "$UPLOADS_DIR" "$PROCESSED_DIR"
 
+# Check jbig2 availability
+echo "==> Checking jbig2 availability"
+if [ -f "/app/check-jbig2.sh" ]; then
+  /app/check-jbig2.sh
+else
+  echo "  Warning: check-jbig2.sh not found, skipping jbig2 validation"
+fi
+
 # Set permissions (retry with sudo if normal permission setting fails)
 echo "==> Setting directory permissions"
 chmod_dirs() {

@@ -17,6 +17,7 @@ import { LoadingScreen } from "@/components/loading-screen"
 import { BrandedNotification } from "@/components/branded-notification"
 import { DependencyStatus } from "@/components/dependency-status"
 import { cn } from "@/lib/utils"
+import { checkDirectoryPermissions } from "@/lib/permissions"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
 
@@ -228,10 +229,15 @@ export default function Home() {
             return data; // Return data with outputFile info
           }
           
-          // If this is a known error type like "has_text" that could benefit from retry
-          if (data.errorType === 'has_text' && !retry) {
-            appendOutput("Attempting retry with force-ocr option...");
-            return await handleSuccessResponse(data, fileName, retry);
+          // Special handling for HTTP 400 errors which might actually be successful
+          if (response.status === 400 && data.errorType) {
+            appendOutput(`Processing info: ${data.errorType} - ${data.error || ''}`);
+            
+            // If this is a known error type like "has_text" that could benefit from retry
+            if (data.errorType === 'has_text' && !retry) {
+              appendOutput("Attempting retry with force-ocr option...");
+              return await handleSuccessResponse(data, fileName, retry);
+            }
           }
           
           // Just return the data - it contains structured error information
@@ -342,7 +348,18 @@ export default function Home() {
       // Handle known error types and retry if needed
       if (data.errorType === 'has_text' && !retry) {
         appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr...");
+        
+        // Log recovery attempt for analytics
+        console.log(`Recovery attempt for ${fileName}: Retrying with force-ocr option`);
+        
+        // Create a new FormData with current file
         const newFormData = new FormData();
+        
+        // Ensure we have a valid file to retry with
+        if (!files[currentFileIndex]) {
+          throw new Error("File not available for retry operation");
+        }
+        
         newFormData.append("file", files[currentFileIndex]);
         newFormData.append("force", "true");
         
@@ -384,9 +401,27 @@ export default function Home() {
     // Process successful response
     if (data.stdout) {
       appendOutput(`📋 OCR Output: ${data.stdout}`);
+      
+      // Check for jbig2 optimization info
+      if (data.stdout.includes('jbig2') || data.stdout.includes('JBIG2')) {
+        appendOutput(`🔍 Using JBIG2 optimization for better file compression`);
+      }
     }
     if (data.stderr) {
-      appendOutput(`⚠️ OCR Warnings: ${data.stderr}`);
+      const stderrLines = data.stderr.split('\n');
+      let hasJbig2Issues = false;
+      
+      // Check for jbig2 related warnings
+      for (const line of stderrLines) {
+        if (line.toLowerCase().includes('jbig2') && (line.toLowerCase().includes('not found') || line.toLowerCase().includes('error'))) {
+          hasJbig2Issues = true;
+        }
+        appendOutput(`⚠️ OCR Warning: ${line}`);
+      }
+      
+      if (hasJbig2Issues) {
+        appendOutput(`ℹ️ JBIG2 optimization not available. PDF file size may be larger than optimal.`);
+      }
     }
     if (!data.outputFile) {
       appendOutput("⚠️ Warning: No output file path received from server");
@@ -464,13 +499,19 @@ export default function Home() {
       return;
     }
 
-    // Check directory permissions before starting OCR
-    const hasPermissions = await checkDirectoryPermissions();
-    if (!hasPermissions) {
+    // Comprehensive directory permission check before starting OCR
+    const permissionCheck = await checkDirectoryPermissions();
+    if (!permissionCheck.allPermissionsOk) {
+      // Create detailed error message with specific directories that failed
+      const failedDirs = permissionCheck.results
+        .filter(r => !r.exists || !r.writable)
+        .map(r => `${r.directory}: ${!r.exists ? 'Does not exist' : 'Not writable'}`)
+        .join(', ');
+      
       setNotificationProps({
         title: "Permission Error",
-        description: "The application doesn't have permission to write to required directories. This will cause OCR processing to fail.",
-        variant: "destructive"
+        description: `The application doesn't have permission to access required directories: ${failedDirs}. This will cause OCR processing to fail.`,
+        variant: "error"
       });
       setShowNotification(true);
       return;

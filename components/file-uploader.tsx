@@ -34,10 +34,18 @@ export function FileUploader({ onFileUpload, files, onRemoveFile }: FileUploader
     e.preventDefault();
     setIsDragging(false);
 
-    // Filter for PDF files
-    const pdfFiles = Array.from(e.dataTransfer.files).filter(
-      (file) => file.type === "application/pdf"
-    );
+    // Filter for PDF files - check both MIME type and file extension
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const pdfFiles = droppedFiles.filter((file) => {
+      const isPdfMime = file.type === "application/pdf";
+      const isPdfExtension = file.name.toLowerCase().endsWith('.pdf');
+      return isPdfMime || isPdfExtension;
+    });
+
+    // Notify if non-PDF files were filtered out
+    if (droppedFiles.length > pdfFiles.length) {
+      alert(`${droppedFiles.length - pdfFiles.length} file(s) were ignored because they are not PDF files.`);
+    }
 
     // Filter out files that are too large
     const validFiles = pdfFiles.filter((file) => {
@@ -55,10 +63,18 @@ export function FileUploader({ onFileUpload, files, onRemoveFile }: FileUploader
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      // Filter for PDF files
-      const pdfFiles = Array.from(e.target.files).filter(
-        (file) => file.type === "application/pdf"
-      );
+      // Filter for PDF files - check both MIME type and file extension
+      const selectedFiles = Array.from(e.target.files);
+      const pdfFiles = selectedFiles.filter((file) => {
+        const isPdfMime = file.type === "application/pdf";
+        const isPdfExtension = file.name.toLowerCase().endsWith('.pdf');
+        return isPdfMime || isPdfExtension;
+      });
+      
+      // Notify if non-PDF files were filtered out
+      if (selectedFiles.length > pdfFiles.length) {
+        alert(`${selectedFiles.length - pdfFiles.length} file(s) were ignored because they are not PDF files.`);
+      }
 
       // Filter out files that are too large
       const validFiles = pdfFiles.filter((file) => {

@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises"
-import { join } from "path"
+import { join, resolve } from "path"
 import { exec } from "child_process"
 import { existsSync } from "fs"
 import appConfig from "@/lib/config"
+import logger from "@/lib/logger"
 
 // Configure Next.js to handle large files
 export const config = {
@@ -139,18 +140,28 @@ const ensureDirectories = async () => {
 }
 
 export async function POST(request: NextRequest) {
-  console.log("OCR API route called")
+  logger.info("OCR API route called", { context: "ocr-api" })
 
   try {
     const { uploadDir, processedDir } = await ensureDirectories()
-    console.log("Directories ensured")
+    logger.debug("Directories ensured", { 
+      context: "ocr-api", 
+      data: { uploadDir, processedDir } 
+    })
 
     let formData;
     try {
       formData = await request.formData();
-      console.log("Form data parsed successfully");
+      logger.debug("Form data parsed successfully", { context: "ocr-api" });
     } catch (formError) {
-      console.error("Error parsing form data:", formError);
+      logger.logError(formError as Error, "Error parsing form data", { 
+        context: "ocr-api",
+        data: { 
+          contentType: request.headers.get('content-type'),
+          method: request.method
+        }
+      });
+      
       return createJsonResponse({
         success: false,
         error: "Failed to parse form data",
@@ -296,6 +307,15 @@ export async function POST(request: NextRequest) {
           ? stderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
           : stderr;
 
+        // Check if jbig2 was used in processing
+        const jbig2Used = stdout.toLowerCase().includes('jbig2') || 
+                         !stderr.toLowerCase().includes('jbig2 not found');
+        
+        // Calculate optimization metrics if available
+        const inputStats = existsSync(inputPath) ? await stat(inputPath) : null;
+        const optimizationRate = inputStats ? 
+          Math.round((1 - (outputStats.size / inputStats.size)) * 100) : null;
+        
         return createJsonResponse({
           success: true,
           inputFile: inputFilePath,
@@ -304,7 +324,14 @@ export async function POST(request: NextRequest) {
           stdout: truncatedStdout,
           stderr: truncatedStderr,
           command,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          optimization: {
+            jbig2Used,
+            inputSize: inputStats?.size,
+            outputSize: outputStats.size,
+            reductionPercent: optimizationRate,
+            jbig2Path: jbig2Used ? appConfig.jbig2Path : null
+          }
         });
       } catch (execError: any) {
         console.error("Error executing OCRmyPDF:", execError);
@@ -420,13 +447,80 @@ async function buildOCRCommand({
 
   // Check if jbig2 is available and disable optimization if not
   try {
-    const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
-    if (jbig2Version.includes('not found') || jbig2Error) {
-      console.log("jbig2 not found, disabling optimization");
+    // Starting with the config path, check multiple possible locations for jbig2
+    const localSourceBuild = join(process.cwd(), 'jbig2enc/src/jbig2');
+    const jbig2Paths = [
+      appConfig.jbig2Path,
+      localSourceBuild,
+      '/usr/local/bin/jbig2',
+      '/usr/bin/jbig2',
+      'jbig2' // Let the system find it in PATH
+    ];
+    
+    let jbig2Found = false;
+    let workingPath = '';
+    let jbig2Version = '';
+    
+    for (const path of jbig2Paths) {
+      try {
+        // Skip duplicate paths
+        if (path === workingPath) continue;
+        
+        const { stdout } = await execWithTimeout(`"${path}" --version`, 2000);
+        if (!stdout.includes('not found')) {
+          jbig2Found = true;
+          workingPath = path;
+          jbig2Version = stdout.trim();
+          break;
+        }
+      } catch (e) {
+        // Skip to next path
+      }
+    }
+    
+    if (!jbig2Found) {
+      logger.warn("jbig2 not found, disabling optimization", {
+        context: 'ocr-command',
+        data: { 
+          searchedPaths: jbig2Paths,
+          optimizationImpact: "File size will be larger without jbig2 optimization"
+        }
+      });
+      
+      // Log guidance for installing jbig2
+      logger.info("To enable better PDF optimization, install jbig2enc", {
+        context: 'ocr-command',
+        data: {
+          installMethod1: "sudo apt-get install jbig2enc",
+          installMethod2: "Run the included build-jbig2.sh script",
+          buildScript: "/workspaces/ocr-app/build-jbig2.sh"
+        }
+      });
+      
+      // Remove optimization flag
       command = command.replace(/--optimize \d+/g, '');
+    } else {
+      logger.info(`Found jbig2 at ${workingPath}, enabling optimization`, {
+        context: 'ocr-command',
+        data: {
+          version: jbig2Version,
+          configuredPath: appConfig.jbig2Path,
+          actualPath: workingPath
+        }
+      });
+      
+      // If we're using a different path than configured, use the absolute path in command
+      if (workingPath !== appConfig.jbig2Path) {
+        // OCRmyPDF has a --jbig2-lossy flag, but we don't need to modify anything here
+        // as it will automatically use the jbig2 in PATH or we can set the env var
+        process.env.JBIG2_PATH = workingPath;
+      }
     }
   } catch (jbig2Error) {
-    console.log("Error checking jbig2:", jbig2Error);
+    logger.error("Error checking jbig2", {
+      context: 'ocr-command',
+      data: { error: jbig2Error }
+    });
     command = command.replace(/--optimize \d+/g, '');
   }
 

@@ -100,14 +100,38 @@ export async function GET() {
 
     // Check jbig2
     try {
-      const { stdout: jbig2Version } = await execPromise(`${appConfig.jbig2Path} --version || echo 'not found'`);
-      const available = !jbig2Version.includes('not found');
+      // Check multiple possible locations for jbig2
+      const jbig2Paths = [
+        appConfig.jbig2Path,
+        '/usr/local/bin/jbig2',
+        '/usr/bin/jbig2',
+        'jbig2' // Let the system find it in PATH
+      ];
+      
+      let jbig2Found = false;
+      let jbig2Version = '';
+      let jbig2Path = appConfig.jbig2Path;
+      
+      for (const path of jbig2Paths) {
+        try {
+          const { stdout } = await execPromise(`${path} --version || echo 'not found'`);
+          if (!stdout.includes('not found')) {
+            jbig2Found = true;
+            jbig2Version = stdout.trim();
+            jbig2Path = path;
+            break;
+          }
+        } catch (e) {
+          // Skip to next path
+        }
+      }
+      
       dependencies.push({
         name: "jbig2enc",
-        command: appConfig.jbig2Path,
-        version: available ? jbig2Version.trim() : undefined,
-        available: available,
-        error: available ? undefined : "jbig2 not found",
+        command: jbig2Path,
+        version: jbig2Found ? jbig2Version : undefined,
+        available: jbig2Found,
+        error: jbig2Found ? undefined : "jbig2 not found in any standard location",
         optional: true // Mark as optional
       });
     } catch (error) {
