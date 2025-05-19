@@ -158,13 +158,23 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
 
-    const file = formData.get("file")
-    if (!file || !(file instanceof File)) {
-      console.error("No file or invalid file provided")
+    const file = formData.get("file") as any
+    if (!file) {
+      console.error("No file provided")
       return createJsonResponse({
         success: false,
-        error: "No valid file provided",
-        details: "Please provide a valid PDF file"
+        error: "No file provided",
+        details: "Please provide a PDF file"
+      }, 400)
+    }
+    
+    // Check if file has necessary properties instead of instanceof check
+    if (!file.name || !file.type || !file.size || typeof file.arrayBuffer !== 'function') {
+      console.error("Invalid file object provided")
+      return createJsonResponse({
+        success: false,
+        error: "Invalid file provided",
+        details: "The provided file does not have the expected properties"
       }, 400)
     }
 
@@ -278,13 +288,19 @@ export async function POST(request: NextRequest) {
       try {
         const { stdout, stderr } = await execWithTimeout(command, maxExecutionTime);
         console.log("OCR process completed");
+        console.log("Checking output file:", outputPath);
 
         if (!existsSync(outputPath)) {
+          console.error(`Output file was not created at: ${outputPath}`);
           throw new Error(`OCR process completed but output file was not created: ${outputPath}`);
         }
 
+        console.log(`Output file exists at: ${outputPath}`);
         const outputStats = await stat(outputPath);
+        console.log(`Output file size: ${outputStats.size} bytes`);
+        
         if (outputStats.size === 0) {
+          console.error("Output file has zero size");
           throw new Error("Output file was created but has zero size");
         }
 
@@ -296,16 +312,20 @@ export async function POST(request: NextRequest) {
           ? stderr.substring(0, MAX_LOG_LENGTH) + "... [truncated]"
           : stderr;
 
-        return createJsonResponse({
+        // Ensure output file path is included in the response
+        const responseData = {
           success: true,
           inputFile: inputFilePath,
-          outputFile: outputFilePath,
+          outputFile: outputFilePath, // This is critical for the frontend
           fileSize: outputStats.size,
           stdout: truncatedStdout,
           stderr: truncatedStderr,
           command,
           timestamp: new Date().toISOString()
-        });
+        };
+        
+        console.log("Sending response with output file path:", outputFilePath);
+        return createJsonResponse(responseData);
       } catch (execError: any) {
         console.error("Error executing OCRmyPDF:", execError);
         const errorMessage = execError.message || String(execError);
@@ -418,16 +438,65 @@ async function buildOCRCommand({
     command += ` --pdf-renderer ${pdfRenderer}`;
   }
 
-  // Check if jbig2 is available and disable optimization if not
+  // Check if jbig2 is available and use it if possible
   try {
-    const { stdout: jbig2Version, stderr: jbig2Error } = await execWithTimeout(`${appConfig.jbig2Path} --version || echo 'not found'`, 5000);
-    if (jbig2Version.includes('not found') || jbig2Error) {
-      console.log("jbig2 not found, disabling optimization");
-      command = command.replace(/--optimize \d+/g, '');
+    let jbig2Path = '';
+    let jbig2Found = false;
+    
+    // Try multiple possible locations for jbig2
+    const possiblePaths = [
+      '/usr/bin/jbig2',
+      appConfig.jbig2Path,
+      '/usr/local/bin/jbig2',
+      '/opt/homebrew/bin/jbig2'
+    ];
+    
+    for (const path of possiblePaths) {
+      try {
+        const { stdout } = await execWithTimeout(`${path} --version`, 2000);
+        if (stdout && !stdout.includes('not found')) {
+          jbig2Path = path;
+          jbig2Found = true;
+          console.log(`jbig2 found at ${path}: ${stdout.trim()}`);
+          break;
+        }
+      } catch (e) {
+        // Continue to next path
+      }
+    }
+    
+    if (!jbig2Found) {
+      // Try using 'which' command as a fallback
+      try {
+        const { stdout: whichOutput } = await execWithTimeout('which jbig2', 2000);
+        if (whichOutput && whichOutput.trim()) {
+          jbig2Path = whichOutput.trim();
+          const { stdout } = await execWithTimeout(`${jbig2Path} --version`, 2000);
+          jbig2Found = true;
+          console.log(`jbig2 found via 'which' at ${jbig2Path}: ${stdout.trim()}`);
+        }
+      } catch (e) {
+        // Couldn't find with 'which' either
+      }
+    }
+    
+    if (jbig2Found) {
+      // Explicitly set the jbig2 path for optimization
+      command += ` --jbig2-lossy`;
+    } else {
+      console.log("jbig2 not found, disabling advanced optimization");
+      
+      // Keep basic optimization but remove high levels
+      if (command.includes('--optimize 3') || command.includes('--optimize 4')) {
+        command = command.replace(/--optimize [34]/g, '--optimize 2');
+      }
     }
   } catch (jbig2Error) {
     console.log("Error checking jbig2:", jbig2Error);
-    command = command.replace(/--optimize \d+/g, '');
+    // Reduce optimization level but don't disable completely
+    if (command.includes('--optimize 3') || command.includes('--optimize 4')) {
+      command = command.replace(/--optimize [34]/g, '--optimize 1');
+    }
   }
 
   if (isWindows) {

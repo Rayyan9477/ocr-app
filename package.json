@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "chmod +x ./ensure-permissions.sh && ./ensure-permissions.sh && next dev",
+    "dev": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next dev",
     "build": "next build",
-    "start": "chmod +x ./ensure-permissions.sh && ./ensure-permissions.sh && next start",
-    "lint": "next lint"
+    "start": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next start",
+    "lint": "next lint",
+    "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

@@ -388,9 +388,30 @@ export default function Home() {
     if (data.stderr) {
       appendOutput(`⚠️ OCR Warnings: ${data.stderr}`);
     }
+    
+    console.log("Processing successful response data:", JSON.stringify(data, null, 2));
+    
     if (!data.outputFile) {
       appendOutput("⚠️ Warning: No output file path received from server");
-      throw new Error("No output file path received from server");
+      
+      // Attempt to check if file was processed despite missing path
+      const baseFileName = fileName.split('.')[0];
+      const potentialFilename = `${baseFileName}_ocr.pdf`;
+      
+      appendOutput(`Attempting to look for potential output file: ${potentialFilename}`);
+      
+      try {
+        // Check if file exists via download endpoint
+        const checkResponse = await fetch(`/api/download?file=${encodeURIComponent(potentialFilename)}`);
+        if (checkResponse.ok) {
+          appendOutput(`✅ Found processed file with name: ${potentialFilename}`);
+          data.outputFile = potentialFilename;
+        } else {
+          throw new Error("No output file path received from server and couldn't find alternative");
+        }
+      } catch (error) {
+        throw new Error("No output file path received from server");
+      }
     }
     
     appendOutput(`✅ Successfully processed ${fileName}`);
@@ -533,6 +554,12 @@ export default function Home() {
 
         try {
           data = await executeOcrWithRetry(formData, file.name);
+          
+          // Verify data has the required output file information
+          if (!data || !data.outputFile) {
+            console.error("Missing output file information in OCR response:", data);
+            throw new Error("Server response missing output file information");
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           appendOutput(`❌ Error processing ${file.name}: ${errorMessage}`);

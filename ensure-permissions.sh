@@ -1,5 +1,6 @@
 #!/bin/bash
 # This script ensures the uploads and processed directories have the correct permissions
+# and checks for the presence of jbig2enc
 
 # Navigate to the project root directory
 cd "$(dirname "$0")"
@@ -18,6 +19,16 @@ if [ -w "uploads" ] && [ -w "processed" ]; then
 else
   echo "❌ Error: Directories are not writable"
   exit 1
+fi
+
+# Check for jbig2enc
+if command -v jbig2 &> /dev/null; then
+  JBIG2_VERSION=$(jbig2 --version 2>&1 || echo "Unknown version")
+  echo "✅ jbig2enc is installed: $JBIG2_VERSION"
+else
+  echo "⚠️ Warning: jbig2enc is not installed - PDF optimization will be limited"
+  echo "  To install: sudo apt-get install -y jbig2"
+  echo "  Or run ./check-jbig2.sh to install it automatically"
 fi
 
 echo "Directory permissions successfully set"

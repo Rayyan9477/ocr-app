@@ -183,10 +183,10 @@ export function DependencyStatus({ showAll = false, className }: DependencyStatu
                     className={cn(
                       "p-3 rounded-md flex items-center justify-between animate-in slide-in-from-bottom-2 border",
                       dep.available 
-                        ? "bg-green-50 border-green-100" 
+                        ? "bg-green-50 border-green-100 text-green-900" 
                         : dep.optional 
-                          ? "bg-yellow-50 border-yellow-100" 
-                          : "bg-red-50 border-red-100"
+                          ? "bg-yellow-50 border-yellow-100 text-yellow-900" 
+                          : "bg-red-50 border-red-100 text-red-900"
                     )}
                     style={{ animationDelay: `${index * 50}ms` }}
                   >

@@ -100,15 +100,45 @@ export async function GET() {
 
     // Check jbig2
     try {
-      const { stdout: jbig2Version } = await execPromise(`${appConfig.jbig2Path} --version || echo 'not found'`);
-      const available = !jbig2Version.includes('not found');
+      // First check if it's in the standard path
+      let jbig2Path = '/usr/bin/jbig2';
+      let jbig2Version = '';
+      let jbig2Found = false;
+      
+      // Try standard path first
+      try {
+        const { stdout } = await execPromise(`/usr/bin/jbig2 --version`);
+        jbig2Version = stdout.trim();
+        jbig2Path = '/usr/bin/jbig2';
+        jbig2Found = true;
+      } catch {
+        // Try configured path if standard path fails
+        try {
+          const { stdout } = await execPromise(`${appConfig.jbig2Path} --version`);
+          jbig2Version = stdout.trim();
+          jbig2Path = appConfig.jbig2Path;
+          jbig2Found = true;
+        } catch {
+          // Try using 'which' to find the binary
+          try {
+            const { stdout: whichOutput } = await execPromise('which jbig2');
+            jbig2Path = whichOutput.trim();
+            const { stdout } = await execPromise(`${jbig2Path} --version`);
+            jbig2Version = stdout.trim();
+            jbig2Found = true;
+          } catch {
+            jbig2Found = false;
+          }
+        }
+      }
+      
       dependencies.push({
         name: "jbig2enc",
-        command: appConfig.jbig2Path,
-        version: available ? jbig2Version.trim() : undefined,
-        available: available,
-        error: available ? undefined : "jbig2 not found",
-        optional: true // Mark as optional
+        command: jbig2Path,
+        version: jbig2Found ? jbig2Version : undefined,
+        available: jbig2Found,
+        error: jbig2Found ? undefined : "jbig2 not found or not working. Install with: sudo apt install jbig2",
+        optional: true // Mark as optional but improves PDF compression
       });
     } catch (error) {
       dependencies.push({

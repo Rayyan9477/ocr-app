@@ -19,7 +19,7 @@ const notificationVariants = cva(
         default: "bg-background text-foreground border border-border",
         success: "bg-green-50 text-green-900 border border-green-200",
         error: "bg-red-50 text-red-900 border border-red-200",
-        warning: "bg-yellow-50 text-yellow-900 border border-yellow-200",
+        warning: "bg-yellow-100 text-yellow-950 border border-yellow-200",
         info: "bg-blue-50 text-blue-900 border border-blue-200",
       },
       size: {
