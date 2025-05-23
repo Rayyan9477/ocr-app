@@ -57,6 +57,28 @@ export default function Home() {
   const { toast } = useToast()
   const terminalRef = useRef<HTMLDivElement>(null)
 
+  // Helper function to add processed files without duplicates
+  const addProcessedFile = (newFile: { name: string; path: string; processedAt?: string; size?: number | null }) => {
+    setProcessedFiles(prev => {
+      // Check if file already exists in the list
+      const exists = prev.some(file => file.name === newFile.name);
+      if (exists) {
+        console.log(`File ${newFile.name} already exists in processed files, skipping duplicate`);
+        return prev;
+      }
+      
+      // Add processedAt and size if not provided
+      const processedFile = {
+        name: newFile.name,
+        path: newFile.path,
+        processedAt: newFile.processedAt || new Date().toISOString(),
+        size: newFile.size || null,
+      };
+      
+      return [...prev, processedFile];
+    });
+  };
+
   const handleFileUpload = (uploadedFiles: File[]) => {
     setFiles((prevFiles) => [...prevFiles, ...uploadedFiles])
     setError(null)
@@ -183,13 +205,6 @@ export default function Home() {
     warning?: string;
   }
 
-  interface ProcessedFile {
-    name: string;
-    path: string;
-    processedAt: string;
-    size: number | null;
-  }
-
   const executeOcrWithRetry = async (formData: FormData, fileName: string, retry: boolean = false): Promise<OcrResponse> => {
     try {
       const controller = new AbortController();
@@ -300,14 +315,10 @@ export default function Home() {
           appendOutput(`📄 Output file available: ${foundFile}`);
           
           // Add to processed files even if we had a JSON parsing error
-          const newProcessedFile: ProcessedFile = {
-            name: foundFile,
-            path: `/api/download?file=${encodeURIComponent(foundFile)}`,
-            processedAt: new Date().toISOString(),
-            size: null,
-          };
-          
-          setProcessedFiles(prev => [...prev, newProcessedFile]);
+        addProcessedFile({
+          name: foundFile,
+          path: `/api/download?file=${encodeURIComponent(foundFile)}`,
+        });
           
           return {
             success: true,
@@ -413,14 +424,10 @@ export default function Home() {
     appendOutput(`✅ Successfully processed ${fileName}`);
     appendOutput(`📄 Output file: ${data.outputFile}`);
     
-    const newProcessedFile: ProcessedFile = {
+    addProcessedFile({
       name: data.outputFile,
       path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
-      processedAt: new Date().toISOString(),
-      size: null,
-    };
-    
-    setProcessedFiles(prev => [...prev, newProcessedFile]);
+    });
     
     return data;
   };
@@ -616,13 +623,10 @@ export default function Home() {
         appendOutput(`✅ Successfully processed ${file.name}`);
         appendOutput(`Output file: ${data.outputFile}`);
 
-        setProcessedFiles((prev) => [
-          ...prev,
-          {
-            name: data.outputFile,
-            path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
-          },
-        ]);
+        addProcessedFile({
+          name: data.outputFile,
+          path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
+        });
 
         // Use branded notification instead of toast
         setNotificationProps({

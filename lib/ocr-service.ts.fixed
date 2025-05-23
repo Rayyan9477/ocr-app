@@ -55,7 +55,7 @@ async function processDocument(filePath: string, retries = 0): Promise<OcrResult
     }
     
     return data;
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Error during OCR processing: ${error.message}`);
     // Implement retry logic
     if (retries < MAX_RETRIES) {
