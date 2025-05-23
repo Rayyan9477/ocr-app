@@ -1,0 +1,581 @@
+import { type NextRequest, NextResponse } from "next/server"
+import { writeFile, mkdir, stat } from "fs/promises"
+import { join } from "path"
+import path from "path"
+import { exec } from "child_process"
+import { existsSync } from "fs"
+import appConfig from "@/lib/config"
+
+// Implement the extractPotentialPathsFromError function directly in this file
+// to avoid TypeScript import issues
+function extractPotentialPathsFromError(errorMessage: string): string[] {
+  if (!errorMessage) return [];
+  
+  const paths = [];
+  
+  // Search for PDF paths in error messages
+  const pdfPathRegex = /(\/[\w\d\/._-]+\.pdf)/gi;
+  const matches = errorMessage.match(pdfPathRegex);
+  
+  if (matches && matches.length > 0) {
+    paths.push(...matches);
+  }
+  
+  // Look for special references to output files
+  const outputWrittenRegex = /output\s+written\s+to\s+"?([^"\n]+)"?/i;
+  const outputMatch = errorMessage.match(outputWrittenRegex);
+  
+  if (outputMatch && outputMatch[1]) {
+    paths.push(outputMatch[1]);
+  }
+  
+  return [...new Set(paths)]; // Remove duplicates
+}
+
+// Configure Next.js to handle large files
+export const config = {
+  api: {
+    bodyParser: false,
+    responseLimit: false,
+  },
+}
+
+// Add a helper function to create consistent JSON responses
+const createJsonResponse = (data: any, status: number = 200) => {
+  return new NextResponse(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    }
+  );
+};
+
+// Add timeout to command execution
+const maxExecutionTime = appConfig.ocrTimeout;
+const execWithTimeout = async (cmd: string, timeout: number) => {
+  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const execOptions = {
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true
+    };
+
+    const isWindows = process.platform === 'win32';
+    const finalCmd = isWindows ? cmd : cmd;
+
+    const execProcess = exec(finalCmd, execOptions, (error: any, stdout: string, stderr: string) => {
+      if (error) {
+        error.message = `Command execution failed: ${error.message}\nStdout: ${stdout}\nStderr: ${stderr}`;
+        reject(error);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+
+    // Set timeout
+    const timeoutId = setTimeout(() => {
+      if (execProcess.pid) {
+        try {
+          process.kill(execProcess.pid);
+        } catch (killError) {
+          console.error("Error killing process:", killError);
+        }
+      }
+      reject(new Error(`Command execution timed out after ${timeout / 1000} seconds`));
+    }, timeout);
+
+    execProcess.on('close', () => {
+      clearTimeout(timeoutId);
+    });
+
+    execProcess.stderr?.on('data', (data) => {
+      console.log(`OCRmyPDF stderr: ${data}`);
+    });
+  });
+};
+
+// Ensure upload and processed directories exist with proper permissions
+const ensureDirectories = async () => {
+  try {
+    const uploadDir = join(process.cwd(), "uploads")
+    const processedDir = join(process.cwd(), "processed")
+
+    // Create directories if they don't exist
+    if (!existsSync(uploadDir)) {
+      await mkdir(uploadDir, { recursive: true, mode: 0o777 })
+      console.log(`Created upload directory: ${uploadDir}`)
+    } else {
+      // Try to set permissions on existing directory if possible (works in most environments)
+      try {
+        // For systems that support chmod
+        const { exec: execCallback } = await import('child_process');
+        const { promisify } = await import('util');
+        const execPromise = promisify(execCallback);
+        await execPromise(`chmod -R 777 "${uploadDir}"`);
+        console.log(`Updated permissions for upload directory: ${uploadDir}`);
+      } catch (chmodError) {
+        console.log(`Note: Could not update permissions for ${uploadDir}. This is expected in some environments.`);
+      }
+    }
+
+    if (!existsSync(processedDir)) {
+      await mkdir(processedDir, { recursive: true, mode: 0o777 })
+      console.log(`Created processed directory: ${processedDir}`)
+    } else {
+      try {
+        const { exec: execCallback } = await import('child_process');
+        const { promisify } = await import('util');
+        const execPromise = promisify(execCallback);
+        await execPromise(`chmod -R 777 "${processedDir}"`);
+        console.log(`Updated permissions for processed directory: ${processedDir}`);
+      } catch (chmodError) {
+        console.log(`Note: Could not update permissions for ${processedDir}. This is expected in some environments.`);
+      }
+    }
+  } catch (error) {
+    console.error("Error ensuring directories:", error)
+  }
+};
+
+// Handle creating a fallback output when OCR fails
+const generateFallbackOutput = async (inputPath: string, errorMessage: string) => {
+  try {
+    if (!inputPath || !existsSync(inputPath)) {
+      console.error("Cannot generate fallback: Input file not found or invalid");
+      return null;
+    }
+
+    console.log(`Generating fallback output for ${inputPath}`);
+    
+    // Create a simple fallback PDF with error information
+    const { createFallbackPdf } = await import('@/lib/create-fallback-pdf');
+    
+    // Try to create a fallback document
+    const fallbackPath = await createFallbackPdf(inputPath, errorMessage);
+    
+    if (fallbackPath && existsSync(fallbackPath)) {
+      console.log(`Created fallback document at: ${fallbackPath}`);
+      return fallbackPath;
+    } else {
+      console.error("Fallback creation failed: No valid path returned");
+      return null;
+    }
+  } catch (error) {
+    console.error("Error generating fallback output:", error);
+    return null;
+  }
+};
+
+// Helper function to build OCR command
+const buildOCRCommand = async ({
+  inputPath,
+  outputPath,
+  language,
+  deskew,
+  skipText,
+  force,
+  redoOcr,
+  removeBackground,
+  clean,
+  optimize,
+  rotate,
+  isMedical,
+}: {
+  inputPath: string;
+  outputPath: string;
+  language: string;
+  deskew: boolean;
+  skipText: boolean;
+  force: boolean;
+  redoOcr: boolean;
+  removeBackground: boolean;
+  clean: boolean;
+  optimize: boolean;
+  rotate: string;
+  isMedical?: boolean;
+}) => {
+  // Use a custom command for medical bills if detected
+  if (isMedical) {
+    const medicalCommand = await buildMedicalOcrCommand(inputPath, outputPath, { 
+      language, deskew, force 
+    });
+    console.log(`Using medical OCR command: ${medicalCommand}`);
+    return medicalCommand;
+  }
+
+  // Build a standard ocrmypdf command line
+  const ocrBin = 'ocrmypdf'; // Default command
+  
+  let command = `${ocrBin} `;
+
+  // Add options based on user selections
+  if (language) command += `--language ${language} `;
+  if (deskew) command += '--deskew ';
+  if (skipText) command += '--skip-text ';
+  if (force) command += '--force-ocr ';
+  if (redoOcr) command += '--redo-ocr ';
+  if (clean) command += '--clean ';
+  if (optimize) command += '--optimize 3 ';
+  if (removeBackground) command += '--remove-background ';
+  
+  // Add rotation if specified
+  if (rotate && rotate !== '0') {
+    command += `--rotate-pages `;
+  }
+  
+  // Set max image pixels to support large documents
+  command += `--max-image-mpixels 0 `;
+
+  // Use large file optimization if needed
+  const inputSize = existsSync(inputPath) ? (await stat(inputPath)).size : 0;
+  const largeSizeThreshold = 50 * 1024 * 1024; // 50MB
+  
+  if (inputSize > largeSizeThreshold) {
+    command += `--fast-web-view 0 --optimize 1 `;
+  }
+  
+  // Add input and output paths, properly escaped
+  command += `"${inputPath}" "${outputPath}"`;
+  
+  console.log(`Generated OCR command: ${command}`);
+  return command;
+};
+
+// Define POST handler for OCR processing
+export const POST = async (request: NextRequest) => {
+  console.log("OCR API called with POST method");
+  
+  // Track uploads and processed files
+  let file;
+  let inputPath = "";
+  let formData;
+  
+  await ensureDirectories();
+  
+  try {
+    formData = await request.formData();
+    file = formData.get("file");
+    
+    if (!file || !(file instanceof File)) {
+      return createJsonResponse({
+        success: false,
+        error: "Invalid or missing file"
+      }, 400);
+    }
+    
+    // Get file data
+    const fileName = file.name;
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    
+    // Determine upload path
+    const uploadDir = join(process.cwd(), "uploads");
+    inputPath = join(uploadDir, fileName);
+    
+    // Write the file to uploads directory
+    await writeFile(inputPath, buffer);
+    console.log(`File saved: ${inputPath}`);
+    
+    // Process OCR options from form data
+    const language = formData.get("language")?.toString() || "eng";
+    const deskew = formData.get("deskew") === "true";
+    const skipText = formData.get("skipText") === "true";
+    const force = formData.get("force") === "true";
+    const redoOcr = formData.get("redoOcr") === "true";
+    const removeBackground = formData.get("removeBackground") === "true";
+    const clean = formData.get("clean") === "true";
+    const optimize = formData.get("optimize") === "true";
+    const rotate = formData.get("rotate")?.toString() || "0";
+    const isMedical = formData.get("medical") === "true" || await detectMedicalBill(inputPath);
+    
+    // Determine output path
+    const processedDir = join(process.cwd(), "processed");
+    const outputPath = join(processedDir, `${path.basename(fileName, '.pdf')}_${Date.now()}_ocr.pdf`);
+    
+    // Build the OCR command with all options
+    const command = await buildOCRCommand({
+      inputPath,
+      outputPath,
+      language,
+      deskew,
+      skipText,
+      force,
+      redoOcr,
+      removeBackground,
+      clean,
+      optimize,
+      rotate,
+      isMedical,
+    });
+    
+    console.log(`Starting OCR process: ${command}`);
+    
+    // Execute OCR command with retry logic
+    let success = false;
+    let exitCode = 0;
+    let stderr = '';
+    
+    try {
+      const result = await executeWithRetry(command, appConfig.ocrTimeout);
+      stderr = result.stderr;
+      success = !stderr || stderr.includes('Output written to');
+    } catch (error) {
+      success = false;
+      stderr = error instanceof Error ? error.message : String(error);
+      exitCode = 1;
+    }
+    
+    if (success && existsSync(outputPath)) {
+      // Process medical bill output if necessary
+      if (isMedical) {
+        await postProcessMedicalOcr(outputPath);
+      }
+      
+      // Return a response with the processed file path
+      return createJsonResponse({
+        success: true,
+        inputFile: fileName,
+        outputFile: path.basename(outputPath),
+        isMedical,
+      });
+    }
+    
+    // Handle different types of OCR failures
+    if (stderr) {
+      let errorType = 'ocr_failure';
+      let errorDetails = 'OCR process failed';
+      const stdErrLower = stderr.toLowerCase();
+      
+      // Check for common error types
+      if (stdErrLower.includes('already contains text')) {
+        errorType = 'already_contains_text';
+        errorDetails = 'PDF already contains text';
+      } else if (stdErrLower.includes('tagged pdf')) {
+        errorType = 'tagged_pdf';
+        errorDetails = 'PDF is tagged and cannot be processed';
+      } else if (stdErrLower.includes('password')) {
+        errorType = 'password_protected';
+        errorDetails = 'PDF is password protected';
+      } else if (stdErrLower.includes('corrupt')) {
+        errorType = 'corrupt_pdf';
+        errorDetails = 'PDF file is corrupt';
+      } else if (stdErrLower.includes('invalid pdf')) {
+        errorType = 'invalid_pdf';
+        errorDetails = 'Invalid PDF file';
+      }
+      
+      // Check if the error message indicates a file was successfully created despite the error
+      if (stderr.includes('Output written to')) {
+        console.log("File was processed despite error, checking for output...");
+        
+        // Look for valid output file
+        let fallbackPath = outputPath;
+        if (existsSync(outputPath)) {
+          console.log(`✅ Despite error, output file exists at: ${outputPath}`);
+          
+          // Validate the output file is a proper PDF
+          if (await isValidOcrResult(outputPath)) {
+            console.log("Output file is valid despite error, returning success");
+            
+            // Return a success response with the output file path
+            return createJsonResponse({
+              success: true,
+              warning: errorDetails,
+              warningType: errorType,
+              inputFile: path.basename(inputPath),
+              outputFile: path.basename(outputPath),
+              details: stderr,
+              fallback: false
+            }, 200);
+          }
+        }
+        
+        // Look for potential output paths mentioned in the error message
+        const potentialPaths = extractPotentialPathsFromError(stderr);
+        
+        for (const potentialPath of potentialPaths) {
+          if (existsSync(potentialPath) && await isValidOcrResult(potentialPath)) {
+            console.log(`Found valid output file mentioned in error: ${potentialPath}`);
+            
+            return createJsonResponse({
+              success: true,
+              warning: errorDetails,
+              warningType: errorType,
+              inputFile: path.basename(inputPath),
+              outputFile: path.basename(potentialPath),
+              details: stderr,
+              fallback: false
+            }, 200);
+          }
+        }
+      }
+      
+      // Check for any fallback output from the OCR command
+      const hasFallbackOutput = await checkForFallbackOutput(outputPath);
+      
+      if (hasFallbackOutput) {
+        console.log(`Found fallback output for: ${outputPath}`);
+        
+        return createJsonResponse({
+          success: false,
+          errorType,
+          error: errorDetails,
+          details: stderr,
+          inputFile: path.basename(inputPath),
+          outputFile: path.basename(outputPath),
+          fallback: true
+        }, 200);
+      }
+      
+      // Try to generate a fallback output for the failed OCR
+      try {
+        const errorResult = await handleOcrError(
+          inputPath,
+          `${errorDetails}: ${stderr}`
+        );
+
+        // Return response with the fallback output file
+        return createJsonResponse({
+          success: false,
+          errorType,
+          error: errorDetails,
+          details: stderr,
+          inputFile: path.basename(inputPath),  // Use the full path we have
+          outputFile: path.basename(errorResult.outputFile || ""),  // Just return the filename part
+          fallback: true
+        }, 200);
+      } catch (fallbackError) {
+        // Even fallback creation failed, but still try to provide a consistent response
+        const inferredOutputPath = inferOutputFilePath(inputPath);
+        
+        console.error("Critical error: Failed to create fallback output:", fallbackError);
+        
+        return createJsonResponse({
+          success: false,
+          errorType: 'critical_failure',
+          error: 'OCR process failed and fallback creation failed',
+          details: `${stderr}. Fallback error: ${fallbackError}`,
+          inputFile: path.basename(inputPath),
+          outputFile: inferredOutputPath,
+          fallback: true
+        }, 500);
+      }
+    }
+    
+    // Generic OCR failure with no specific error
+    try {
+      const errorResult = await handleOcrError(
+        inputPath,
+        `OCR process failed with exit code ${exitCode}`
+      );
+      
+      return createJsonResponse({
+        success: false,
+        errorType: 'ocr_failure',
+        error: 'OCR process failed',
+        details: `Process exited with code ${exitCode}`,
+        inputFile: path.basename(inputPath),
+        outputFile: path.basename(errorResult.outputFile || ""),
+        fallback: true
+      }, 500);
+    } catch (fallbackError) {
+      const inferredOutput = inferOutputFilePath(fileName);
+      console.error("Failed to create fallback for generic OCR failure:", fallbackError);
+      
+      return createJsonResponse({
+        success: false,
+        errorType: 'critical_failure',
+        error: 'OCR process failed and fallback creation failed',
+        details: `Process exited with code ${exitCode}. Fallback error: ${fallbackError}`,
+        inputFile: fileName,
+        outputFile: inferredOutput,
+        fallback: true,
+        criticalError: true
+      }, 500);
+    }
+  } catch (ocrProcessError) {
+    console.error("Unexpected error during OCR process:", ocrProcessError);
+    const errorMessage = ocrProcessError instanceof Error ? ocrProcessError.message : String(ocrProcessError);
+    
+    // Access the variables that should be in scope at this point
+    const fileName = file instanceof File ? file.name : "unknown_file";
+    const inputPathLocal = inputPath || "";
+    
+    try {
+      // Try to generate a fallback if we have the input path
+      if (inputPathLocal && existsSync(inputPathLocal)) {
+        const errorResult = await handleOcrError(inputPathLocal, `OCR process failed: ${errorMessage}`);
+        
+        return createJsonResponse({
+          success: false,
+          errorType: 'system_error',
+          error: 'Unexpected system error during OCR processing',
+          details: errorMessage,
+          inputFile: fileName,
+          outputFile: path.basename(errorResult.outputFile || ""),
+          fallback: true
+        }, 500);
+      }
+      
+      // If we can't create a fallback, still try to provide a useful response
+      return createJsonResponse({
+        success: false,
+        errorType: 'critical_failure',
+        error: 'OCR process failed with a critical error',
+        details: errorMessage,
+        inputFile: fileName,
+        outputFile: "",
+        fallback: false,
+        criticalError: true
+      }, 500);
+    } catch (fallbackError) {
+      // Final fallback for when everything fails
+      return createJsonResponse({
+        success: false,
+        errorType: 'critical_failure',
+        error: 'OCR process failed with a critical error and fallback creation failed',
+        details: `${errorMessage}. Fallback error: ${fallbackError}`,
+        inputFile: fileName,
+        outputFile: "",
+        fallback: false,
+        criticalError: true
+      }, 500);
+    }
+  } finally {
+    // Cleanup: We could add temporary file cleanup here if needed
+    // But generally we want to keep the uploads for debugging
+  }
+}
+
+// Define HTTP handlers for other methods
+export const GET = async () => {
+  return new NextResponse(
+    JSON.stringify({ success: false, error: "Method Not Allowed" }),
+    { status: 405, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+export const PUT = async () => {
+  return new NextResponse(
+    JSON.stringify({ success: false, error: "Method Not Allowed" }),
+    { status: 405, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+export const DELETE = async () => {
+  return new NextResponse(
+    JSON.stringify({ success: false, error: "Method Not Allowed" }),
+    { status: 405, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+
+// Export HTTP methods
+export {
+};
+
+// Export HTTP methods
+export {
+};

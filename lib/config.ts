@@ -19,6 +19,21 @@ interface AppConfig {
   // Storage paths
   uploadsDir: string;
   processedDir: string;
+  tempDir: string;
+  
+  // Cleanup configuration
+  cleanupInterval: number; // in ms
+  maxStorageAge: number; // in ms
+  
+  // Medical OCR configuration
+  enableMedicalEnhancements: boolean;
+  medicalConfig: {
+    removeDiacritics: boolean;
+    handleEmptyPages: boolean;
+    enhanceHandwriting: boolean;
+    retryFailedFiles: boolean;
+    usePdfOutput: boolean; // Use PDF instead of PDF/A
+  };
 }
 
 // Helper function to get a boolean env var
@@ -64,6 +79,21 @@ export const config: AppConfig = {
   // Storage paths
   uploadsDir: getStringEnv('UPLOADS_DIR', './uploads'),
   processedDir: getStringEnv('PROCESSED_DIR', './processed'),
+  tempDir: getStringEnv('TEMP_DIR', './tmp'),
+  
+  // Cleanup configuration
+  cleanupInterval: getNumberEnv('CLEANUP_INTERVAL', 3600000), // Default: 1 hour
+  maxStorageAge: getNumberEnv('MAX_STORAGE_AGE', 259200000), // Default: 3 days
+  
+  // Medical OCR configuration
+  enableMedicalEnhancements: getBoolEnv('ENABLE_MEDICAL_ENHANCEMENTS', true),
+  medicalConfig: {
+    removeDiacritics: getBoolEnv('MEDICAL_REMOVE_DIACRITICS', true),
+    handleEmptyPages: getBoolEnv('MEDICAL_HANDLE_EMPTY_PAGES', true),
+    enhanceHandwriting: getBoolEnv('MEDICAL_ENHANCE_HANDWRITING', true),
+    retryFailedFiles: getBoolEnv('MEDICAL_RETRY_FAILED', true),
+    usePdfOutput: getBoolEnv('MEDICAL_USE_PDF', true), // Default to PDF instead of PDF/A for medical docs
+  },
 };
 
 // Validate critical configuration

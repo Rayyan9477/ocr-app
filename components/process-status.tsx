@@ -26,6 +26,14 @@ interface ProcessStatusProps {
   isProcessing: boolean
 }
 
+
+  // Simple function to format file size
+  const formatFileSize = (size?: number): string => {
+    if (!size) return 'Unknown size';
+    if (size < 1024) return `${size} bytes`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
 export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
   const [downloading, setDownloading] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
@@ -60,38 +68,14 @@ export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
       setDownloadProgress(0)
       setError(null)
 
-      const response = await fetch(file.path)
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.status} ${response.statusText}`)
+      // Handle file download by opening in a new tab
+      if (file.path) {
+        window.open(`/api/download?file=${encodeURIComponent(file.name)}`, "_blank");
+      } else {
+        throw new Error("File has no path information");
       }
-      if (!response.body) throw new Error('No response body')
-
-      const contentLength = Number(response.headers.get('content-length'))
-      const reader = response.body.getReader()
-      const chunks: Uint8Array[] = []
-      let receivedLength = 0
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        chunks.push(value)
-        receivedLength += value.length
-
-        if (contentLength) {
-          setDownloadProgress((receivedLength / contentLength) * 100)
-        }
-      }
-
-      const blob = new Blob(chunks)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.name
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      
+      setDownloading(null);
       
     } catch (error) {
       console.error('Download error:', error)
@@ -105,7 +89,7 @@ export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
   return (
     <div className="space-y-4">
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>

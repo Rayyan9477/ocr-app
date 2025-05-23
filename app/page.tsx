@@ -177,14 +177,10 @@ export default function Home() {
   interface OcrResponse {
     success: boolean;
     outputFile?: string;
-    fileSize?: number;
-    stdout?: string;
-    stderr?: string;
+    inputFile?: string;
     error?: string;
     details?: string;
-    errorType?: 'has_text' | 'tagged_pdf';
-    command?: string;
-    timestamp?: string;
+    warning?: string;
   }
 
   interface ProcessedFile {
@@ -228,8 +224,8 @@ export default function Home() {
             return data; // Return data with outputFile info
           }
           
-          // If this is a known error type like "has_text" that could benefit from retry
-          if (data.errorType === 'has_text' && !retry) {
+          // If there's an error about file containing text, retry with force option
+          if (data.details?.toLowerCase().includes('already contains text') && !retry) {
             appendOutput("Attempting retry with force-ocr option...");
             return await handleSuccessResponse(data, fileName, retry);
           }
@@ -339,8 +335,8 @@ export default function Home() {
   // Helper function to handle successful JSON response
   const handleSuccessResponse = async (data: OcrResponse, fileName: string, retry: boolean): Promise<OcrResponse> => {
     if (!data.success) {
-      // Handle known error types and retry if needed
-      if (data.errorType === 'has_text' && !retry) {
+      // Handle error cases with retry if needed
+      if (data.details?.toLowerCase().includes('already contains text') && !retry) {
         appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr...");
         const newFormData = new FormData();
         newFormData.append("file", files[currentFileIndex]);
@@ -368,7 +364,7 @@ export default function Home() {
         }
         
         return await executeOcrWithRetry(newFormData, fileName, true);
-      } else if (data.errorType === 'tagged_pdf') {
+      } else if (data.details?.toLowerCase().includes('tagged pdf')) {
         appendOutput(`⚠️ ${data.error || 'PDF is a tagged PDF'}: ${data.details || ''}`);
         throw new Error(data.error || "PDF is a tagged PDF");
       } else {
@@ -382,11 +378,11 @@ export default function Home() {
     }
 
     // Process successful response
-    if (data.stdout) {
-      appendOutput(`📋 OCR Output: ${data.stdout}`);
+    if (data.details) {
+      appendOutput(`📋 Process details: ${data.details}`);
     }
-    if (data.stderr) {
-      appendOutput(`⚠️ OCR Warnings: ${data.stderr}`);
+    if (data.warning) {
+      appendOutput(`⚠️ Warning: ${data.warning}`);
     }
     
     console.log("Processing successful response data:", JSON.stringify(data, null, 2));
@@ -421,7 +417,7 @@ export default function Home() {
       name: data.outputFile,
       path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
       processedAt: new Date().toISOString(),
-      size: data.fileSize ?? null,
+      size: null,
     };
     
     setProcessedFiles(prev => [...prev, newProcessedFile]);
@@ -491,7 +487,7 @@ export default function Home() {
       setNotificationProps({
         title: "Permission Error",
         description: "The application doesn't have permission to write to required directories. This will cause OCR processing to fail.",
-        variant: "destructive"
+        variant: "error"
       });
       setShowNotification(true);
       return;
@@ -790,7 +786,7 @@ export default function Home() {
       </Card>
 
       {error && (
-        <Alert variant="destructive" className="mb-6">
+        <Alert variant="error" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
@@ -811,7 +807,7 @@ export default function Home() {
         )}
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="error">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>

@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { SettingsLayout } from "@/components/settings-layout"
-import { Languages, Rotate, BookOpen, FileOutput, Cog, Gauge, Zap } from "lucide-react"
+import { Languages, Rotate3D, BookOpen, FileOutput, Cog, Gauge, Zap } from "lucide-react"
 
 interface CommandBuilderProps {
   options: {
@@ -56,7 +56,7 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
 
       <SettingsLayout 
         title="Page Rotation" 
-        icon={<Rotate className="h-4 w-4" />}
+        icon={<Rotate3D className="h-4 w-4" />}
         description="Control how pages are rotated during processing"
         tooltip="Auto will automatically detect and fix page orientation"
       >

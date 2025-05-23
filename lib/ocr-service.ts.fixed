@@ -1,0 +1,73 @@
+// filepath: /home/rayyan9477/ocr-app/lib/ocr-service.ts
+import fetch from 'node-fetch';
+import config from './config';
+import logger from './logger';
+
+const MAX_RETRIES = 3;
+
+export interface OcrResult {
+  outputFile: string;
+  [key: string]: any;
+}
+
+// Default API configuration
+const API_CONFIG = {
+  url: process.env.OCR_API_URL || 'http://localhost:3000/api/ocr',
+  timeout: 60000,
+  retryDelay: 1000
+};
+
+async function processDocument(filePath: string, retries = 0): Promise<OcrResult> {
+  try {
+    const response = await fetch(`${API_CONFIG.url}/process`, {
+      method: 'POST',
+      body: JSON.stringify({ filePath }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: API_CONFIG.timeout,
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error(`OCR server error: ${response.status} - ${errorText}`);
+      throw new Error(`OCR processing failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Validate response contains necessary data
+    if (!data.outputFile) {
+      logger.error(`Invalid OCR response for ${filePath}: Missing output file information`, data);
+      
+      // Instead of immediately throwing, check if we might have a valid outputFile based on naming convention
+      if (data.success && filePath) {
+        // Attempt to construct a likely output file path based on input filename
+        const baseFilename = filePath.split('/').pop()?.replace(/\.[^/.]+$/, "") || "unknown";
+        const inferredOutputFile = `${baseFilename}_ocr.pdf`;
+        
+        logger.warn(`Inferring output file path: ${inferredOutputFile} from input: ${filePath}`);
+        data.outputFile = inferredOutputFile;
+        return data;
+      }
+      
+      throw new Error(`Server response missing output file information for ${filePath}`);
+    }
+    
+    return data;
+  } catch (error) {
+    logger.error(`Error during OCR processing: ${error.message}`);
+    // Implement retry logic
+    if (retries < MAX_RETRIES) {
+      const delay = Math.pow(2, retries) * API_CONFIG.retryDelay;
+      logger.info(`Retrying OCR processing for ${filePath}, attempt ${retries + 1} after ${delay}ms`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return await processDocument(filePath, retries + 1);
+    }
+    throw error;
+  }
+}
+
+export default {
+  processDocument
+};
