@@ -34,6 +34,13 @@ interface AppConfig {
     retryFailedFiles: boolean;
     usePdfOutput: boolean; // Use PDF instead of PDF/A
   };
+  
+  // Confidence detection configuration
+  confidence: {
+    pageWarningThreshold: number;
+    pageErrorThreshold: number;
+    enableConfidenceTracking: boolean;
+  };
 }
 
 // Helper function to get a boolean env var
@@ -93,6 +100,13 @@ export const config: AppConfig = {
     enhanceHandwriting: getBoolEnv('MEDICAL_ENHANCE_HANDWRITING', true),
     retryFailedFiles: getBoolEnv('MEDICAL_RETRY_FAILED', true),
     usePdfOutput: getBoolEnv('MEDICAL_USE_PDF', true), // Default to PDF instead of PDF/A for medical docs
+  },
+  
+  // Confidence detection configuration
+  confidence: {
+    pageWarningThreshold: getNumberEnv('CONFIDENCE_PAGE_WARNING_THRESHOLD', 85),
+    pageErrorThreshold: getNumberEnv('CONFIDENCE_PAGE_ERROR_THRESHOLD', 70),
+    enableConfidenceTracking: getBoolEnv('ENABLE_CONFIDENCE_TRACKING', true),
   },
 };
 

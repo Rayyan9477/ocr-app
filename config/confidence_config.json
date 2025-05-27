@@ -1,0 +1,27 @@
+{
+  "confidence": {
+    "pageWarningThreshold": 85,
+    "pageErrorThreshold": 70,
+    "enableConfidenceTracking": true,
+    "enableDetailedLogging": true,
+    "saveConfidenceFiles": true,
+    "thresholds": {
+      "excellent": 95,
+      "good": 85,
+      "warning": 70,
+      "error": 50,
+      "critical": 30
+    },
+    "processing": {
+      "maxRetries": 2,
+      "fallbackPsm": [1, 3, 6],
+      "enableHocrOutput": true,
+      "cleanupTempFiles": true
+    },
+    "reporting": {
+      "includeWordLevelDetails": true,
+      "includeBoundingBoxes": true,
+      "maxLowConfidenceWordsPerPage": 50
+    }
+  }
+}

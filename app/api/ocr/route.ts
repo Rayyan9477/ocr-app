@@ -5,6 +5,7 @@ import path from "path"
 import { exec } from "child_process"
 import { existsSync, statSync } from "fs"
 import appConfig from "@/lib/config"
+import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
 
 // Configure Next.js to handle large files
 export const config = {
@@ -190,11 +191,31 @@ export const POST = async (request: NextRequest) => {
       const result = await execWithTimeout(command, appConfig.ocrTimeout || 600000);
       
       if (existsSync(outputPath)) {
+        // Extract confidence scores if enabled
+        let confidenceData: DocumentConfidence | null = null;
+        if (appConfig.confidence.enableConfidenceTracking) {
+          try {
+            confidenceData = await extractConfidenceScores(inputPath, outputPath);
+            if (confidenceData) {
+              await saveConfidenceData(confidenceData, outputPath);
+            }
+          } catch (confidenceError) {
+            console.warn("Failed to extract confidence scores:", confidenceError);
+          }
+        }
+
         return createJsonResponse({
           success: true,
           inputFile: fileName,
           outputFile: path.basename(outputPath),
-          details: result.stderr || result.stdout
+          details: result.stderr || result.stdout,
+          confidence: confidenceData ? {
+            averageConfidence: confidenceData.averageConfidence,
+            hasLowConfidencePages: confidenceData.hasLowConfidencePages,
+            warningPages: confidenceData.warningPages,
+            errorPages: confidenceData.errorPages,
+            pageCount: confidenceData.pageConfidences.length
+          } : undefined
         });
       } else {
         throw new Error("OCR completed but output file was not created");
@@ -204,12 +225,32 @@ export const POST = async (request: NextRequest) => {
       
       // Check if output file was created despite error
       if (existsSync(outputPath)) {
+        // Extract confidence scores even for partial success if enabled
+        let confidenceData: DocumentConfidence | null = null;
+        if (appConfig.confidence.enableConfidenceTracking) {
+          try {
+            confidenceData = await extractConfidenceScores(inputPath, outputPath);
+            if (confidenceData) {
+              await saveConfidenceData(confidenceData, outputPath);
+            }
+          } catch (confidenceError) {
+            console.warn("Failed to extract confidence scores for partial success:", confidenceError);
+          }
+        }
+
         return createJsonResponse({
           success: true,
           inputFile: fileName,
           outputFile: path.basename(outputPath),
           warning: "OCR completed with warnings",
-          details: execError instanceof Error ? execError.message : String(execError)
+          details: execError instanceof Error ? execError.message : String(execError),
+          confidence: confidenceData ? {
+            averageConfidence: confidenceData.averageConfidence,
+            hasLowConfidencePages: confidenceData.hasLowConfidencePages,
+            warningPages: confidenceData.warningPages,
+            errorPages: confidenceData.errorPages,
+            pageCount: confidenceData.pageConfidences.length
+          } : undefined
         });
       }
       
@@ -234,12 +275,32 @@ export const POST = async (request: NextRequest) => {
           const retryResult = await execWithTimeout(retryCommand, appConfig.ocrTimeout || 600000);
           
           if (existsSync(retryOutputPath)) {
+            // Extract confidence scores for retry output if enabled
+            let retryConfidenceData: DocumentConfidence | null = null;
+            if (appConfig.confidence.enableConfidenceTracking) {
+              try {
+                retryConfidenceData = await extractConfidenceScores(inputPath, retryOutputPath);
+                if (retryConfidenceData) {
+                  await saveConfidenceData(retryConfidenceData, retryOutputPath);
+                }
+              } catch (confidenceError) {
+                console.warn("Failed to extract confidence scores for retry:", confidenceError);
+              }
+            }
+
             return createJsonResponse({
               success: true,
               inputFile: fileName,
               outputFile: path.basename(retryOutputPath),
               details: "Document had existing text layer. Successfully processed with --force-ocr option.",
-              warnings: retryResult.stderr || undefined
+              warnings: retryResult.stderr || undefined,
+              confidence: retryConfidenceData ? {
+                averageConfidence: retryConfidenceData.averageConfidence,
+                hasLowConfidencePages: retryConfidenceData.hasLowConfidencePages,
+                warningPages: retryConfidenceData.warningPages,
+                errorPages: retryConfidenceData.errorPages,
+                pageCount: retryConfidenceData.pageConfidences.length
+              } : undefined
             });
           }
         } catch (retryError) {
