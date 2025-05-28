@@ -9,13 +9,14 @@ import { ProcessStatus } from "@/components/process-status"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info } from "lucide-react"
+import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info, Search } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ProgressTracker } from "@/components/progress-tracker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingScreen } from "@/components/loading-screen"
 import { BrandedNotification } from "@/components/branded-notification"
 import { DependencyStatus } from "@/components/dependency-status"
+import { SmartSearch } from "@/components/smart-search"
 import { cn } from "@/lib/utils"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
@@ -36,7 +37,12 @@ export default function Home() {
     optimize: 3,
     outputFormat: "pdf",
     rotate: "auto",
-    pdfRenderer: "auto"
+    pdfRenderer: "auto",
+    // Smart OCR options
+    useSmartOCR: false,
+    usePreprocessing: false,
+    useMultiEngine: false,
+    confidenceThreshold: 70
   })
   const [lastSubmittedFormData, setLastSubmittedFormData] = useState<FormData | null>(null)
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
@@ -203,16 +209,34 @@ export default function Home() {
     error?: string;
     details?: string;
     warning?: string;
+    confidence?: {
+      averageConfidence: number;
+      hasLowConfidencePages: boolean;
+      warningPages: number[];
+      errorPages: number[];
+      pageCount: number;
+    };
+    smartOcrInfo?: {
+      preprocessingApplied?: boolean;
+      preprocessingLevel?: string;
+      multiEngineUsed?: boolean;
+      enginesUsed?: string[];
+      bestEngine?: string;
+      processingTime?: number;
+    };
   }
 
-  const executeOcrWithRetry = async (formData: FormData, fileName: string, retry: boolean = false): Promise<OcrResponse> => {
+  const executeOcrWithRetry = async (formData: FormData, fileName: string, retry: boolean = false, apiEndpoint: string = "/api/ocr"): Promise<OcrResponse> => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 600000); // 10-minute timeout
       
       appendOutput(`Starting OCR process for ${fileName}...`);
+      if (apiEndpoint === "/api/smart-ocr") {
+        appendOutput("🧠 Using Smart OCR with advanced processing...");
+      }
       
-      const response = await fetch("/api/ocr", {
+      const response = await fetch(apiEndpoint, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -374,7 +398,7 @@ export default function Home() {
           newFormData.append("pdfRenderer", opts.pdfRenderer);
         }
         
-        return await executeOcrWithRetry(newFormData, fileName, true);
+        return await executeOcrWithRetry(newFormData, fileName, true, "/api/ocr"); // Use regular OCR for retry
       } else if (data.details?.toLowerCase().includes('tagged pdf')) {
         appendOutput(`⚠️ ${data.error || 'PDF is a tagged PDF'}: ${data.details || ''}`);
         throw new Error(data.error || "PDF is a tagged PDF");
@@ -423,6 +447,50 @@ export default function Home() {
     
     appendOutput(`✅ Successfully processed ${fileName}`);
     appendOutput(`📄 Output file: ${data.outputFile}`);
+    
+    // Display confidence information if available
+    if (data.confidence) {
+      const conf = data.confidence;
+      appendOutput(`📊 Confidence Analysis:`);
+      appendOutput(`   Average confidence: ${conf.averageConfidence.toFixed(1)}%`);
+      appendOutput(`   Pages processed: ${conf.pageCount}`);
+      
+      if (conf.hasLowConfidencePages) {
+        if (conf.errorPages.length > 0) {
+          appendOutput(`   ⚠️  Error pages (<70%): ${conf.errorPages.join(', ')}`);
+        }
+        if (conf.warningPages.length > 0) {
+          appendOutput(`   ⚠️  Warning pages (70-85%): ${conf.warningPages.join(', ')}`);
+        }
+        appendOutput(`   📝 Manual review recommended for low confidence pages`);
+      } else {
+        appendOutput(`   ✅ All pages processed with good confidence (>85%)`);
+      }
+    }
+    
+    // Display smart OCR specific information if available
+    if (data.smartOcrInfo) {
+      const smartInfo = data.smartOcrInfo;
+      appendOutput(`🧠 Smart OCR Results:`);
+      
+      if (smartInfo.preprocessingApplied) {
+        appendOutput(`   📸 Preprocessing: ${smartInfo.preprocessingLevel} enhancement applied`);
+      }
+      
+      if (smartInfo.multiEngineUsed) {
+        appendOutput(`   🔧 Multi-engine processing used`);
+        if (smartInfo.enginesUsed && smartInfo.enginesUsed.length > 0) {
+          appendOutput(`   📋 Engines: ${smartInfo.enginesUsed.join(', ')}`);
+        }
+        if (smartInfo.bestEngine) {
+          appendOutput(`   🏆 Best result from: ${smartInfo.bestEngine}`);
+        }
+      }
+      
+      if (smartInfo.processingTime) {
+        appendOutput(`   ⏱️  Total processing time: ${smartInfo.processingTime}s`);
+      }
+    }
     
     addProcessedFile({
       name: data.outputFile,
@@ -547,6 +615,12 @@ export default function Home() {
         formData.append("optimize", opts.optimize.toString());
         formData.append("rotate", opts.rotate);
         formData.append("pdfRenderer", opts.pdfRenderer);
+        
+        // Add smart OCR options
+        formData.append("useSmartOCR", opts.useSmartOCR.toString());
+        formData.append("usePreprocessing", opts.usePreprocessing.toString());
+        formData.append("useMultiEngine", opts.useMultiEngine.toString());
+        formData.append("confidenceThreshold", opts.confidenceThreshold.toString());
 
         // Store the formData for potential retries
         setLastSubmittedFormData(formData);
@@ -556,7 +630,9 @@ export default function Home() {
         appendOutput(`Uploading file (${(file.size / (1024 * 1024)).toFixed(2)} MB) and starting OCR process...`);
 
         try {
-          data = await executeOcrWithRetry(formData, file.name);
+          // Use smart OCR API if enabled, otherwise use regular OCR API
+          const apiEndpoint = opts.useSmartOCR ? "/api/smart-ocr" : "/api/ocr";
+          data = await executeOcrWithRetry(formData, file.name, false, apiEndpoint);
           
           // Verify data has the required output file information
           if (!data || !data.outputFile) {
@@ -900,6 +976,10 @@ export default function Home() {
                   <Download className="h-4 w-4 mr-2" />
                   Processed Files
                 </TabsTrigger>
+                <TabsTrigger value="search">
+                  <Search className="h-4 w-4 mr-2" />
+                  Smart Search
+                </TabsTrigger>
                 <TabsTrigger value="info">
                   <Info className="h-4 w-4 mr-2" />
                   System Info
@@ -917,6 +997,18 @@ export default function Home() {
 
               <TabsContent value="status">
                 <ProcessStatus files={processedFiles} isProcessing={isProcessing} />
+              </TabsContent>
+
+              <TabsContent value="search">
+                <SmartSearch 
+                  className="animate-in fade-in-50 duration-300"
+                  onResultSelect={(result) => {
+                    toast({
+                      title: "Search Result Selected",
+                      description: `Found: "${result.text}" on page ${result.page}`,
+                    });
+                  }}
+                />
               </TabsContent>
               
               <TabsContent value="info">

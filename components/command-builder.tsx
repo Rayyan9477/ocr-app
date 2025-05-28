@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { SettingsLayout } from "@/components/settings-layout"
-import { Languages, RotateCw, BookOpen, FileOutput, Cog, Gauge, Zap } from "lucide-react"
+import { Languages, RotateCw, BookOpen, FileOutput, Cog, Gauge, Zap, Brain, Settings, Target } from "lucide-react"
 
 interface CommandBuilderProps {
   options: {
@@ -20,6 +20,11 @@ interface CommandBuilderProps {
     outputFormat: string
     rotate: string
     pdfRenderer: string
+    // Smart OCR options
+    useSmartOCR: boolean
+    usePreprocessing: boolean
+    useMultiEngine: boolean
+    confidenceThreshold: number
   }
   onChange: (options: any) => void
 }
@@ -31,6 +36,67 @@ export function CommandBuilder({ options, onChange }: CommandBuilderProps) {
 
   return (
     <div className="space-y-4">
+      <SettingsLayout 
+        title="Smart OCR" 
+        icon={<Brain className="h-4 w-4" />}
+        description="Advanced OCR processing with multi-engine support"
+        tooltip="Enable intelligent OCR with automatic preprocessing and confidence detection"
+      >
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="useSmartOCR" className="cursor-pointer text-sm">
+              Enable Smart OCR
+            </Label>
+            <Switch 
+              id="useSmartOCR" 
+              checked={options.useSmartOCR} 
+              onCheckedChange={(checked) => handleChange("useSmartOCR", checked)} 
+            />
+          </div>
+
+          {options.useSmartOCR && (
+            <>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="usePreprocessing" className="cursor-pointer text-sm">
+                  Auto Preprocessing
+                </Label>
+                <Switch 
+                  id="usePreprocessing" 
+                  checked={options.usePreprocessing} 
+                  onCheckedChange={(checked) => handleChange("usePreprocessing", checked)} 
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <Label htmlFor="useMultiEngine" className="cursor-pointer text-sm">
+                  Multi-Engine Processing
+                </Label>
+                <Switch 
+                  id="useMultiEngine" 
+                  checked={options.useMultiEngine} 
+                  onCheckedChange={(checked) => handleChange("useMultiEngine", checked)} 
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="confidenceThreshold" className="text-sm">
+                  Confidence Threshold: {options.confidenceThreshold}%
+                </Label>
+                <Slider
+                  id="confidenceThreshold"
+                  min={50}
+                  max={95}
+                  step={5}
+                  value={[options.confidenceThreshold]}
+                  onValueChange={(value) => handleChange("confidenceThreshold", value[0])}
+                  className="flex-1"
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </SettingsLayout>
+
       <SettingsLayout 
         title="OCR Language" 
         icon={<Languages className="h-4 w-4" />}

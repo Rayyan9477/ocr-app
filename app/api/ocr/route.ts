@@ -6,6 +6,8 @@ import { exec } from "child_process"
 import { existsSync, statSync } from "fs"
 import appConfig from "@/lib/config"
 import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
+import { multiEngineOCR } from "@/lib/multi-engine-ocr"
+import logger from "@/lib/logger"
 
 // Configure Next.js to handle large files
 export const config = {
@@ -195,7 +197,8 @@ export const POST = async (request: NextRequest) => {
         let confidenceData: DocumentConfidence | null = null;
         if (appConfig.confidence.enableConfidenceTracking) {
           try {
-            confidenceData = await extractConfidenceScores(inputPath, outputPath);
+            // Use the processed file for confidence analysis to get more accurate results
+            confidenceData = await extractConfidenceScores(inputPath, outputPath, true);
             if (confidenceData) {
               await saveConfidenceData(confidenceData, outputPath);
             }
@@ -279,7 +282,8 @@ export const POST = async (request: NextRequest) => {
             let retryConfidenceData: DocumentConfidence | null = null;
             if (appConfig.confidence.enableConfidenceTracking) {
               try {
-                retryConfidenceData = await extractConfidenceScores(inputPath, retryOutputPath);
+                // Use the processed file for confidence analysis
+                retryConfidenceData = await extractConfidenceScores(inputPath, retryOutputPath, true);
                 if (retryConfidenceData) {
                   await saveConfidenceData(retryConfidenceData, retryOutputPath);
                 }
@@ -314,12 +318,95 @@ export const POST = async (request: NextRequest) => {
         }
       }
       
-      return createJsonResponse({
-        success: false,
-        error: "OCR process failed",
-        inputFile: fileName,
-        details: errorMsg
-      }, 500);
+      // Try multi-engine OCR as fallback when primary OCR fails
+      logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback`);
+      
+      try {
+        const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
+        await mkdir(fallbackOutputDir, { recursive: true });
+        
+        const ensembleResult = await multiEngineOCR.processWithEnsemble(
+          inputPath,
+          fallbackOutputDir,
+          options.language,
+          false, // Don't use preprocessing for fallback to save time
+          true   // Use auto-customization
+        );
+        
+        if (ensembleResult.hasSuccessfulResults && ensembleResult.bestResult.outputPath) {
+          // Move the successful result to standard processed directory
+          const fallbackFinalPath = join(
+            process.cwd(),
+            "processed",
+            `${path.basename(fileName, '.pdf')}_${Date.now()}_fallback_ocr.pdf`
+          );
+          
+          // Copy the result file
+          await import('fs/promises').then(fs => 
+            fs.copyFile(ensembleResult.bestResult.outputPath!, fallbackFinalPath)
+          );
+          
+          // Extract confidence scores for fallback result if enabled
+          let fallbackConfidenceData: DocumentConfidence | null = null;
+          if (appConfig.confidence.enableConfidenceTracking) {
+            try {
+              fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
+              if (fallbackConfidenceData) {
+                await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
+              }
+            } catch (confidenceError) {
+              logger.warn("Failed to extract confidence scores for fallback result:", confidenceError);
+            }
+          }
+          
+          return createJsonResponse({
+            success: true,
+            inputFile: fileName,
+            outputFile: path.basename(fallbackFinalPath),
+            engine: ensembleResult.bestResult.engine,
+            warning: "Primary OCR failed, succeeded with multi-engine fallback",
+            details: `Fallback used ${ensembleResult.successCount}/${ensembleResult.allResults.length} engines successfully`,
+            engines: {
+              used: ensembleResult.allResults.map(r => r.engine),
+              successful: ensembleResult.allResults.filter(r => r.success).map(r => r.engine),
+              failed: ensembleResult.allResults.filter(r => !r.success).map(r => r.engine)
+            },
+            customizationApplied: ensembleResult.customizationApplied,
+            confidence: fallbackConfidenceData ? {
+              averageConfidence: fallbackConfidenceData.averageConfidence,
+              hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
+              warningPages: fallbackConfidenceData.warningPages,
+              errorPages: fallbackConfidenceData.errorPages,
+              pageCount: fallbackConfidenceData.pageConfidences.length
+            } : undefined
+          });
+        } else {
+          logger.error(`Multi-engine fallback also failed for ${fileName}`);
+          return createJsonResponse({
+            success: false,
+            error: "Both primary OCR and multi-engine fallback failed",
+            inputFile: fileName,
+            details: {
+              primaryError: errorMsg,
+              fallbackEngines: ensembleResult.allResults.map(r => ({
+                engine: r.engine,
+                error: r.error
+              }))
+            }
+          }, 500);
+        }
+      } catch (fallbackError) {
+        logger.error("Multi-engine fallback failed with exception:", fallbackError);
+        return createJsonResponse({
+          success: false,
+          error: "Both primary OCR and multi-engine fallback failed",
+          inputFile: fileName,
+          details: {
+            primaryError: errorMsg,
+            fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }
+        }, 500);
+      }
     }
     
   } catch (error) {
