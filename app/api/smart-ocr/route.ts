@@ -54,8 +54,8 @@ export async function POST(request: NextRequest) {
     const options = {
       language: formData.get("language")?.toString() || "eng",
       usePreprocessing: formData.get("usePreprocessing") === "true",
-      useMultiEngine: formData.get("useMultiEngine") === "true",
-      useFourEngine: formData.get("useFourEngine") === "true", // New four-engine option
+      useMultiEngine: formData.get("useMultiEngine") !== "false", // Default to true for better results
+      useFourEngine: formData.get("useFourEngine") !== "false", // Default to true for enhanced processing
       useAutoCustomization: formData.get("useAutoCustomization") !== "false", // Default to true
       confidenceThreshold: parseFloat(formData.get("confidenceThreshold")?.toString() || "70"),
       // Medical-specific options
@@ -224,6 +224,7 @@ export async function POST(request: NextRequest) {
     let confidenceData = null;
     if (appConfig.confidence.enableConfidenceTracking) {
       try {
+        // Use processed file for confidence analysis to get accurate results
         confidenceData = await extractConfidenceScores(inputPath, outputPath, true);
         if (confidenceData) {
           await saveConfidenceData(confidenceData, outputPath);

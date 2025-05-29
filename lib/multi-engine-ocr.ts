@@ -53,6 +53,20 @@ export class MultiEngineOCRService {
         `ocrmypdf --language ${lang} --deskew --rotate-pages --force-ocr "${input}" "${output}"`,
       confidence: false,
       available: true
+    },
+    {
+      name: 'paddleocr',
+      command: (input, output, lang) => 
+        `curl -X POST http://localhost:8000/ocr/process -F "file=@${input}" -F "enhancement_mode=standard" -o "${output}"`,
+      confidence: true,
+      available: false // Will be checked
+    },
+    {
+      name: 'kraken',
+      command: (input, output, lang) => 
+        `curl -X POST http://localhost:8001/ocr/process -F "file=@${input}" -F "enhancement_mode=standard" -F "language=${lang}" -o "${output}"`,
+      confidence: true,
+      available: false // Will be checked
     }
   ];
 
@@ -70,6 +84,18 @@ export class MultiEngineOCRService {
           await execAsync('tesseract --version');
         } else if (engine.name === 'ocrmypdf') {
           await execAsync('ocrmypdf --version');
+        } else if (engine.name === 'paddleocr') {
+          // Check if PaddleOCR service is running
+          const response = await fetch('http://localhost:8000/health');
+          if (!response.ok) {
+            throw new Error('PaddleOCR service not responding');
+          }
+        } else if (engine.name === 'kraken') {
+          // Check if Kraken service is running
+          const response = await fetch('http://localhost:8001/health');
+          if (!response.ok) {
+            throw new Error('Kraken service not responding');
+          }
         }
         engine.available = true;
         logger.info(`OCR engine ${engine.name} is available`);
@@ -147,7 +173,13 @@ export class MultiEngineOCRService {
             optimizedSettings
           );
           
-          await execAsync(command);
+          // Handle service-based engines differently
+          if (engine.name === 'paddleocr' || engine.name === 'kraken') {
+            await this.processWithServiceEngine(engine, processedInputPath, outputPath, language);
+          } else {
+            // Traditional command-line engines
+            await execAsync(command);
+          }
           
           const processingTime = Date.now() - startTime;
           
@@ -307,6 +339,12 @@ export class MultiEngineOCRService {
       
       command += ` "${inputPath}" "${outputPath}"`;
       return command;
+    } else if (engine.name === 'paddleocr') {
+      // Service-based engine - return placeholder command
+      return `echo "PaddleOCR service processing"`;
+    } else if (engine.name === 'kraken') {
+      // Service-based engine - return placeholder command  
+      return `echo "Kraken service processing"`;
     }
     
     // Fallback to original command
@@ -468,6 +506,60 @@ export class MultiEngineOCRService {
    */
   getAvailableEngines(): string[] {
     return this.engines.filter(e => e.available).map(e => e.name);
+  }
+
+  /**
+   * Process document with service-based engines (PaddleOCR, Kraken)
+   */
+  private async processWithServiceEngine(
+    engine: OCREngine,
+    inputPath: string,
+    outputPath: string,
+    language: string
+  ): Promise<void> {
+    const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
+    
+    if (engine.name === 'paddleocr') {
+      // PaddleOCR service call
+      const formData = new FormData();
+      const fileBuffer = await readFileAsync(inputPath);
+      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+      formData.append('file', blob, 'document.pdf');
+      formData.append('enhancement_mode', 'standard');
+      
+      const response = await fetch('http://localhost:8000/ocr/process', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error(`PaddleOCR service error: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
+      
+    } else if (engine.name === 'kraken') {
+      // Kraken service call
+      const formData = new FormData();
+      const fileBuffer = await readFileAsync(inputPath);
+      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+      formData.append('file', blob, 'document.pdf');
+      formData.append('enhancement_mode', 'standard');
+      formData.append('language', language);
+      
+      const response = await fetch('http://localhost:8001/ocr/process', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Kraken service error: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
+    }
   }
 }
 
