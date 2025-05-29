@@ -50,7 +50,7 @@ export class MultiEngineOCRService {
     {
       name: 'ocrmypdf',
       command: (input, output, lang) => 
-        `ocrmypdf --language ${lang} --deskew --rotate-pages --force-ocr "${input}" "${output}"`,
+        `ocrmypdf --language ${lang} --deskew --rotate-pages --force-ocr --pages 1- --max-image-mpixels 0 "${input}" "${output}"`,
       confidence: false,
       available: true
     },
@@ -332,6 +332,12 @@ export class MultiEngineOCRService {
       return command;
     } else if (engine.name === 'ocrmypdf') {
       let command = `ocrmypdf --language ${language} --deskew --rotate-pages --force-ocr`;
+      
+      // Ensure all pages are processed
+      command += ` --pages 1-`;
+      
+      // Support large images
+      command += ` --max-image-mpixels 0`;
       
       if (settings && settings.ocrmypdfParams.length > 0) {
         command += ` ${settings.ocrmypdfParams.join(' ')}`;

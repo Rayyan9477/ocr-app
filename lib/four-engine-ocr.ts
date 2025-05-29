@@ -104,30 +104,32 @@ export class FourEngineOCRService {
     {
       name: 'paddleocr',
       command: (input, output, lang, options) => {
-        let enhancement = 'standard';
-        if (options?.enhanceHandwriting) enhancement = 'handwritten';
-        if (options?.medicalTerminology) enhancement = 'medical';
-        return `curl -X POST http://localhost:8000/ocr/process -F "file=@${input}" -F "enhancement_mode=${enhancement}" -o "${output}"`;
+        let enhancement = 'medical_bills'; // Default to medical bills processing
+        if (options?.enhanceHandwriting) enhancement = 'medical_handwritten';
+        if (options?.medicalTerminology) enhancement = 'medical_structured';
+        if (options?.preserveLayout) enhancement = 'medical_layout';
+        return `curl -X POST http://localhost:8000/ocr/medical -F "file=@${input}" -F "enhancement_mode=${enhancement}" -F "extract_dates=true" -F "extract_addresses=true" -F "extract_codes=true" -o "${output}"`;
       },
       confidence: true,
       available: false, // Will be checked
       medicalOptimized: true,
       handwritingSupport: true,
-      specialization: ['handwriting', 'low_quality', 'medical_notes', 'poor_scans']
+      specialization: ['medical_bills', 'insurance_forms', 'handwriting', 'dates', 'addresses', 'medical_codes', 'poor_scans']
     },
     {
       name: 'kraken',
       command: (input, output, lang, options) => {
-        let enhancement = 'standard';
-        if (options?.enhanceHandwriting) enhancement = 'handwritten';
-        if (options?.medicalTerminology) enhancement = 'medical';
-        return `curl -X POST http://localhost:8001/ocr/process -F "file=@${input}" -F "enhancement_mode=${enhancement}" -F "language=${lang}" -o "${output}"`;
+        let enhancement = 'medical_bills'; // Default to medical bills processing
+        if (options?.enhanceHandwriting) enhancement = 'medical_handwritten';
+        if (options?.medicalTerminology) enhancement = 'medical_structured';
+        if (options?.preserveLayout) enhancement = 'medical_layout';
+        return `curl -X POST http://localhost:8001/ocr/medical -F "file=@${input}" -F "enhancement_mode=${enhancement}" -F "language=${lang}" -F "extract_dates=true" -F "extract_addresses=true" -F "extract_codes=true" -o "${output}"`;
       },
       confidence: true,
       available: false, // Will be checked
       medicalOptimized: true,
       handwritingSupport: true,
-      specialization: ['handwriting', 'historical_documents', 'degraded_text', 'medical_notes']
+      specialization: ['medical_bills', 'insurance_forms', 'handwriting', 'historical_documents', 'degraded_text', 'dates', 'addresses', 'medical_notes']
     }
   ];
 
@@ -353,34 +355,47 @@ export class FourEngineOCRService {
     const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
     
     if (engine.name === 'paddleocr') {
-      // PaddleOCR service call
-      let enhancement = 'standard';
-      if (options.enhanceHandwriting) enhancement = 'handwritten';
-      if (options.medicalTerminology) enhancement = 'medical';
+      // PaddleOCR medical service call
+      let enhancement = 'medical_bills'; // Default to medical bills
+      if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
+      if (options.medicalTerminology) enhancement = 'medical_structured';
+      if (options.preserveLayout) enhancement = 'medical_layout';
       
       const formData = new FormData();
       const fileBuffer = await readFileAsync(inputPath);
       const blob = new Blob([fileBuffer], { type: 'application/pdf' });
       formData.append('file', blob, 'document.pdf');
       formData.append('enhancement_mode', enhancement);
+      formData.append('extract_dates', 'true');
+      formData.append('extract_addresses', 'true');
+      formData.append('extract_codes', 'true');
+      formData.append('medical_context', 'true');
       
-      const response = await fetch('http://localhost:8000/ocr/process', {
+      const response = await fetch('http://localhost:8000/ocr/medical', {
         method: 'POST',
         body: formData
       });
       
       if (!response.ok) {
-        throw new Error(`PaddleOCR service error: ${response.statusText}`);
+        throw new Error(`PaddleOCR medical service error: ${response.statusText}`);
       }
       
       const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
+      // Enhanced result structure for medical data
+      const enhancedResult = {
+        ...result,
+        medical_optimization: true,
+        extraction_targets: ['dates', 'addresses', 'codes', 'patient_info'],
+        processing_mode: enhancement
+      };
+      await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
       
     } else if (engine.name === 'kraken') {
-      // Kraken service call
-      let enhancement = 'standard';
-      if (options.enhanceHandwriting) enhancement = 'handwritten';
-      if (options.medicalTerminology) enhancement = 'medical';
+      // Kraken medical service call
+      let enhancement = 'medical_bills'; // Default to medical bills
+      if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
+      if (options.medicalTerminology) enhancement = 'medical_structured';
+      if (options.preserveLayout) enhancement = 'medical_layout';
       
       const formData = new FormData();
       const fileBuffer = await readFileAsync(inputPath);
@@ -388,18 +403,31 @@ export class FourEngineOCRService {
       formData.append('file', blob, 'document.pdf');
       formData.append('enhancement_mode', enhancement);
       formData.append('language', language);
+      formData.append('extract_dates', 'true');
+      formData.append('extract_addresses', 'true');
+      formData.append('extract_codes', 'true');
+      formData.append('medical_context', 'true');
+      formData.append('preserve_layout', options.preserveLayout ? 'true' : 'false');
       
-      const response = await fetch('http://localhost:8001/ocr/process', {
+      const response = await fetch('http://localhost:8001/ocr/medical', {
         method: 'POST',
         body: formData
       });
       
       if (!response.ok) {
-        throw new Error(`Kraken service error: ${response.statusText}`);
+        throw new Error(`Kraken medical service error: ${response.statusText}`);
       }
       
       const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
+      // Enhanced result structure for medical data
+      const enhancedResult = {
+        ...result,
+        medical_optimization: true,
+        extraction_targets: ['dates', 'addresses', 'codes', 'patient_info'],
+        processing_mode: enhancement,
+        handwriting_support: engine.handwritingSupport
+      };
+      await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
     }
   }
 
@@ -471,20 +499,39 @@ export class FourEngineOCRService {
         }
       }
 
-      // Enhanced date extraction with more formats
+      // Enhanced date extraction with comprehensive medical bill date formats
       const datePatterns = [
+        // Standard date formats
         /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g,
         /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/g,
+        // Month name formats
         /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}\b/gi,
         /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4}\b/gi,
-        /(?:date|visit|service|dos)[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi
+        // Medical bill specific date contexts
+        /(?:date(?:\s+of)?(?:\s+service)?|visit|service|dos|treatment|appointment|admission|discharge)[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi,
+        /(?:from|to|between)[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi,
+        /(?:statement|bill|invoice)\s+date[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi,
+        // Insurance claim dates
+        /(?:claim|received|processed|paid)[:\s+date]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi,
+        // Date ranges common in medical bills
+        /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})\s*(?:to|through|-)\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi,
+        // Birth date patterns
+        /(?:birth|dob|date\s+of\s+birth)[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/gi
       ];
       
       medicalFields.dates = [];
       for (const pattern of datePatterns) {
         const matches = text.match(pattern);
         if (matches) {
-          medicalFields.dates!.push(...matches);
+          matches.forEach(match => {
+            // Extract just the date part if it's a labeled match
+            const dateMatch = match.match(/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}/);
+            if (dateMatch) {
+              medicalFields.dates!.push(dateMatch[0]);
+            } else {
+              medicalFields.dates!.push(match);
+            }
+          });
         }
       }
       medicalFields.dates = [...new Set(medicalFields.dates)]; // Remove duplicates
@@ -534,18 +581,40 @@ export class FourEngineOCRService {
       }
       medicalFields.dxCodes = [...new Set(medicalFields.dxCodes)];
 
-      // Enhanced address extraction
+      // Enhanced address extraction for medical facilities and patient addresses
       const addressPatterns = [
-        /\d+\s+[A-Za-z\s]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Boulevard|Ln|Lane|Way|Ct|Court)[.,\s]*[A-Za-z\s]*,?\s*[A-Z]{2}\s*\d{5}/gi,
-        /(?:address|location)[:\s]*(\d+[^,\n]+(?:St|Street|Ave|Avenue|Rd|Road)[^,\n]*)/gi,
-        /\d+\s+[A-Za-z0-9\s]+(?:Suite|Ste|Unit|Apt)[^\n,]*,?\s*[A-Za-z\s]*,?\s*[A-Z]{2}\s*\d{5}/gi
+        // Standard street addresses with state and ZIP
+        /\d+\s+[A-Za-z0-9\s]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Boulevard|Ln|Lane|Way|Ct|Court|Pkwy|Parkway|Pl|Place)[.,\s]*[A-Za-z\s]*,?\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?/gi,
+        // Medical facility specific patterns
+        /(?:facility|provider|clinic|hospital|medical\s+center)\s+(?:address|location)[:\s]*(\d+[^,\n]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive)[^,\n]*)/gi,
+        /(?:billing|mailing|service)\s+address[:\s]*(\d+[^,\n]+)/gi,
+        // Suite/Unit patterns common in medical offices
+        /\d+\s+[A-Za-z0-9\s]+(?:Suite|Ste|Unit|Apt|Floor|Fl|Building|Bldg)[^,\n]*,?\s*[A-Za-z\s]*,?\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?/gi,
+        // PO Box patterns
+        /(?:PO|P\.O\.)\s*Box\s+\d+[^,\n]*,?\s*[A-Za-z\s]*,?\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?/gi,
+        // City, State ZIP patterns
+        /[A-Za-z\s]{3,},\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?/g,
+        // Patient address contexts
+        /(?:patient|member|insured)\s+address[:\s]*(\d+[^,\n]+)/gi,
+        // Address labels in medical forms
+        /(?:home|residence|primary)\s+address[:\s]*(\d+[^,\n]+)/gi,
+        // Multi-line address patterns
+        /\d+\s+[A-Za-z0-9\s#-]+\n[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5}/gi
       ];
       
       medicalFields.addresses = [];
       for (const pattern of addressPatterns) {
         const matches = text.match(pattern);
         if (matches) {
-          medicalFields.addresses!.push(...matches.map(addr => addr.replace(/^(?:address|location)[:\s]*/i, '').trim()));
+          matches.forEach(addr => {
+            let cleanAddr = addr.replace(/^(?:facility|provider|clinic|hospital|medical\s+center|billing|mailing|service|patient|member|insured|home|residence|primary)\s+(?:address|location)[:\s]*/i, '').trim();
+            // Clean up any leading labels
+            cleanAddr = cleanAddr.replace(/^(?:address|location)[:\s]*/i, '').trim();
+            // Ensure minimum length for valid address
+            if (cleanAddr.length > 10 && /\d/.test(cleanAddr)) {
+              medicalFields.addresses!.push(cleanAddr);
+            }
+          });
         }
       }
       medicalFields.addresses = [...new Set(medicalFields.addresses)];

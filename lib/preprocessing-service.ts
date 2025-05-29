@@ -48,37 +48,7 @@ export class PreprocessingService {
       const sessionDir = join(this.tempDir, `session_${Date.now()}`);
       await execAsync(`mkdir -p "${sessionDir}"`);
 
-      let currentPath = inputPath;
-      let workingPath = '';
-
-      // If input is PDF, convert to high-quality images first
-      if (inputPath.toLowerCase().endsWith('.pdf')) {
-        logger.info('Converting PDF to high-quality images for preprocessing');
-        
-        const imageDir = join(sessionDir, 'pages');
-        await execAsync(`mkdir -p "${imageDir}"`);
-        
-        // Convert with high DPI for better quality
-        await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
-        operations.push('PDF to high-quality PNG conversion (300 DPI)');
-
-        // Get the first page for processing (can be extended for multi-page)
-        const { readdir } = await import('fs/promises');
-        const imageFiles = (await readdir(imageDir)).filter(f => f.endsWith('.png')).sort();
-        
-        if (imageFiles.length === 0) {
-          throw new Error('No images generated from PDF');
-        }
-
-        currentPath = join(imageDir, imageFiles[0]);
-        workingPath = join(sessionDir, 'processed.png');
-      } else {
-        workingPath = join(sessionDir, 'processed' + this.getFileExtension(inputPath));
-        // Copy original file to working directory
-        await execAsync(`cp "${inputPath}" "${workingPath}"`);
-      }
-
-      // Apply preprocessing operations using ImageMagick
+      // Determine preprocessing operations
       const magickOps: string[] = [];
 
       if (options.enhanceContrast) {
@@ -111,40 +81,96 @@ export class PreprocessingService {
         operations.push('Size normalization and DPI enhancement');
       }
 
-      // Apply all operations at once for better performance
-      if (magickOps.length > 0) {
-        const outputPath = join(sessionDir, 'enhanced.png');
-        const magickCommand = `convert "${currentPath}" ${magickOps.join(' ')} "${outputPath}"`;
-        
-        logger.info(`Applying preprocessing: ${magickCommand}`);
-        await execAsync(magickCommand);
-        
-        if (existsSync(outputPath)) {
-          workingPath = outputPath;
-        } else {
-          errors.push('ImageMagick processing failed');
-        }
-      }
+      let finalOutputPath: string;
 
-      // Convert back to PDF if original was PDF
-      let finalOutputPath = workingPath;
+      // Handle PDF input with multi-page support
       if (inputPath.toLowerCase().endsWith('.pdf')) {
+        logger.info('Converting PDF to high-quality images for preprocessing');
+        
+        const imageDir = join(sessionDir, 'pages');
+        await execAsync(`mkdir -p "${imageDir}"`);
+        
+        // Convert with high DPI for better quality
+        await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
+        operations.push('PDF to high-quality PNG conversion (300 DPI)');
+
+        // Get all pages for processing
+        const { readdir } = await import('fs/promises');
+        const imageFiles = (await readdir(imageDir)).filter(f => f.endsWith('.png')).sort();
+        
+        if (imageFiles.length === 0) {
+          throw new Error('No images generated from PDF');
+        }
+
+        logger.info(`Processing ${imageFiles.length} pages from PDF`);
+        
+        // Process each page individually
+        const processedPages: string[] = [];
+        for (let i = 0; i < imageFiles.length; i++) {
+          const pagePath = join(imageDir, imageFiles[i]);
+          const processedPagePath = join(sessionDir, `processed_page_${i + 1}.png`);
+          
+          // Apply preprocessing to this page
+          if (magickOps.length > 0) {
+            const magickCommand = `convert "${pagePath}" ${magickOps.join(' ')} "${processedPagePath}"`;
+            logger.info(`Processing page ${i + 1}: ${magickCommand}`);
+            await execAsync(magickCommand);
+            
+            if (existsSync(processedPagePath)) {
+              processedPages.push(processedPagePath);
+            } else {
+              logger.warn(`Failed to process page ${i + 1}, using original`);
+              await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
+              processedPages.push(processedPagePath);
+            }
+          } else {
+            // No preprocessing, just copy the page
+            await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
+            processedPages.push(processedPagePath);
+          }
+        }
+        
+        // Convert all processed pages back to a multi-page PDF
         finalOutputPath = join(sessionDir, 'enhanced.pdf');
         
-        // Try img2pdf first, fallback to convert if not available
         try {
-          await execAsync(`img2pdf "${workingPath}" -o "${finalOutputPath}"`);
-          operations.push('Converted enhanced image back to PDF using img2pdf');
+          // Use img2pdf to combine all pages into a single PDF
+          const pagesList = processedPages.map(p => `"${p}"`).join(' ');
+          await execAsync(`img2pdf ${pagesList} -o "${finalOutputPath}"`);
+          operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using img2pdf`);
         } catch (img2pdfError) {
           logger.warn('img2pdf not available, using ImageMagick convert as fallback');
           try {
-            await execAsync(`convert "${workingPath}" "${finalOutputPath}"`);
-            operations.push('Converted enhanced image back to PDF using convert');
+            const pagesList = processedPages.map(p => `"${p}"`).join(' ');
+            await execAsync(`convert ${pagesList} "${finalOutputPath}"`);
+            operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using convert`);
           } catch (convertError) {
-            logger.warn('PDF conversion failed, keeping as image');
-            finalOutputPath = workingPath;
-            operations.push('Keeping enhanced image (PDF conversion failed)');
+            logger.error('Multi-page PDF conversion failed, falling back to first page only');
+            finalOutputPath = processedPages[0];
+            operations.push('Keeping first enhanced page only (multi-page PDF conversion failed)');
           }
+        }
+      } else {
+        // Handle image input
+        const workingPath = join(sessionDir, 'processed' + this.getFileExtension(inputPath));
+        
+        // Apply preprocessing operations using ImageMagick
+        if (magickOps.length > 0) {
+          const magickCommand = `convert "${inputPath}" ${magickOps.join(' ')} "${workingPath}"`;
+          
+          logger.info(`Applying preprocessing: ${magickCommand}`);
+          await execAsync(magickCommand);
+          
+          if (existsSync(workingPath)) {
+            finalOutputPath = workingPath;
+          } else {
+            errors.push('ImageMagick processing failed');
+            finalOutputPath = inputPath;
+          }
+        } else {
+          // No preprocessing, just copy the file
+          await execAsync(`cp "${inputPath}" "${workingPath}"`);
+          finalOutputPath = workingPath;
         }
       }
 

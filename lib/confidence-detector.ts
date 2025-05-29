@@ -167,16 +167,35 @@ export async function extractConfidenceScores(
           
           if (i === 0) {
             // For the first page, include the full hOCR structure
-            combinedHocr = pageContent;
+            // But ensure the page has the correct ID
+            combinedHocr = pageContent.replace(
+              /<div class='ocr_page' id='page_1'/,
+              `<div class='ocr_page' id='page_${i + 1}'`
+            );
           } else {
             // For subsequent pages, extract only the page content and append
-            const pageMatch = pageContent.match(/<div class='ocr_page'[^>]*>[\s\S]*?<\/div>/);
-            if (pageMatch) {
-              // Replace the closing body and html tags with the new page content
-              combinedHocr = combinedHocr.replace(
-                /<\/body>\s*<\/html>\s*$/,
-                pageMatch[0] + '\n</body>\n</html>'
-              );
+            // Use a more robust method to extract the complete page div with all nested content
+            const pageStartMatch = pageContent.match(/<div class='ocr_page'[^>]*>/);
+            if (pageStartMatch) {
+              const startIndex = pageContent.indexOf(pageStartMatch[0]);
+              const bodyEndIndex = pageContent.indexOf('</body>');
+              
+              if (startIndex !== -1 && bodyEndIndex !== -1) {
+                // Extract everything from the page div start to just before </body>
+                let pageDiv = pageContent.substring(startIndex, bodyEndIndex).trim();
+                
+                // Fix the page ID to be unique for this page
+                pageDiv = pageDiv.replace(
+                  /<div class='ocr_page' id='page_1'/,
+                  `<div class='ocr_page' id='page_${i + 1}'`
+                );
+                
+                // Replace the closing body and html tags with the new page content
+                combinedHocr = combinedHocr.replace(
+                  /<\/body>\s*<\/html>\s*$/,
+                  pageDiv + '\n</body>\n</html>'
+                );
+              }
             }
           }
         }
@@ -244,15 +263,35 @@ export async function extractConfidenceScores(
               
               if (i === 0) {
                 // For the first page, include the full hOCR structure
-                combinedHocr = pageContent;
+                // But ensure the page has the correct ID
+                combinedHocr = pageContent.replace(
+                  /<div class='ocr_page' id='page_1'/,
+                  `<div class='ocr_page' id='page_${i + 1}'`
+                );
               } else {
                 // For subsequent pages, extract only the page content and append
-                const pageMatch = pageContent.match(/<div class='ocr_page'[^>]*>[\s\S]*?<\/div>/);
-                if (pageMatch) {
-                  combinedHocr = combinedHocr.replace(
-                    /<\/body>\s*<\/html>\s*$/,
-                    pageMatch[0] + '\n</body>\n</html>'
-                  );
+                // Use a more robust method to extract the complete page div with all nested content
+                const pageStartMatch = pageContent.match(/<div class='ocr_page'[^>]*>/);
+                if (pageStartMatch) {
+                  const startIndex = pageContent.indexOf(pageStartMatch[0]);
+                  const bodyEndIndex = pageContent.indexOf('</body>');
+                  
+                  if (startIndex !== -1 && bodyEndIndex !== -1) {
+                    // Extract everything from the page div start to just before </body>
+                    let pageDiv = pageContent.substring(startIndex, bodyEndIndex).trim();
+                    
+                    // Fix the page ID to be unique for this page
+                    pageDiv = pageDiv.replace(
+                      /<div class='ocr_page' id='page_1'/,
+                      `<div class='ocr_page' id='page_${i + 1}'`
+                    );
+                    
+                    // Replace the closing body and html tags with the new page content
+                    combinedHocr = combinedHocr.replace(
+                      /<\/body>\s*<\/html>\s*$/,
+                      pageDiv + '\n</body>\n</html>'
+                    );
+                  }
                 }
               }
             }
@@ -318,15 +357,35 @@ export async function extractConfidenceScores(
 function parseHocrConfidence(hocrContent: string): ConfidenceData[] {
   const pages: ConfidenceData[] = [];
   
-  // Split by pages
-  const pageMatches = hocrContent.match(/<div class='ocr_page'[^>]*>[\s\S]*?<\/div>/g);
+  // Use a more robust method to extract pages by finding page divs and matching closing tags
+  const pageRegex = /<div class='ocr_page'[^>]*>/g;
+  let pageMatch;
+  const pageStarts: number[] = [];
   
-  if (!pageMatches) {
+  // Find all page start positions
+  while ((pageMatch = pageRegex.exec(hocrContent)) !== null) {
+    pageStarts.push(pageMatch.index);
+  }
+  
+  if (pageStarts.length === 0) {
     return pages;
   }
-
-  pageMatches.forEach((pageContent, pageIndex) => {
-    // Extract words with confidence scores
+  
+  // Process each page
+  pageStarts.forEach((pageStart, pageIndex) => {
+    // Find the content for this page
+    let pageContent: string;
+    
+    if (pageIndex < pageStarts.length - 1) {
+      // Not the last page - content goes until the next page starts
+      pageContent = hocrContent.substring(pageStart, pageStarts[pageIndex + 1]);
+    } else {
+      // Last page - content goes until </body>
+      const bodyEndIndex = hocrContent.indexOf('</body>');
+      pageContent = hocrContent.substring(pageStart, bodyEndIndex > -1 ? bodyEndIndex : hocrContent.length);
+    }
+    
+    // Extract words with confidence scores from this page
     const wordMatches = pageContent.match(/<span class='ocrx_word'[^>]*>([^<]*)<\/span>/g) || [];
     
     const words: ConfidenceData['lowConfidenceWords'] = [];
@@ -334,8 +393,9 @@ function parseHocrConfidence(hocrContent: string): ConfidenceData[] {
     let wordCount = 0;
 
     wordMatches.forEach(wordMatch => {
-      // Extract confidence score from title attribute
-      const titleMatch = wordMatch.match(/title="[^"]*x_wconf\s+(\d+)[^"]*"/);
+      // Extract confidence score from title attribute (handle both single and double quotes)
+      const titleMatch = wordMatch.match(/title=['"][^'"]*x_wconf\s+(\d+)[^'"]*['"]/) || 
+                        wordMatch.match(/x_wconf\s+(\d+)/);
       const textMatch = wordMatch.match(/>([^<]*)</);
       const bboxMatch = wordMatch.match(/bbox\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/);
       

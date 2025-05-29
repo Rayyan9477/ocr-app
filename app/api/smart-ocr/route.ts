@@ -50,18 +50,21 @@ export async function POST(request: NextRequest) {
     await writeFile(inputPath, buffer);
     logger.info(`File saved: ${inputPath}`);
     
-    // Process options from form data
+    // Process options from form data - TREAT ALL DOCUMENTS AS MEDICAL BILLS
     const options = {
       language: formData.get("language")?.toString() || "eng",
-      usePreprocessing: formData.get("usePreprocessing") === "true",
+      usePreprocessing: formData.get("usePreprocessing") !== "false", // Default to true for medical bills
       useMultiEngine: formData.get("useMultiEngine") !== "false", // Default to true for better results
       useFourEngine: formData.get("useFourEngine") !== "false", // Default to true for enhanced processing
       useAutoCustomization: formData.get("useAutoCustomization") !== "false", // Default to true
       confidenceThreshold: parseFloat(formData.get("confidenceThreshold")?.toString() || "70"),
-      // Medical-specific options
-      medicalOptimization: formData.get("medicalOptimization") === "true",
-      enhanceHandwriting: formData.get("enhanceHandwriting") === "true",
-      extractMedicalCodes: formData.get("extractMedicalCodes") === "true"
+      // Medical-specific options - ALWAYS ENABLED for medical bill processing
+      medicalOptimization: true, // Always true - treat everything as medical
+      enhanceHandwriting: formData.get("enhanceHandwriting") !== "false", // Default to true for medical handwriting
+      extractMedicalCodes: true, // Always extract medical codes
+      preserveLayout: true, // Always preserve layout for medical bills
+      extractDates: true, // Always extract dates from medical bills
+      extractAddresses: true // Always extract addresses from medical bills
     };
     
     // Determine output directory and ensure it exists
@@ -71,22 +74,24 @@ export async function POST(request: NextRequest) {
     await mkdir(processedDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     
-    logger.info(`Starting smart OCR process for ${fileName} - Four Engine: ${options.useFourEngine}, Medical: ${options.medicalOptimization}`);
+    logger.info(`Starting medical bill OCR process for ${fileName} - Four Engine: ${options.useFourEngine}, Medical Optimization: ALWAYS ENABLED`);
     
     let ensembleResult;
     
     // Choose between four-engine or traditional multi-engine processing
     if (options.useFourEngine) {
-      // Use four-engine OCR for enhanced performance
+      // Use four-engine OCR for enhanced medical bill processing
       const medicalOptions = {
         enhanceHandwriting: options.enhanceHandwriting,
         extractCodes: options.extractMedicalCodes,
         medicalTerminology: options.medicalOptimization,
-        preserveLayout: true,
-        confidenceThreshold: options.confidenceThreshold
+        preserveLayout: options.preserveLayout,
+        confidenceThreshold: options.confidenceThreshold,
+        extractDates: options.extractDates,
+        extractAddresses: options.extractAddresses
       };
       
-      logger.info('Using four-engine OCR system with medical optimization');
+      logger.info('Using four-engine OCR system with medical bill optimization (all documents treated as medical)');
       const fourEngineResult = await fourEngineOCR.processWithFourEngines(
         inputPath,
         sessionDir,
