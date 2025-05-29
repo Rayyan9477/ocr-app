@@ -63,12 +63,21 @@ export async function extractConfidenceScores(
         
         // Check if the PDF has extractable text first
         let hasExistingText = false;
+        let extractedText = '';
         try {
           const { stdout: textContent } = await execAsync(`pdftotext "${analysisTarget}" -`);
-          hasExistingText = textContent.trim().length > 0;
-          logger.info(`PDF has existing text: ${hasExistingText}`);
+          extractedText = textContent.trim();
+          hasExistingText = extractedText.length > 0;
+          logger.info(`PDF has existing text: ${hasExistingText} (${extractedText.length} characters)`);
         } catch (error) {
           logger.warn(`Could not extract text from PDF: ${error}`);
+        }
+
+        // Note: For processed PDFs with existing text, we could estimate confidence,
+        // but for accuracy we'll always perform proper page-by-page analysis.
+        // This ensures accurate page counts and detailed confidence metrics.
+        if (hasExistingText && useProcessedFile && extractedText.length > 100) {
+          logger.info('PDF has substantial text content, but performing full page analysis for accuracy');
         }
 
         // Convert PDF to images using pdftoppm with higher quality for better OCR
@@ -176,15 +185,82 @@ export async function extractConfidenceScores(
         await writeFile(hocrPath, combinedHocr, 'utf-8');
         
       } else {
-        // For image files, run Tesseract directly
+        // For PDFs, we need to convert to images first, then run Tesseract
         const tesseractCommand = `tesseract "${inputPath}" "${join(tempDir, 'output')}" -l eng --psm 1 hocr`;
         
         try {
+          // First try direct PDF processing with Tesseract (may fail)
           await execAsync(tesseractCommand);
         } catch (error) {
-          // Try with a more permissive page segmentation mode if the first attempt fails
-          const fallbackCommand = `tesseract "${inputPath}" "${join(tempDir, 'output')}" -l eng --psm 3 hocr`;
-          await execAsync(fallbackCommand);
+          logger.warn(`Direct PDF processing failed: ${error}. Converting to images first.`);
+          
+          // Convert PDF to images first, then process with Tesseract
+          const imageDir = join(tempDir, 'images');
+          await execAsync(`mkdir -p "${imageDir}"`);
+          await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
+          
+          // Get all generated images
+          const { readdir } = await import('fs/promises');
+          const imageFiles = (await readdir(imageDir))
+            .filter(f => f.endsWith('.png'))
+            .sort((a, b) => {
+              const aNum = parseInt(a.match(/(\d+)\.png$/)?.[1] || '0');
+              const bNum = parseInt(b.match(/(\d+)\.png$/)?.[1] || '0');
+              return aNum - bNum;
+            });
+          
+          // Process each page image with Tesseract
+          const hocrFiles: string[] = [];
+          for (let i = 0; i < imageFiles.length; i++) {
+            const imagePath = join(imageDir, imageFiles[i]);
+            const pageHocrPath = join(tempDir, `page_${i + 1}.hocr`);
+            
+            try {
+              await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" -l eng --psm 1 hocr`);
+              if (existsSync(pageHocrPath)) {
+                hocrFiles.push(pageHocrPath);
+              }
+            } catch (pageError) {
+              logger.warn(`Failed to process page ${i + 1}: ${pageError}`);
+              // Try with fallback PSM mode
+              try {
+                await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" -l eng --psm 3 hocr`);
+                if (existsSync(pageHocrPath)) {
+                  hocrFiles.push(pageHocrPath);
+                }
+              } catch (fallbackError) {
+                logger.warn(`Fallback processing also failed for page ${i + 1}: ${fallbackError}`);
+              }
+            }
+          }
+          
+          // Combine all page hOCR files
+          if (hocrFiles.length > 0) {
+            const { readFile, writeFile } = await import('fs/promises');
+            let combinedHocr = '';
+            
+            for (let i = 0; i < hocrFiles.length; i++) {
+              const pageContent = await readFile(hocrFiles[i], 'utf-8');
+              
+              if (i === 0) {
+                // For the first page, include the full hOCR structure
+                combinedHocr = pageContent;
+              } else {
+                // For subsequent pages, extract only the page content and append
+                const pageMatch = pageContent.match(/<div class='ocr_page'[^>]*>[\s\S]*?<\/div>/);
+                if (pageMatch) {
+                  combinedHocr = combinedHocr.replace(
+                    /<\/body>\s*<\/html>\s*$/,
+                    pageMatch[0] + '\n</body>\n</html>'
+                  );
+                }
+              }
+            }
+            
+            await writeFile(hocrPath, combinedHocr, 'utf-8');
+          } else {
+            throw new Error('No pages could be processed with Tesseract');
+          }
         }
       }
     } catch (conversionError) {
@@ -331,6 +407,51 @@ function categorizePages(pages: ConfidenceData[]): { warningPages: number[]; err
   });
 
   return { warningPages, errorPages };
+}
+
+/**
+ * Estimate confidence from extracted text characteristics
+ * This is used for PDFs that already have text layers
+ */
+function estimateConfidenceFromText(text: string): number {
+  if (!text || text.length === 0) return 0;
+  
+  let confidenceScore = 85; // Start with a reasonable baseline for extracted text
+  
+  // Check for text characteristics that indicate good or poor quality
+  const totalCharacters = text.length;
+  const words = text.split(/\s+/).filter(word => word.length > 0);
+  const totalWords = words.length;
+  
+  if (totalWords === 0) return 0;
+  
+  // Check for common OCR errors that might indicate poor quality
+  const substitutionErrors = (text.match(/[0O][0O]/g) || []).length; // Common O/0 substitutions
+  const fragmentedWords = words.filter(word => word.length === 1 && word.match(/[a-zA-Z]/)).length;
+  const specialCharacters = (text.match(/[^a-zA-Z0-9\s.,!?;:()\-'"]/g) || []).length;
+  const upperCaseSequences = (text.match(/[A-Z]{4,}/g) || []).length;
+  
+  // Penalize for OCR quality indicators
+  if (substitutionErrors > totalWords * 0.05) confidenceScore -= 15; // Too many O/0 errors
+  if (fragmentedWords > totalWords * 0.1) confidenceScore -= 20; // Too many single letters
+  if (specialCharacters > totalCharacters * 0.05) confidenceScore -= 10; // Too many weird characters
+  if (upperCaseSequences > totalWords * 0.1) confidenceScore -= 10; // Too many caps sequences
+  
+  // Bonus for good characteristics
+  const properSentences = (text.match(/[.!?]\s+[A-Z]/g) || []).length;
+  const commonWords = words.filter(word => 
+    ['the', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'].includes(word.toLowerCase())
+  ).length;
+  
+  if (properSentences > 0) confidenceScore += 5; // Good sentence structure
+  if (commonWords > totalWords * 0.1) confidenceScore += 10; // Reasonable common word ratio
+  
+  // Average word length check (too short or too long might indicate errors)
+  const averageWordLength = words.reduce((sum, word) => sum + word.length, 0) / totalWords;
+  if (averageWordLength >= 3 && averageWordLength <= 8) confidenceScore += 5;
+  
+  // Ensure score is within valid range
+  return Math.max(0, Math.min(100, confidenceScore));
 }
 
 /**

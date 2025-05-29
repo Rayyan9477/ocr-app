@@ -262,13 +262,20 @@ export default function Home() {
             appendOutput(`✅ Despite error, server indicates file was processed: ${data.outputFile}`);
             return data; // Return data with outputFile info
           }
-          
+
+          // If details is an array of engine failures, summarise failures
+          if (Array.isArray(data.details)) {
+            const summary = data.details.map((d: any) => `${d.engine}: ${d.error}`).join('; ');
+            appendOutput(`⚠️ All OCR engines failed: ${summary}`);
+            return data;
+          }
+
           // If there's an error about file containing text, retry with force option
-          if (data.details?.toLowerCase().includes('already contains text') && !retry) {
+          if (typeof data.details === 'string' && data.details.toLowerCase().includes('already contains text') && !retry) {
             appendOutput("Attempting retry with force-ocr option...");
             return await handleSuccessResponse(data, fileName, retry);
           }
-          
+
           // Just return the data - it contains structured error information
           return data;
         }

@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
+import path from 'path';
 import logger from './logger';
 
 const execAsync = promisify(exec);
@@ -79,6 +80,16 @@ export class AutoCustomizationService {
     };
 
     try {
+      // First, check filename for medical patterns
+      const fileName = filePath.toLowerCase();
+      const medicalFilePatterns = ['medical', 'bill', 'invoice', 'seiba', 'coded', 'hospital', 'clinic', 'ov.', 'snf.'];
+      const filePatternMatches = medicalFilePatterns.filter(pattern => fileName.includes(pattern)).length;
+      
+      if (filePatternMatches >= 1) {
+        characteristics.isMedicalDocument = true;
+        logger.info(`Medical document detected from filename: ${filePath}`);
+      }
+
       // Get basic PDF info
       const pdfInfo = await this.getPDFInfo(filePath);
       characteristics.pageCount = pdfInfo.pageCount;
@@ -216,29 +227,46 @@ export class AutoCustomizationService {
 
     const lowerText = text.toLowerCase();
     
-    // Medical document detection
+    // Enhanced medical document detection with more comprehensive keywords
     const medicalKeywords = [
       'patient', 'doctor', 'hospital', 'medical', 'diagnosis', 'prescription',
       'medication', 'treatment', 'symptoms', 'clinic', 'physician', 'nurse',
       'medical record', 'health', 'dosage', 'mg', 'ml', 'units', 'blood pressure',
-      'temperature', 'pulse', 'weight', 'height', 'allergies'
+      'temperature', 'pulse', 'weight', 'height', 'allergies', 'insurance',
+      'copay', 'deductible', 'provider', 'billing', 'claim', 'invoice',
+      'procedure', 'surgery', 'therapy', 'consultation', 'examination',
+      'lab', 'test', 'result', 'radiology', 'x-ray', 'mri', 'ct scan',
+      'injection', 'tablet', 'capsule', 'syrup', 'cream', 'ointment',
+      'appointment', 'follow-up', 'visit', 'emergency', 'discharge'
     ];
+    
+    // Check for medical patterns in filename as well
+    const fileName = text.toLowerCase();
+    const medicalFilePatterns = ['medical', 'bill', 'invoice', 'seiba', 'coded', 'hospital', 'clinic'];
+    const filePatternMatches = medicalFilePatterns.filter(pattern => fileName.includes(pattern)).length;
     
     const medicalMatches = medicalKeywords.filter(keyword => 
       lowerText.includes(keyword)
     ).length;
     
-    characteristics.isMedicalDocument = medicalMatches >= 3;
+    // Lower threshold for medical detection and include file pattern matches
+    characteristics.isMedicalDocument = medicalMatches >= 2 || filePatternMatches >= 1;
 
-    // Handwritten detection (low OCR confidence, irregular spacing)
+    // Enhanced handwritten detection with better heuristics
     const irregularSpacing = (text.match(/\s{2,}/g) || []).length;
     const shortWords = text.split(/\s+/).filter(word => word.length < 3).length;
     const totalWords = text.split(/\s+/).length;
+    const specialChars = (text.match(/[^a-zA-Z0-9\s,.!?]/g) || []).length;
+    const lowercaseRatio = (text.match(/[a-z]/g) || []).length / text.length;
     
+    // More sophisticated handwriting detection
     characteristics.isHandwritten = (
-      irregularSpacing > totalWords * 0.3 ||
-      shortWords > totalWords * 0.4 ||
-      text.length < 100 // Very short OCR output might indicate handwriting
+      irregularSpacing > totalWords * 0.2 || // Lower threshold
+      shortWords > totalWords * 0.3 || // Lower threshold
+      text.length < 200 || // Increased threshold for short text
+      specialChars > text.length * 0.1 || // Many special chars indicate OCR issues
+      lowercaseRatio < 0.3 || // Mostly uppercase might indicate handwriting OCR issues
+      (totalWords > 0 && totalWords < 50 && text.length < 300) // Very sparse text
     );
 
     // Structured data detection
@@ -246,8 +274,8 @@ export class AutoCustomizationService {
     const punctuationPatterns = (text.match(/[,.;:()]/g) || []).length;
     
     characteristics.hasStructuredData = (
-      numberPatterns > totalWords * 0.2 ||
-      punctuationPatterns > totalWords * 0.3
+      numberPatterns > totalWords * 0.15 || // Lower threshold
+      punctuationPatterns > totalWords * 0.25 // Lower threshold
     );
 
     return characteristics;
@@ -273,7 +301,10 @@ export class AutoCustomizationService {
     if (characteristics.isMedicalDocument) {
       settings.psm = 1; // Automatic page segmentation
       settings.confidenceThreshold = 60; // Lower threshold for medical docs
-      settings.tesseractParams.push('--user-words', '/app/config/medical-words.txt');
+      const medicalWordsPath = path.join(process.cwd(), 'config', 'medical-words.txt');
+      if (existsSync(medicalWordsPath)) {
+        settings.tesseractParams.push('--user-words', medicalWordsPath);
+      }
       settings.usePreprocessing = true;
       logger.info('Applied medical document optimizations');
     }

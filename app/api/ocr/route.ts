@@ -126,8 +126,10 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
     }
   }
 
-  // Set max image pixels to support large documents
+  // Set max image pixels to support large documents and all pages
   command += `--max-image-mpixels 0 `;
+
+  // Note: OCRmyPDF processes all pages by default, no need for --pages parameter
 
   // Add input and output paths
   command += `"${inputPath}" "${outputPath}"`;

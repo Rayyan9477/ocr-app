@@ -130,8 +130,22 @@ export class PreprocessingService {
       let finalOutputPath = workingPath;
       if (inputPath.toLowerCase().endsWith('.pdf')) {
         finalOutputPath = join(sessionDir, 'enhanced.pdf');
-        await execAsync(`img2pdf "${workingPath}" -o "${finalOutputPath}"`);
-        operations.push('Converted enhanced image back to PDF');
+        
+        // Try img2pdf first, fallback to convert if not available
+        try {
+          await execAsync(`img2pdf "${workingPath}" -o "${finalOutputPath}"`);
+          operations.push('Converted enhanced image back to PDF using img2pdf');
+        } catch (img2pdfError) {
+          logger.warn('img2pdf not available, using ImageMagick convert as fallback');
+          try {
+            await execAsync(`convert "${workingPath}" "${finalOutputPath}"`);
+            operations.push('Converted enhanced image back to PDF using convert');
+          } catch (convertError) {
+            logger.warn('PDF conversion failed, keeping as image');
+            finalOutputPath = workingPath;
+            operations.push('Keeping enhanced image (PDF conversion failed)');
+          }
+        }
       }
 
       return {
@@ -180,6 +194,23 @@ export class PreprocessingService {
       normalizeSize: true,
       sharpenText: true,
       binarize: true
+    };
+
+    const result = await this.preprocessDocument(inputPath, options);
+    return result.outputPath;
+  }
+
+  /**
+   * Medical document optimized preprocessing
+   */
+  async medicalOptimize(inputPath: string): Promise<string> {
+    const options: PreprocessingOptions = {
+      enhanceContrast: true,
+      removeNoise: true,
+      correctSkew: true,
+      normalizeSize: true,
+      sharpenText: true,
+      binarize: false // Don't binarize medical documents as they may have subtle details
     };
 
     const result = await this.preprocessDocument(inputPath, options);

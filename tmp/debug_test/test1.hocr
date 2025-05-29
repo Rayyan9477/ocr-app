@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+ <head>
+  <title></title>
+  <meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+  <meta name='ocr-system' content='tesseract 5.3.4' />
+  <meta name='ocr-capabilities' content='ocr_page ocr_carea ocr_par ocr_line ocrx_word ocrp_wconf'/>
+ </head>
+ <body>
+  <div class='ocr_page' id='page_1' title='image "tmp/debug_test/page-1.png"; bbox 0 0 1275 1650; ppageno 0; scan_res 150 150'>
+   <div class='ocr_carea' id='block_1_1' title="bbox 158 230 919 259">
+    <p class='ocr_par' id='par_1_1' lang='eng' title="bbox 158 230 919 259">
+     <span class='ocr_line' id='line_1_1' title="bbox 158 230 919 259; baseline 0 -10; x_size 21.25; x_descenders 5.5; x_ascenders 5.25">
+      <span class='ocrx_word' id='word_1_1' title='bbox 158 230 318 259; x_wconf 86'>rayyan9477/todo-backend</span>
+      <span class='ocrx_word' id='word_1_2' title='bbox 596 239 630 249; x_wconf 85'>about</span>
+      <span class='ocrx_word' id='word_1_3' title='bbox 636 240 640 249; x_wconf 78'>1</span>
+      <span class='ocrx_word' id='word_1_4' title='bbox 647 239 674 249; x_wconf 78'>hour</span>
+      <span class='ocrx_word' id='word_1_5' title='bbox 681 242 700 252; x_wconf 96'>ago</span>
+      <span class='ocrx_word' id='word_1_6' title='bbox 883 238 919 249; x_wconf 96'>Public</span>
+     </span>
+    </p>
+   </div>
+   <div class='ocr_carea' id='block_1_2' title="bbox 158 282 919 310">
+    <p class='ocr_par' id='par_1_2' lang='eng' title="bbox 158 282 919 310">
+     <span class='ocr_line' id='line_1_2' title="bbox 158 282 919 310; baseline -0.001 -10; x_size 20; x_descenders 5; x_ascenders 5">
+      <span class='ocrx_word' id='word_1_7' title='bbox 158 282 318 310; x_wconf 84'>rayyan9477/todo-frontend</span>
+      <span class='ocrx_word' id='word_1_8' title='bbox 596 289 630 300; x_wconf 96'>about</span>
+      <span class='ocrx_word' id='word_1_9' title='bbox 636 290 640 300; x_wconf 91'>1</span>
+      <span class='ocrx_word' id='word_1_10' title='bbox 648 289 674 300; x_wconf 91'>hour</span>
+      <span class='ocrx_word' id='word_1_11' title='bbox 680 292 700 303; x_wconf 83'>ago</span>
+      <span class='ocrx_word' id='word_1_12' title='bbox 883 288 919 299; x_wconf 90'>Public</span>
+     </span>
+    </p>
+   </div>
+   <div class='ocr_carea' id='block_1_3' title="bbox 158 331 919 360">
+    <p class='ocr_par' id='par_1_3' lang='eng' title="bbox 158 331 919 360">
+     <span class='ocr_caption' id='line_1_3' title="bbox 158 331 919 360; baseline -0.001 -10; x_size 21.25; x_descenders 5.5; x_ascenders 5.25">
+      <span class='ocrx_word' id='word_1_13' title='bbox 158 331 314 360; x_wconf 79'>rayyan9477/my-node-app</span>
+      <span class='ocrx_word' id='word_1_14' title='bbox 596 339 630 350; x_wconf 96'>about</span>
+      <span class='ocrx_word' id='word_1_15' title='bbox 636 340 640 350; x_wconf 93'>1</span>
+      <span class='ocrx_word' id='word_1_16' title='bbox 647 339 673 350; x_wconf 93'>hour</span>
+      <span class='ocrx_word' id='word_1_17' title='bbox 678 342 700 353; x_wconf 96'>ago</span>
+      <span class='ocrx_word' id='word_1_18' title='bbox 883 338 919 349; x_wconf 95'>Public</span>
+     </span>
+    </p>
+   </div>
+   <div class='ocr_photo' id='block_1_4' title="bbox 148 212 1134 376"></div>
+  </div>
+ </body>
+</html>
