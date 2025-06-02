@@ -7,6 +7,8 @@ import { fourEngineOCR } from "../../../lib/four-engine-ocr";
 import { extractConfidenceScores, saveConfidenceData } from "../../../lib/confidence-detector";
 import logger from "../../../lib/logger";
 import appConfig from "../../../lib/config";
+import { adaptiveModeService, OCRMode } from "../../../lib/adaptive-mode-service";
+import { intelligentOrchestrator } from "../../../lib/intelligent-orchestrator";
 
 /**
  * Enhanced OCR API endpoint with smart processing
@@ -50,265 +52,162 @@ export async function POST(request: NextRequest) {
     await writeFile(inputPath, buffer);
     logger.info(`File saved: ${inputPath}`);
     
-    // Process options from form data - TREAT ALL DOCUMENTS AS MEDICAL BILLS
+    // Process options from form data - Enhanced with adaptive mode support
     const options = {
       language: formData.get("language")?.toString() || "eng",
-      usePreprocessing: formData.get("usePreprocessing") !== "false", // Default to true for medical bills
-      useMultiEngine: formData.get("useMultiEngine") !== "false", // Default to true for better results
-      useFourEngine: formData.get("useFourEngine") !== "false", // Default to true for enhanced processing
-      useAutoCustomization: formData.get("useAutoCustomization") !== "false", // Default to true
+      usePreprocessing: formData.get("usePreprocessing") !== "false",
+      useMultiEngine: formData.get("useMultiEngine") !== "false",
+      useFourEngine: formData.get("useFourEngine") !== "false",
+      useAutoCustomization: formData.get("useAutoCustomization") !== "false",
       confidenceThreshold: parseFloat(formData.get("confidenceThreshold")?.toString() || "70"),
-      // Medical-specific options - ALWAYS ENABLED for medical bill processing
-      medicalOptimization: true, // Always true - treat everything as medical
-      enhanceHandwriting: formData.get("enhanceHandwriting") !== "false", // Default to true for medical handwriting
-      extractMedicalCodes: true, // Always extract medical codes
-      preserveLayout: true, // Always preserve layout for medical bills
-      extractDates: true, // Always extract dates from medical bills
-      extractAddresses: true // Always extract addresses from medical bills
+      
+      // Adaptive mode options
+      preferredMode: formData.get("preferredMode")?.toString(),
+      documentType: formData.get("documentType")?.toString(),
+      priorityLevel: formData.get("priorityLevel")?.toString() as "low" | "normal" | "high" | undefined,
+      qualityRequirement: formData.get("qualityRequirement")?.toString() as "fast" | "balanced" | "accuracy" | undefined,
+      enableAdaptive: formData.get("enableAdaptive") !== "false", // Default to true
+      
+      // Legacy medical options (maintained for compatibility)
+      medicalOptimization: formData.get("documentType") === "medical" || formData.get("medicalOptimization") === "true",
+      enhanceHandwriting: formData.get("enhanceHandwriting") !== "false",
+      extractMedicalCodes: formData.get("extractMedicalCodes") === "true",
+      preserveLayout: formData.get("preserveLayout") !== "false",
+      extractDates: formData.get("extractDates") === "true",
+      extractAddresses: formData.get("extractAddresses") === "true"
     };
     
     // Determine output directory and ensure it exists
     const processedDir = join(process.cwd(), "processed");
     const sessionDir = join(processedDir, `smart_ocr_${Date.now()}`);
-    // Create processed and session directories to ensure writability
     await mkdir(processedDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     
-    logger.info(`Starting medical bill OCR process for ${fileName} - Four Engine: ${options.useFourEngine}, Medical Optimization: ALWAYS ENABLED`);
+    logger.info(`Starting adaptive OCR process for ${fileName} with adaptive mode: ${options.enableAdaptive}`);
     
-    let ensembleResult;
+    let processingResult;
     
-    // Choose between four-engine or traditional multi-engine processing
-    if (options.useFourEngine) {
-      // Use four-engine OCR for enhanced medical bill processing
-      const medicalOptions = {
-        enhanceHandwriting: options.enhanceHandwriting,
-        extractCodes: options.extractMedicalCodes,
-        medicalTerminology: options.medicalOptimization,
-        preserveLayout: options.preserveLayout,
-        confidenceThreshold: options.confidenceThreshold,
-        extractDates: options.extractDates,
-        extractAddresses: options.extractAddresses
+    if (options.enableAdaptive) {
+      // Use intelligent orchestrator for adaptive processing
+      const processingRequest = {
+        inputPath: inputPath,
+        outputDir: sessionDir,
+        options: {
+          language: options.language,
+          urgency: (options.priorityLevel === "high" ? "high" : "medium") as "low" | "medium" | "high" | "critical",
+          qualityRequirement: (options.qualityRequirement === "accuracy" ? "high" :
+                            options.qualityRequirement === "fast" ? "draft" : "standard") as "draft" | "standard" | "high" | "perfect",
+          documentType: options.documentType || "general",
+          forceMode: options.preferredMode as OCRMode,
+          disableAdaptive: false,
+          enableLearning: true
+        }
       };
       
-      logger.info('Using four-engine OCR system with medical bill optimization (all documents treated as medical)');
-      const fourEngineResult = await fourEngineOCR.processWithFourEngines(
-        inputPath,
-        sessionDir,
-        options.language,
-        medicalOptions
-      );
-      
-      // Convert four-engine result to ensemble format for compatibility
-      ensembleResult = {
-        bestResult: {
-          engine: fourEngineResult.bestResult.engine,
-          success: fourEngineResult.bestResult.success,
-          outputPath: fourEngineResult.bestResult.outputPath,
-          confidence: fourEngineResult.bestResult.confidence,
-          text: fourEngineResult.bestResult.text,
-          error: fourEngineResult.bestResult.error,
-          processingTime: fourEngineResult.bestResult.processingTime
-        },
-        allResults: fourEngineResult.allResults.map(r => ({
-          engine: r.engine,
-          success: r.success,
-          outputPath: r.outputPath,
-          confidence: r.confidence,
-          text: r.text,
-          error: r.error,
-          processingTime: r.processingTime
-        })),
-        consensusText: fourEngineResult.consensusText,
-        averageConfidence: fourEngineResult.averageConfidence,
-        hasSuccessfulResults: fourEngineResult.hasSuccessfulResults,
-        successCount: fourEngineResult.successCount,
-        customizationApplied: true, // Four-engine always uses medical optimization
-        // Add four-engine specific data
-        medicalData: fourEngineResult.medicalDataExtracted,
-        enginePerformance: fourEngineResult.enginePerformance,
-        recommendedEngine: fourEngineResult.recommendedEngine
-      };
+      logger.info(`Using intelligent orchestrator with preferred mode: ${options.preferredMode || 'auto'}`);
+      processingResult = await intelligentOrchestrator.processDocument(processingRequest);
     } else {
-      // Use traditional multi-engine OCR
-      ensembleResult = await multiEngineOCR.processWithEnsemble(
-        inputPath,
-        sessionDir,
-        options.language,
-        options.usePreprocessing,
-        options.useAutoCustomization
-      );
+      // Legacy processing path
+      if (options.useFourEngine) {
+        const medicalOptions = {
+          enhanceHandwriting: options.enhanceHandwriting,
+          extractCodes: options.extractMedicalCodes,
+          medicalTerminology: options.medicalOptimization,
+          preserveLayout: options.preserveLayout,
+          confidenceThreshold: options.confidenceThreshold,
+          extractDates: options.extractDates,
+          extractAddresses: options.extractAddresses
+        };
+        
+        logger.info('Using legacy four-engine OCR system');
+        const fourEngineResult = await fourEngineOCR.processWithFourEngines(
+          inputPath,
+          sessionDir,
+          options.language,
+          medicalOptions
+        );
+        
+        // Convert to standard format
+        processingResult = {
+          success: fourEngineResult.hasSuccessfulResults,
+          mode: "legacy-four-engine" as OCRMode,
+          outputPath: fourEngineResult.bestResult.outputPath,
+          engineResults: fourEngineResult.allResults,
+          consensusText: fourEngineResult.consensusText,
+          confidence: fourEngineResult.averageConfidence,
+          processingTime: fourEngineResult.bestResult.processingTime
+        };
+      } else {
+        logger.info('Using legacy multi-engine OCR system');
+        const ensembleResult = await multiEngineOCR.processWithEnsemble(
+          inputPath,
+          sessionDir,
+          options.language,
+          options.usePreprocessing,
+          options.useAutoCustomization
+        );
+        
+        // Convert to standard format
+        processingResult = {
+          success: ensembleResult.hasSuccessfulResults,
+          mode: "legacy-ensemble" as OCRMode,
+          outputPath: ensembleResult.bestResult.outputPath,
+          engineResults: ensembleResult.allResults,
+          consensusText: ensembleResult.consensusText,
+          confidence: ensembleResult.averageConfidence,
+          processingTime: ensembleResult.bestResult.processingTime
+        };
+      }
     }
     
-    // Improved success detection - check if ANY engine succeeded OR if valid files exist
-    const hasValidResults = ensembleResult.hasSuccessfulResults || 
-      ensembleResult.allResults.some(r => r.outputPath && existsSync(r.outputPath));
-    
-    if (!hasValidResults) {
-      logger.error(`All OCR engines failed for ${fileName}:`, ensembleResult.allResults.map(r => ({
-        engine: r.engine,
-        error: r.error,
-        outputExists: r.outputPath ? existsSync(r.outputPath) : false
-      })));
+    // Check if processing was successful
+    if (!processingResult.success) {
+      logger.error(`OCR processing failed for ${fileName}:`, processingResult);
       
       return NextResponse.json({
         success: false,
-        error: "All OCR engines failed",
-        details: ensembleResult.allResults.map(r => ({
+        error: "OCR processing failed",
+        details: "Processing failed",
+        mode: processingResult.mode,
+        engineResults: processingResult.engineResults?.map(r => ({
           engine: r.engine,
           error: r.error,
           outputExists: r.outputPath ? existsSync(r.outputPath) : false
-        })),
-        engineCount: ensembleResult.allResults.length,
-        successCount: ensembleResult.successCount
+        }))
       }, { status: 500 });
-    }
-
-    // Find the best available result (prioritize successful ones, but accept any with valid output)
-    let bestResult = ensembleResult.bestResult;
-    if (!bestResult.success || !bestResult.outputPath || !existsSync(bestResult.outputPath!)) {
-      const validResult = ensembleResult.allResults.find(r => 
-        r.outputPath && existsSync(r.outputPath)
-      );
-      
-      if (validResult) {
-        bestResult = validResult;
-        // Mark it as successful since we have a valid output file
-        bestResult.success = true;
-        if (!bestResult.error) {
-          bestResult.error = undefined;
-        }
-        logger.info(`Using valid result from ${bestResult.engine} despite validation issues`);
-      }
-    }
-
-    // At this point, we have at least one valid result
-    const outputPath = bestResult.outputPath!;
-    logger.info(`OCR processing completed for ${fileName}: using ${bestResult.engine} engine, ${ensembleResult.successCount}/${ensembleResult.allResults.length} engines reported success`);
-    
-    // Log medical data extraction if available (with type safety)
-    if (options.useFourEngine && 'medicalData' in ensembleResult && ensembleResult.medicalData) {
-      const medicalFields = Object.keys(ensembleResult.medicalData).filter(key => {
-        const value = ensembleResult.medicalData![key as keyof typeof ensembleResult.medicalData];
-        return value && (Array.isArray(value) ? value.length > 0 : true);
-      });
-      logger.info(`Medical fields extracted: ${medicalFields.join(', ')}`);
-    }
-    
-    // Validate the best result output file exists
-    if (!outputPath || !existsSync(outputPath)) {
-      logger.error(`Best result output file missing: ${outputPath}`);
-      
-      // Try to find any result with valid output (including ones marked as failed)
-      const validResult = ensembleResult.allResults.find(r => 
-        r.outputPath && existsSync(r.outputPath)
-      );
-      
-      if (!validResult) {
-        return NextResponse.json({
-          success: false,
-          error: "No valid output files generated despite processing completion",
-          details: "OCR engines completed but output files are missing or invalid",
-          engineResults: ensembleResult.allResults.map(r => ({
-            engine: r.engine,
-            success: r.success,
-            outputPath: r.outputPath,
-            outputExists: r.outputPath ? existsSync(r.outputPath) : false,
-            error: r.error
-          }))
-        }, { status: 500 });
-      }
-      
-      // Use the valid result instead and update ensemble
-      ensembleResult.bestResult = validResult;
-      validResult.success = true; // Mark as successful since we have valid output
-      logger.info(`Using valid output from ${validResult.engine} engine despite validation issues`);
     }
     
     // Extract confidence scores if enabled
     let confidenceData = null;
-    if (appConfig.confidence.enableConfidenceTracking) {
+    if (appConfig.confidence.enableConfidenceTracking && processingResult.outputPath) {
       try {
-        // Use processed file for confidence analysis to get accurate results
-        confidenceData = await extractConfidenceScores(inputPath, outputPath, true);
+        confidenceData = await extractConfidenceScores(inputPath, processingResult.outputPath, true);
         if (confidenceData) {
-          await saveConfidenceData(confidenceData, outputPath);
+          await saveConfidenceData(confidenceData, processingResult.outputPath);
         }
       } catch (confidenceError) {
         logger.warn("Failed to extract confidence scores:", confidenceError);
       }
     }
     
-    // Determine if we need to retry with more aggressive processing
-    const avgConfidence = confidenceData?.averageConfidence || ensembleResult.averageConfidence || 0;
-    let finalResult = ensembleResult.bestResult;
-    let processingNotes: string[] = [];
-    
-    if (avgConfidence < options.confidenceThreshold && options.useMultiEngine) {
-      logger.info(`Low confidence detected (${avgConfidence}%), attempting aggressive processing`);
-      
-      try {
-        // Retry with aggressive preprocessing (auto-customization handles this better now)
-        const aggressiveResult = await multiEngineOCR.processWithEnsemble(
-          inputPath,
-          sessionDir,
-          options.language,
-          true, // Force preprocessing
-          true  // Keep auto-customization
-        );
-        
-        if (aggressiveResult.hasSuccessfulResults && aggressiveResult.bestResult.outputPath) {
-          const aggressiveConfidence = await extractConfidenceScores(
-            inputPath, 
-            aggressiveResult.bestResult.outputPath!, 
-            true
-          );
-          
-          // Use aggressive result if confidence improved
-          if (aggressiveConfidence && aggressiveConfidence.averageConfidence > avgConfidence) {
-            finalResult = aggressiveResult.bestResult;
-            confidenceData = aggressiveConfidence;
-            await saveConfidenceData(aggressiveConfidence, aggressiveResult.bestResult.outputPath!);
-            processingNotes.push("Applied aggressive preprocessing due to low initial confidence");
-          }
-        }
-      } catch (aggressiveError) {
-        logger.warn("Aggressive processing failed:", aggressiveError);
-        processingNotes.push("Attempted aggressive processing but it failed");
-      }
-    }
-    
     // Move final result to standard processed directory
     const finalOutputPath = join(processedDir, `${path.basename(fileName, '.pdf')}_${Date.now()}_smart_ocr.pdf`);
-    if (finalResult.outputPath && existsSync(finalResult.outputPath)) {
-      await import('fs/promises').then(fs => fs.copyFile(finalResult.outputPath!, finalOutputPath));
+    if (processingResult.outputPath && existsSync(processingResult.outputPath)) {
+      await import('fs/promises').then(fs => fs.copyFile(processingResult.outputPath!, finalOutputPath));
     }
     
-    // Prepare response with enhanced four-engine data
+    // Prepare enhanced response
     const response = {
       success: true,
       inputFile: fileName,
       outputFile: path.basename(finalOutputPath),
-      engine: finalResult.engine,
-      processingTime: finalResult.processingTime,
-      details: processingNotes.length > 0 ? processingNotes.join("; ") : undefined,
+      mode: processingResult.mode,
+      processingTime: processingResult.processingTime,
       engines: {
-        used: ensembleResult.allResults.map(r => r.engine),
-        successful: ensembleResult.allResults.filter(r => r.success).map(r => r.engine),
-        best: finalResult.engine,
-        successCount: ensembleResult.successCount,
-        totalCount: ensembleResult.allResults.length,
-        // Four-engine specific data
-        ...(options.useFourEngine && 'recommendedEngine' in ensembleResult && {
-          recommended: ensembleResult.recommendedEngine,
-          performance: ensembleResult.enginePerformance ? 
-            Object.fromEntries(ensembleResult.enginePerformance) : undefined
-        })
-      },
-      customization: {
-        applied: ensembleResult.customizationApplied,
-        autoSettingsUsed: options.useAutoCustomization,
-        fourEngineMode: options.useFourEngine
+        used: processingResult.engineResults?.map(r => r.engine) || [],
+        successful: processingResult.engineResults?.filter(r => r.success).map(r => r.engine) || [],
+        successCount: processingResult.engineResults?.filter(r => r.success).length || 0,
+        totalCount: processingResult.engineResults?.length || 0
       },
       confidence: confidenceData ? {
         averageConfidence: confidenceData.averageConfidence,
@@ -316,31 +215,24 @@ export async function POST(request: NextRequest) {
         warningPages: confidenceData.warningPages,
         errorPages: confidenceData.errorPages,
         pageCount: confidenceData.pageConfidences.length
-      } : undefined,
-      consensus: {
-        textLength: ensembleResult.consensusText?.length || 0,
-        averageConfidence: ensembleResult.averageConfidence
+      } : {
+        averageConfidence: processingResult.confidence || 0,
+        hasLowConfidencePages: false,
+        warningPages: 0,
+        errorPages: 0,
+        pageCount: 1
       },
-      // Medical data extraction results (four-engine only)
-      ...(options.useFourEngine && 'medicalData' in ensembleResult && ensembleResult.medicalData && {
-        medicalExtraction: {
-          fieldsFound: Object.keys(ensembleResult.medicalData).filter(key => {
-            const value = ensembleResult.medicalData![key as keyof typeof ensembleResult.medicalData];
-            return value && (Array.isArray(value) ? value.length > 0 : true);
-          }),
-          patientName: ensembleResult.medicalData.patientName,
-          cptCodes: ensembleResult.medicalData.cptCodes,
-          dxCodes: ensembleResult.medicalData.dxCodes,
-          dates: ensembleResult.medicalData.dates,
-          addresses: ensembleResult.medicalData.addresses,
-          procedures: ensembleResult.medicalData.procedures,
-          insuranceProvider: ensembleResult.medicalData.insuranceProvider,
-          confidence: ensembleResult.medicalData.confidence
-        }
+      // Adaptive mode specific data
+      ...(options.enableAdaptive && 'adaptiveDecision' in processingResult && {
+        adaptiveDecision: processingResult.adaptiveDecision,
+        fallbacksUsed: processingResult.fallbacksUsed,
+        qualityMetrics: processingResult.qualityMetrics,
+        resourceUsage: processingResult.resourceUsage,
+        recommendations: processingResult.recommendations
       })
     };
     
-    logger.info(`Smart OCR completed for ${fileName}: ${finalResult.engine} engine, ${ensembleResult.successCount}/${ensembleResult.allResults.length} engines successful, ${confidenceData?.averageConfidence || 0}% confidence, customization: ${ensembleResult.customizationApplied}`);
+    logger.info(`Smart OCR completed for ${fileName}: mode=${processingResult.mode}, confidence=${processingResult.confidence || 0}%`);
     
     return NextResponse.json(response);
     
@@ -367,11 +259,19 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   const availableEngines = multiEngineOCR.getAvailableEngines();
+  const adaptiveModes = adaptiveModeService.getAvailableModes();
   
   return NextResponse.json({
-    message: "Smart OCR API - Enhanced OCR with multiple engines, auto-customization and preprocessing",
+    message: "Smart OCR API - Enhanced OCR with adaptive mode switching and intelligent processing",
     availableEngines,
+    adaptiveModes: adaptiveModes.map((mode: { mode: string; description: string; capabilities: string[] }) => ({
+      mode: mode.mode,
+      description: mode.description,
+      capabilities: mode.capabilities
+    })),
     features: [
+      "Adaptive mode switching for optimal results",
+      "Intelligent processing orchestration",
       "Multi-engine OCR processing",
       "Automatic document analysis and customization", 
       "Intelligent parameter adjustment based on content type",
@@ -380,7 +280,8 @@ export async function GET() {
       "Low-quality document enhancement",
       "Automatic preprocessing for poor-quality documents", 
       "Confidence-based processing decisions",
-      "Ensemble voting for best results"
+      "Ensemble voting for best results",
+      "Learning-based performance optimization"
     ],
     usage: {
       endpoint: "/api/smart-ocr",
@@ -388,11 +289,23 @@ export async function GET() {
       parameters: {
         file: "PDF or image file (required)",
         language: "OCR language (default: eng)",
+        enableAdaptive: "Enable adaptive mode switching (default: true)",
+        preferredMode: "Preferred OCR mode (optional)",
+        documentType: "Document type for optimization (optional)",
+        priorityLevel: "Processing priority: low/normal/high (default: normal)",
+        qualityRequirement: "Quality requirement: fast/balanced/accuracy (default: balanced)",
         usePreprocessing: "Apply image preprocessing (default: false)",
         useMultiEngine: "Use multiple OCR engines (default: false)",
         useAutoCustomization: "Enable auto-customization based on document type (default: true)",
         confidenceThreshold: "Minimum confidence threshold (default: 70)"
       }
+    },
+    adaptiveProcessing: {
+      availableModes: adaptiveModes.map((m: { mode: string; description: string; capabilities: string[] }) => m.mode),
+      intelligentSwitching: "Automatic mode selection based on document characteristics",
+      fallbackStrategies: "Multi-level fallback for failed processing attempts",
+      learningSystem: "Performance-based optimization and mode recommendation",
+      qualityMonitoring: "Real-time quality assessment and adjustment"
     },
     autoCustomization: {
       supportedDocumentTypes: [

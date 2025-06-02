@@ -1,0 +1,44 @@
+{
+  "currentMode": "medical",
+  "activeProfile": "basic",
+  "runtimeSettings": {
+    "language": "eng",
+    "psm": 1,
+    "oem": 3,
+    "timeout": 600000,
+    "retries": 2,
+    "usePreprocessing": true,
+    "aggressivePreprocessing": true,
+    "usePostprocessing": true,
+    "preserveLayout": true,
+    "confidenceThreshold": 75,
+    "customParameters": {},
+    "engines": [
+      "tesseract",
+      "ocrmypdf",
+      "paddleocr"
+    ],
+    "maxEngines": 3,
+    "parallelProcessing": true,
+    "enginePriority": [
+      "tesseract",
+      "ocrmypdf",
+      "paddleocr"
+    ],
+    "fallbackEngines": [
+      "kraken"
+    ],
+    "parameters": {
+      "psm": 1,
+      "oem": 3,
+      "medical": true,
+      "preserveLayout": true
+    }
+  },
+  "performanceMetrics": {
+    "averageAccuracy": 23.724890361900002,
+    "averageSpeed": 0,
+    "successRate": 0.5322894039099999
+  },
+  "lastUpdated": "2025-06-02T10:53:51.674Z"
+}
