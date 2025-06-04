@@ -19,6 +19,9 @@ yarn-error.log*
 
 # env files
 .env*
+.env
+.env.*
+.env-*
 
 # vercel
 .vercel
@@ -27,4 +30,50 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-plan.md
+# Local testing files
+*test*.sh
+*test*.js
+test-*.js
+test-*.sh
+*-test.js
+*-test.sh
+tests/
+__tests__/
+__mocks__/
+coverage/
+
+# Test PDFs and images
+test_*.pdf
+test_*.png
+test_*.jpg
+test_*.tif
+test_*.tiff
+
+# Integration test files
+*-integration.js
+*-integration-*.js
+
+# Log files
+logs/*.log
+*.log
+npm-debug.log*
+
+# Processing files
+*.processing
+processing/
+tmp/processing/
+
+# Temporary files
+tmp/*
+!tmp/.gitkeep
+
+# Processed files
+processed/*
+!processed/.gitkeep
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
