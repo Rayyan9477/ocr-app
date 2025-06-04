@@ -29,9 +29,9 @@ export async function GET(request: NextRequest) {
     // Get the file type and size
     const fileStat = await stat(filePath);
     const isTextFile = filePath.toLowerCase().endsWith(".txt");
-    
+
     // Get the content type
-    const contentType = isTextFile 
+    const contentType = isTextFile
       ? "text/plain"
       : "application/pdf";
 

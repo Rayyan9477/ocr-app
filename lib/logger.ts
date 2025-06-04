@@ -1,11 +1,20 @@
 // Basic logger implementation
 const logger = {
-  info: (message: string, ...args: any[]) => console.log(`[INFO] ${message}`, ...args),
-  warn: (message: string, ...args: any[]) => console.warn(`[WARN] ${message}`, ...args),
-  error: (message: string, ...args: any[]) => console.error(`[ERROR] ${message}`, ...args),
-  debug: (message: string, ...args: any[]) => {
-    if (process.env.NODE_ENV === 'development') {
-      console.debug(`[DEBUG] ${message}`, ...args);
+  info: (message: string) => {
+    console.log(`[INFO] ${new Date().toISOString()} - ${message}`);
+  },
+  
+  error: (message: string) => {
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`);
+  },
+  
+  warn: (message: string) => {
+    console.warn(`[WARN] ${new Date().toISOString()} - ${message}`);
+  },
+  
+  debug: (message: string) => {
+    if (process.env.DEBUG) {
+      console.debug(`[DEBUG] ${new Date().toISOString()} - ${message}`);
     }
   }
 };

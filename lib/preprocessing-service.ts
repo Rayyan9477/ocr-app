@@ -1,36 +1,30 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { exec, spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
 import logger from './logger';
 
-const execAsync = promisify(exec);
-
 export interface PreprocessingOptions {
-  enhanceContrast: boolean;
-  removeNoise: boolean;
-  correctSkew: boolean;
-  normalizeSize: boolean;
-  sharpenText: boolean;
-  binarize: boolean;
+  enhanceResolution?: boolean;
+  denoise?: boolean;
+  deskew?: boolean;
+  contrast?: number;
+  brightness?: number;
 }
 
-export interface PreprocessingResult {
-  success: boolean;
-  outputPath: string;
-  operations: string[];
-  errors?: string[];
-}
-
-/**
- * Enhanced preprocessing service for improving OCR quality
- * Applies various image enhancement techniques to improve OCR accuracy
- */
 export class PreprocessingService {
+  private pythonEnvPath: string;
   private tempDir: string;
-
-  constructor() {
-    this.tempDir = join(process.cwd(), 'tmp', 'preprocessing');
+  
+  constructor(
+    pythonEnvPath = path.join(process.cwd(), 'nanovlm_env', 'bin', 'python')
+  ) {
+    this.tempDir = path.join(process.cwd(), 'tmp', 'preprocessing');
+    this.pythonEnvPath = pythonEnvPath;
+    
+    // Create temp directory if it doesn't exist
+    if (!fs.existsSync(this.tempDir)) {
+      fs.mkdirSync(this.tempDir, { recursive: true });
+    }
   }
 
   /**
@@ -38,14 +32,14 @@ export class PreprocessingService {
    */
   async preprocessDocument(
     inputPath: string,
-    options: PreprocessingOptions
+    options: PreprocessingOptions = {}
   ): Promise<PreprocessingResult> {
     const operations: string[] = [];
     const errors: string[] = [];
 
     try {
       // Create temporary directory
-      const sessionDir = join(this.tempDir, `session_${Date.now()}`);
+      const sessionDir = path.join(this.tempDir, `session_${Date.now()}`);
       await execAsync(`mkdir -p "${sessionDir}"`);
 
       // Determine preprocessing operations
@@ -87,7 +81,7 @@ export class PreprocessingService {
       if (inputPath.toLowerCase().endsWith('.pdf')) {
         logger.info('Converting PDF to high-quality images for preprocessing');
         
-        const imageDir = join(sessionDir, 'pages');
+        const imageDir = path.join(sessionDir, 'pages');
         await execAsync(`mkdir -p "${imageDir}"`);
         
         // Convert with high DPI for better quality
@@ -107,8 +101,8 @@ export class PreprocessingService {
         // Process each page individually
         const processedPages: string[] = [];
         for (let i = 0; i < imageFiles.length; i++) {
-          const pagePath = join(imageDir, imageFiles[i]);
-          const processedPagePath = join(sessionDir, `processed_page_${i + 1}.png`);
+          const pagePath = path.join(imageDir, imageFiles[i]);
+          const processedPagePath = path.join(sessionDir, `processed_page_${i + 1}.png`);
           
           // Apply preprocessing to this page
           if (magickOps.length > 0) {
@@ -116,7 +110,7 @@ export class PreprocessingService {
             logger.info(`Processing page ${i + 1}: ${magickCommand}`);
             await execAsync(magickCommand);
             
-            if (existsSync(processedPagePath)) {
+            if (fs.existsSync(processedPagePath)) {
               processedPages.push(processedPagePath);
             } else {
               logger.warn(`Failed to process page ${i + 1}, using original`);
@@ -131,7 +125,7 @@ export class PreprocessingService {
         }
         
         // Convert all processed pages back to a multi-page PDF
-        finalOutputPath = join(sessionDir, 'enhanced.pdf');
+        finalOutputPath = path.join(sessionDir, 'enhanced.pdf');
         
         try {
           // Use img2pdf to combine all pages into a single PDF
@@ -152,7 +146,7 @@ export class PreprocessingService {
         }
       } else {
         // Handle image input
-        const workingPath = join(sessionDir, 'processed' + this.getFileExtension(inputPath));
+        const workingPath = path.join(sessionDir, 'processed' + this.getFileExtension(inputPath));
         
         // Apply preprocessing operations using ImageMagick
         if (magickOps.length > 0) {
@@ -161,7 +155,7 @@ export class PreprocessingService {
           logger.info(`Applying preprocessing: ${magickCommand}`);
           await execAsync(magickCommand);
           
-          if (existsSync(workingPath)) {
+          if (fs.existsSync(workingPath)) {
             finalOutputPath = workingPath;
           } else {
             errors.push('ImageMagick processing failed');
@@ -243,6 +237,92 @@ export class PreprocessingService {
     return result.outputPath;
   }
 
+  /**
+   * Preprocess image using Python-based NanoVLM for document-type specific optimizations
+   */
+  async preprocessImage(
+    inputPath: string,
+    outputPath: string,
+    options: PreprocessingOptions = {}
+  ): Promise<string> {
+    try {
+      // Create output directory if it doesn't exist
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      
+      // Prepare Python script arguments
+      const args = [inputPath, outputPath];
+      if (options.enhanceResolution) {
+        args.push('--enhance-resolution');
+      }
+      if (options.denoise) {
+        args.push('--denoise');
+      }
+      if (options.deskew) {
+        args.push('--deskew');
+      }
+      if (options.contrast) {
+        args.push('--contrast', String(options.contrast));
+      }
+      if (options.brightness) {
+        args.push('--brightness', String(options.brightness));
+      }
+
+      // Execute Python script for preprocessing
+      const pythonCommand = `${this.pythonEnvPath} -m nanovlm.preprocess_image`;
+      logger.info(`Running preprocessing with NanoVLM: ${pythonCommand} ${args.join(' ')}`);
+      const { stdout, stderr } = await execAsync(`${pythonCommand} ${args.join(' ')}`);
+      
+      logger.info(`NanoVLM output: ${stdout}`);
+      if (stderr) {
+        logger.warn(`NanoVLM warnings: ${stderr}`);
+      }
+      
+      return outputPath;
+    } catch (error) {
+      logger.error(`Preprocessing failed: ${error}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Handwriting document optimization using NanoVLM
+   */
+  async nanoVLMHandwritingOptimize(inputPath: string): Promise<string> {
+    const outputPath = this.generateOutputPath(inputPath, 'handwriting');
+    return this.preprocessImage(inputPath, outputPath, {
+      enhanceResolution: true,
+      denoise: true,
+      deskew: true,
+      contrast: 1.2
+    });
+  }
+  
+  /**
+   * Table document optimization using NanoVLM
+   */
+  async nanoVLMTableOptimize(inputPath: string): Promise<string> {
+    const outputPath = this.generateOutputPath(inputPath, 'table');
+    return this.preprocessImage(inputPath, outputPath, {
+      enhanceResolution: true,
+      deskew: true,
+      contrast: 1.1
+    });
+  }
+  
+  /**
+   * General document optimization using NanoVLM
+   */
+  async nanoVLMGeneralOptimize(inputPath: string): Promise<string> {
+    const outputPath = this.generateOutputPath(inputPath, 'general');
+    return this.preprocessImage(inputPath, outputPath, {
+      denoise: true,
+      deskew: true
+    });
+  }
+  
   /**
    * Clean up temporary files
    */

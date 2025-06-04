@@ -5,6 +5,7 @@
  * intelligent mode switching, quality monitoring, and adaptive optimization.
  */
 
+import path from 'path';
 import logger from './logger';
 import { adaptiveModeService, OCRMode, ProcessingContext, AdaptiveDecision } from './adaptive-mode-service';
 import { enhancedConfigManager } from './enhanced-config-manager';
@@ -13,6 +14,9 @@ import { multiEngineOCR } from './multi-engine-ocr';
 import { fourEngineOCR } from './four-engine-ocr';
 import { preprocessingService } from './preprocessing-service';
 import { extractConfidenceScores } from './confidence-detector';
+import { DocumentAnalysis } from './document-analyzer';
+import { ResultMerger } from './result-merger';
+import { OCRResult } from './nano-vlm-service';
 
 export interface ProcessingRequest {
   inputPath: string;
@@ -92,6 +96,8 @@ export class IntelligentProcessingOrchestrator {
   private qualityThresholds: QualityThresholds;
   private isProcessing: boolean = false;
   private currentProcesses: Map<string, ProcessingRequest> = new Map();
+  private multiEngineOCR: MultiEngineOCR;
+  private resultMerger: ResultMerger;
 
   constructor() {
     this.processingStats = this.initializeStats();

@@ -44,6 +44,14 @@ else
     exit 1
 fi
 
+echo -n "  ✓ NanoVLM Service Configuration: "
+if docker-compose config | grep -q "nanovlm-service:"; then
+    echo -e "${GREEN}CONFIGURED${NC}"
+else
+    echo -e "${RED}MISSING${NC}"
+    exit 1
+fi
+
 echo -n "  ✓ Service URLs Configuration: "
 if docker-compose config | grep -q "PADDLEOCR_SERVICE_URL" && docker-compose config | grep -q "KRAKEN_SERVICE_URL"; then
     echo -e "${GREEN}CONFIGURED${NC}"

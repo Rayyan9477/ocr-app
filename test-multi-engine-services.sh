@@ -41,6 +41,15 @@ else
     KRAKEN_HEALTHY=false
 fi
 
+echo -n "  ✓ NanoVLM Service Health: "
+if curl -f -s http://localhost:8002/health > /dev/null 2>&1; then
+    echo -e "${GREEN}HEALTHY${NC}"
+    NANOVLM_HEALTHY=true
+else
+    echo -e "${RED}UNHEALTHY${NC}"
+    NANOVLM_HEALTHY=false
+fi
+
 # Test service capabilities endpoints
 echo ""
 echo -e "${BLUE}⚙️ Service Capabilities Tests:${NC}"
