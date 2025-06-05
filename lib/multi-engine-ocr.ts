@@ -2,11 +2,37 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, statSync } from 'fs';
 import { join } from 'path';
+import path from 'path';
 import logger from './logger';
 import { NanoVLMService, OCRResult } from './nano-vlm-service';
 import { PreprocessingService } from './preprocessing-service';
+import { autoCustomization, OptimizedOCRSettings } from './auto-customization';
+import { preprocessingService } from './preprocessing-service';
 
 const execAsync = promisify(exec);
+
+// Helper function to truncate text for JSON responses to prevent truncation
+function truncateTextForResponse(text: string, maxLength: number = 1000): string {
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+  
+  return text.substring(0, maxLength) + '... [truncated - full text available in output file]';
+}
+
+// Helper function to generate proper output filename based on input
+function generateOutputFilename(inputPath: string, engineName: string, suffix: string = 'ocr'): string {
+  const inputBasename = path.basename(inputPath);
+  const nameWithoutExt = path.parse(inputBasename).name;
+  
+  // Remove timestamp prefix if it exists (for uploaded files)
+  const cleanName = nameWithoutExt.replace(/^\d+_/, '');
+  
+  // Generate timestamp for unique naming
+  const timestamp = Date.now();
+  
+  return `${cleanName}_${timestamp}_${suffix}.pdf`;
+}
 
 export interface OCREngine {
   name: string;
@@ -20,10 +46,30 @@ export interface OCREngine {
 export class MultiEngineOCR {
   private engines: OCREngine[] = [];
   private preprocessingService: PreprocessingService;
+  private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
   
   constructor() {
     this.preprocessingService = new PreprocessingService();
-    this.initializeEngines();
+    // Don't call initializeEngines() here to avoid async constructor issues
+  }
+  
+  /**
+   * Ensure engines are initialized before use
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+    
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+    
+    this.initializationPromise = this.initializeEngines();
+    await this.initializationPromise;
+    this.initialized = true;
   }
   
   private async initializeEngines() {
@@ -63,8 +109,67 @@ export class MultiEngineOCR {
     // Log the available engines
     logger.info(`Available engines: ${this.engines.filter(e => e.available).map(e => e.name).join(', ')}`);
     
-    // Add other engines here
-    // ...existing code...
+    // Add Tesseract engine
+    const tesseractAvailable = await this.checkTesseractAvailability();
+    logger.info(`Tesseract availability: ${tesseractAvailable}`);
+    
+    this.engines.push({
+      name: 'tesseract',
+      service: null, // Tesseract uses direct command execution
+      available: tesseractAvailable,
+      specialization: ['general', 'text'],
+      confidence: true,
+      preprocessor: (inputPath, documentType) => {
+        logger.info(`Preprocessing for Tesseract, document type: ${documentType}`);
+        return this.preprocessingService.tesseractOptimize(inputPath);
+      }
+    });
+    
+    // Add OCRmyPDF engine
+    const ocrmypdfAvailable = await this.checkOCRmyPDFAvailability();
+    logger.info(`OCRmyPDF availability: ${ocrmypdfAvailable}`);
+    
+    this.engines.push({
+      name: 'ocrmypdf',
+      service: null, // OCRmyPDF uses direct command execution
+      available: ocrmypdfAvailable,
+      specialization: ['pdf'],
+      confidence: false,
+      preprocessor: (inputPath, documentType) => {
+        logger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`);
+        return this.preprocessingService.pdfOptimize(inputPath);
+      }
+    });
+    
+    // Log final available engines
+    const availableEngines = this.engines.filter(e => e.available);
+    logger.info(`Total available engines: ${availableEngines.length} - ${availableEngines.map(e => e.name).join(', ')}`);
+  }
+  
+  /**
+   * Check if Tesseract is available on the system
+   */
+  private async checkTesseractAvailability(): Promise<boolean> {
+    try {
+      await execAsync('tesseract --version');
+      return true;
+    } catch (error) {
+      logger.warn(`Tesseract not available: ${error}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Check if OCRmyPDF is available on the system
+   */
+  private async checkOCRmyPDFAvailability(): Promise<boolean> {
+    try {
+      await execAsync('ocrmypdf --version');
+      return true;
+    } catch (error) {
+      logger.warn(`OCRmyPDF not available: ${error}`);
+      return false;
+    }
   }
   
   /**
@@ -77,6 +182,8 @@ export class MultiEngineOCR {
     usePreprocessing: boolean = false,
     useAutoCustomization: boolean = true
   ): Promise<EnsembleResult> {
+    await this.ensureInitialized(); // Ensure engines are initialized
+    
     const results: OCRResult[] = [];
     let processedInputPath = inputPath;
     let customizationApplied = false;
@@ -109,18 +216,29 @@ export class MultiEngineOCR {
       // Run each available engine with optimized settings
       const availableEngines = this.engines.filter(e => e.available);
       
+      // Filter engines based on input file type compatibility
+      const isPdf = processedInputPath.toLowerCase().endsWith('.pdf');
+      const compatibleEngines = availableEngines.filter(engine => {
+        // Tesseract cannot process PDF files directly
+        if (engine.name === 'tesseract' && isPdf) {
+          logger.info(`Skipping Tesseract for PDF file: ${processedInputPath}`);
+          return false;
+        }
+        return true;
+      });
+      
       // Reorder engines based on customization preferences
       if (optimizedSettings?.enginePreference) {
-        availableEngines.sort((a, b) => {
+        compatibleEngines.sort((a, b) => {
           const aIndex = optimizedSettings!.enginePreference.indexOf(a.name);
           const bIndex = optimizedSettings!.enginePreference.indexOf(b.name);
           return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
         });
       }
       
-      for (const engine of availableEngines) {
+      for (const engine of compatibleEngines) {
         const startTime = Date.now();
-        const outputPath = join(outputDir, `${engine.name}_output.pdf`);
+        const outputPath = join(outputDir, generateOutputFilename(inputPath, engine.name, 'smart_ocr'));
         
         try {
           logger.info(`Running OCR with ${engine.name}`);
@@ -136,7 +254,7 @@ export class MultiEngineOCR {
           
           // Handle service-based engines differently
           if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
-            await this.processWithServiceEngine(engine, processedInputPath, outputPath, language);
+            await this.processWithServiceEngine(engine, processedInputPath, outputPath, language, 'general');
           } else {
             // Traditional command-line engines
             await execAsync(command);
@@ -180,7 +298,7 @@ export class MultiEngineOCR {
               success: true,
               outputPath,
               confidence,
-              text: extractedText,
+              text: truncateTextForResponse(extractedText),
               processingTime
             });
           } else {
@@ -266,6 +384,126 @@ export class MultiEngineOCR {
   }
 
   /**
+   * Process document with a single specified OCR engine
+   */
+  async processWithEngine(
+    engineName: string,
+    inputPath: string,
+    outputDir: string,
+    documentType: string = 'general'
+  ): Promise<OCRResult> {
+    await this.ensureInitialized(); // Ensure engines are initialized
+    
+    const startTime = Date.now();
+    let processedInputPath = inputPath; // Declare at function scope
+    
+    // Find the requested engine
+    const engine = this.engines.find(e => e.name === engineName && e.available);
+    if (!engine) {
+      throw new Error(`Engine '${engineName}' is not available`);
+    }
+    
+    // Check file type compatibility
+    const isPdf = inputPath.toLowerCase().endsWith('.pdf');
+    if (engine.name === 'tesseract' && isPdf) {
+      throw new Error('Tesseract cannot process PDF files directly. Use OCRmyPDF or convert PDF to images first.');
+    }
+    
+    logger.info(`Processing with single engine: ${engineName}, document type: ${documentType}`);
+    
+    try {
+      // Apply preprocessing if engine has a preprocessor
+      if (engine.preprocessor) {
+        try {
+          processedInputPath = await engine.preprocessor(inputPath, documentType);
+          logger.info(`Applied preprocessing for ${engineName}`);
+        } catch (preprocessError) {
+          logger.warn(`Preprocessing failed for ${engineName}, using original input: ${preprocessError}`);
+          processedInputPath = inputPath; // Ensure we have a valid path
+        }
+      }
+      
+      const outputPath = join(outputDir, generateOutputFilename(inputPath, engineName, 'smart_ocr'));
+      
+      // Handle service-based engines
+      if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
+        await this.processWithServiceEngine(engine, processedInputPath, outputPath, 'eng', documentType);
+      } else {
+        // Traditional command-line engines
+        const command = this.generateOptimizedCommand(engine, processedInputPath, outputPath, 'eng', null);
+        await execAsync(command);
+      }
+      
+      const processingTime = Date.now() - startTime;
+      
+      // Validate output
+      if (!this.validateOCROutput(outputPath)) {
+        throw new Error('Output validation failed');
+      }
+      
+      // Extract text for non-service engines
+      let extractedText = '';
+      let confidence = 0;
+      
+      if (engine.name === 'nanovlm') {
+        // For nanoVLM, the result is already in JSON format in the output file
+        const fs = await import('fs/promises');
+        const resultContent = await fs.readFile(outputPath, 'utf-8');
+        const result = JSON.parse(resultContent);
+        extractedText = result.text || '';
+        confidence = result.confidence || 0;
+      } else if (engine.name === 'paddleocr' || engine.name === 'kraken') {
+        // For other service engines, extract from JSON result
+        const fs = await import('fs/promises');
+        const resultContent = await fs.readFile(outputPath, 'utf-8');
+        const result = JSON.parse(resultContent);
+        extractedText = result.text || '';
+        confidence = result.confidence || 0;
+      } else {
+        // For command-line engines, extract text from PDF
+        try {
+          const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
+          extractedText = stdout.trim();
+          
+          // Get confidence if supported
+          if (engine.confidence && engine.name === 'tesseract') {
+            confidence = await this.extractTesseractConfidence(processedInputPath);
+          }
+        } catch (textError) {
+          logger.warn(`Failed to extract text from ${engineName} output: ${textError}`);
+          extractedText = '[Content exists but text extraction failed]';
+        }
+      }
+      
+      return {
+        engine: engineName,
+        success: true,
+        outputPath,
+        confidence,
+        text: truncateTextForResponse(extractedText),
+        processingTime
+      };
+      
+    } catch (error) {
+      return {
+        engine: engineName,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        processingTime: Date.now() - startTime
+      };
+    } finally {
+      // Cleanup preprocessing files if used
+      if (engine.preprocessor && processedInputPath !== inputPath) {
+        try {
+          await this.preprocessingService.cleanup();
+        } catch (cleanupError) {
+          logger.warn(`Cleanup failed: ${cleanupError}`);
+        }
+      }
+    }
+  }
+
+  /**
    * Generate optimized OCR command based on document characteristics
    */
   private generateOptimizedCommand(
@@ -276,6 +514,10 @@ export class MultiEngineOCR {
     settings: OptimizedOCRSettings | null
   ): string {
     if (engine.name === 'tesseract') {
+      // Prevent Tesseract from being run directly on PDF files
+      if (inputPath.toLowerCase().endsWith('.pdf')) {
+        throw new Error('Tesseract cannot process PDF files directly. Use OCRmyPDF or convert PDF to images first.');
+      }
       let command = `tesseract "${inputPath}" "${outputPath.replace('.pdf', '')}" -l ${language}`;
       
       if (settings) {
@@ -293,9 +535,6 @@ export class MultiEngineOCR {
       return command;
     } else if (engine.name === 'ocrmypdf') {
       let command = `ocrmypdf --language ${language} --deskew --rotate-pages --force-ocr`;
-      
-      // Ensure all pages are processed
-      command += ` --pages 1-`;
       
       // Support large images
       command += ` --max-image-mpixels 0`;
@@ -485,9 +724,17 @@ export class MultiEngineOCR {
     engine: OCREngine,
     inputPath: string,
     outputPath: string,
-    language: string
+    language: string,
+    documentType?: string
   ): Promise<void> {
     const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
+    
+    // Ensure inputPath is a string
+    if (typeof inputPath !== 'string') {
+      throw new Error(`Invalid input path type: ${typeof inputPath}, expected string`);
+    }
+    
+    logger.info(`Processing with service engine: ${engine.name}, input: ${inputPath}, document type: ${documentType}`);
     
     if (engine.name === 'paddleocr') {
       // PaddleOCR service call
@@ -530,24 +777,22 @@ export class MultiEngineOCR {
       const result = await response.json();
       await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
     } else if (engine.name === 'nanovlm') {
-      // NanoVLM service call
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('language', language);
+      // NanoVLM direct service call (not HTTP)
+      logger.info(`Calling nanoVLM service with input: ${inputPath}`);
       
-      const response = await fetch('http://localhost:8002/ocr/process', {
-        method: 'POST',
-        body: formData
-      });
+      const options = {
+        documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
+        confidenceThreshold: 0.5,
+        enhanceResolution: true,
+        preserveLayout: true
+      };
       
-      if (!response.ok) {
-        throw new Error(`NanoVLM service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
+      // Extract output directory from outputPath for nanoVLM service
+      const outputDir = path.dirname(outputPath);
+      const result = await engine.service.processImage(inputPath, outputDir, options);
       await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
+      
+      logger.info(`nanoVLM processing completed, output written to: ${outputPath}`);
     }
   }
 }

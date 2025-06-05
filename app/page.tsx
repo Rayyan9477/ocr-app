@@ -577,7 +577,7 @@ export default function Home() {
 
     setIsProcessing(true);
     setOutput("");
-    setCurrentFileIndex(0);
+    setCurrentFileIndex(0)
     setProcessingStep(0);
     setShowLoadingScreen(true);
     setLoadingMessage("Preparing OCR process...");

@@ -40,7 +40,49 @@ export class DocumentAnalyzer {
         '--output', outputPath
       ];
       
-      // ...existing code...
+      // Execute the Python script
+      await new Promise<void>((resolve, reject) => {
+        const process = spawn(this.pythonEnvPath, args);
+        
+        let stderr = '';
+        
+        process.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+        
+        process.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Python analysis process failed with code ${code}: ${stderr}`));
+          }
+        });
+        
+        process.on('error', (error) => {
+          reject(error);
+        });
+      });
+      
+      // Read the analysis results
+      let analysisResult: any = {};
+      if (fs.existsSync(outputPath)) {
+        try {
+          const resultData = fs.readFileSync(outputPath, 'utf-8');
+          analysisResult = JSON.parse(resultData);
+          // Clean up the temporary file
+          fs.unlinkSync(outputPath);
+        } catch (parseError) {
+          logger.warn(`Failed to parse analysis results: ${parseError}`);
+          // Clean up the temporary file even if parsing failed
+          if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+          }
+        }
+      } else {
+        logger.warn('Analysis output file not found, using fallback analysis');
+        // Fall back to simple image-based analysis
+        return await this.detectDocumentType(imagePath);
+      }
       
       // Extract the document characteristics
       return {
@@ -77,21 +119,29 @@ export class DocumentAnalyzer {
   // Fallback method using image processing if ML-based analysis is not available
   async detectDocumentType(imagePath: string): Promise<DocumentAnalysis> {
     try {
-      // Execute image processing based analysis
-      // This is a simplified implementation
-      // ...existing code...
+      // Execute basic image analysis
+      // Check file size and format to make basic quality assessment
+      const stats = fs.statSync(imagePath);
+      const fileSize = stats.size;
+      const isLargeFile = fileSize > 2 * 1024 * 1024; // > 2MB
+      const extension = path.extname(imagePath).toLowerCase();
       
-      // Return simulated document characteristics
+      // Basic heuristics for document analysis
+      const isPotentiallyPoorQuality = fileSize < 100 * 1024 || // Very small files might be low quality
+                                      extension === '.jpg' || extension === '.jpeg'; // JPEG compression can reduce quality
+      
+      // For fallback, we make conservative assumptions
+      // Real implementation would use image processing libraries like Sharp or OpenCV
       return {
-        hasHandwriting: false,
-        hasTables: false,
-        poorQuality: false,
-        complexLayout: false,
+        hasHandwriting: false, // Conservative assumption - requires ML to detect accurately
+        hasTables: false, // Conservative assumption - requires advanced analysis
+        poorQuality: isPotentiallyPoorQuality,
+        complexLayout: isLargeFile, // Large files might indicate complex layouts
         confidence: {
-          handwriting: 0,
-          tables: 0,
-          quality: 0,
-          layout: 0
+          handwriting: 0, // No confidence without ML analysis
+          tables: 0, // No confidence without ML analysis
+          quality: isPotentiallyPoorQuality ? 30 : 70, // Basic quality estimation
+          layout: isLargeFile ? 60 : 40 // Basic layout complexity estimation
         }
       };
     } catch (error) {

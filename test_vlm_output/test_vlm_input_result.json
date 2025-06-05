@@ -1,0 +1,33 @@
+{
+  "text": "Enhanced text from poor quality document using nanoVLM super-resolution and denoising",
+  "confidence": 0.78,
+  "structured_data": {
+    "document_type": "poor_quality",
+    "processing_engine": "nanoVLM-222M",
+    "enhancement_applied": true,
+    "confidence_threshold": 0.7,
+    "processing_options": {
+      "enhance_resolution": true,
+      "preserve_layout": true
+    }
+  },
+  "layout": [
+    {
+      "bbox": [
+        0,
+        0,
+        100,
+        20
+      ],
+      "text": "Enhanced text from poor quality document using nan...",
+      "confidence": 0.78,
+      "line_number": 1
+    }
+  ],
+  "metadata": {
+    "model_version": "nanoVLM-222M",
+    "processing_time": 0.5,
+    "image_path": "test_vlm_input.png",
+    "timestamp": 1749055266.811309
+  }
+}

@@ -1,9 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, stat } from "fs/promises";
+import { readFile, readdir, stat } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import path from "path";
 import appConfig from "@/lib/config";
+
+async function findFile(fileName: string): Promise<string | null> {
+  const processedDir = appConfig.processedDir;
+
+  // Try exact match first
+  const exactPath = join(processedDir, fileName);
+  if (existsSync(exactPath)) {
+    return exactPath;
+  }
+
+  // If not found, try different variations
+  const baseName = path.parse(fileName).name;
+  const possiblePaths = [
+    // Original format
+    join(processedDir, `${baseName}_ocr.pdf`),
+    // New smart OCR format with timestamp
+    ...(await findSmartOcrFiles(processedDir, baseName)),
+  ];
+
+  for (const possiblePath of possiblePaths) {
+    if (existsSync(possiblePath)) {
+      return possiblePath;
+    }
+  }
+
+  return null;
+}
+
+async function findSmartOcrFiles(
+  dir: string,
+  baseName: string
+): Promise<string[]> {
+  const pattern = new RegExp(`${baseName}_\\d+_smart_ocr\\.pdf$`);
+  const files = await readdir(dir);
+  return files
+    .filter((file) => pattern.test(file))
+    .map((file) => join(dir, file))
+    .sort() // Sort by name (which includes timestamp)
+    .reverse(); // Most recent first
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,12 +57,11 @@ export async function GET(request: NextRequest) {
     // Security check to prevent directory traversal
     const sanitizedFileName = path.basename(fileName);
 
-    // Construct the file path
-    const filePath = join(appConfig.processedDir, sanitizedFileName);
+    // Find the actual file
+    const filePath = await findFile(sanitizedFileName);
 
-    // Check if the file exists
-    if (!existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
+    if (!filePath) {
+      console.error(`File not found: ${sanitizedFileName}`);
       return new NextResponse("File not found", { status: 404 });
     }
 
@@ -31,9 +70,7 @@ export async function GET(request: NextRequest) {
     const isTextFile = filePath.toLowerCase().endsWith(".txt");
 
     // Get the content type
-    const contentType = isTextFile
-      ? "text/plain"
-      : "application/pdf";
+    const contentType = isTextFile ? "text/plain" : "application/pdf";
 
     // Read the file
     const fileBuffer = await readFile(filePath);

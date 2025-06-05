@@ -6,10 +6,15 @@ echo
 
 # Find a test PDF file
 TEST_PDF=""
-if [ -f "uploads/TEST_pdf_1747323971992_1747663931925.pdf" ]; then
-    TEST_PDF="uploads/TEST_pdf_1747323971992_1747663931925.pdf"
-    echo "Using test PDF: $TEST_PDF"
-else
+for pdf_file in uploads/*.pdf; do
+    if [ -f "$pdf_file" ]; then
+        TEST_PDF="$pdf_file"
+        echo "Using test PDF: $TEST_PDF"
+        break
+    fi
+done
+
+if [ -z "$TEST_PDF" ]; then
     echo "❌ No test PDF found in uploads directory"
     exit 1
 fi
@@ -123,9 +128,10 @@ const buildOCRCommand = (inputPath, outputPath, options = {}) => {
     }
   }
 
-  // Set max image pixels and all pages
+  // Set max image pixels to support large documents and all pages
   command += '--max-image-mpixels 0 ';
-  command += '--pages 1- ';
+
+  // Note: OCRmyPDF processes all pages by default, no need for --pages parameter
 
   command += \`\"\${inputPath}\" \"\${outputPath}\"\`;
   
@@ -138,11 +144,11 @@ const command = buildOCRCommand(testInput, testOutput, { language: 'eng', force:
 console.log('Generated OCR command:');
 console.log(command);
 
-// Check if command includes --pages 1-
-if (command.includes('--pages 1-')) {
-    console.log('✓ Command includes --pages 1- for multi-page processing');
+// Check if command correctly excludes --pages parameter (OCRmyPDF processes all pages by default)
+if (!command.includes('--pages 1-')) {
+    console.log('✓ Command correctly excludes --pages parameter (OCRmyPDF processes all pages by default)');
 } else {
-    console.log('❌ Command missing --pages 1- parameter');
+    console.log('❌ Command incorrectly includes --pages 1- parameter');
 }
 
 // Check for --max-image-mpixels 0

@@ -17,16 +17,23 @@ export const config = {
   },
 }
 // Helper function to create consistent JSON responses
+// Add error handling to validate JSON response structure
 const createJsonResponse = (data: any, status: number = 200) => {
-  return new NextResponse(
-    JSON.stringify(data),
-    {
+  try {
+    const jsonString = JSON.stringify(data);
+    return new NextResponse(jsonString, {
       status,
       headers: {
         'Content-Type': 'application/json',
-      }
-    }
-  );
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to create JSON response:', error);
+    return new NextResponse(
+      JSON.stringify({ success: false, error: 'Internal Server Error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
 };
 
 // Execute command with timeout

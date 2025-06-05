@@ -1,7 +1,10 @@
 import { exec, spawn } from 'child_process';
+import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import logger from './logger';
+
+const execAsync = promisify(exec);
 
 export interface PreprocessingOptions {
   enhanceResolution?: boolean;
@@ -323,6 +326,83 @@ export class PreprocessingService {
     });
   }
   
+  /**
+   * Generate output path for preprocessed file
+   */
+  private generateOutputPath(inputPath: string, type: string): string {
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    const timestamp = Date.now();
+    return path.join(this.tempDir, `${baseName}_${type}_${timestamp}${path.extname(inputPath)}`);
+  }
+
+  /**
+   * Preprocess image with specific options
+   */
+  private async preprocessImage(
+    inputPath: string, 
+    outputPath: string, 
+    options: PreprocessingOptions
+  ): Promise<string> {
+    try {
+      // Simple preprocessing using ImageMagick
+      let command = `convert "${inputPath}"`;
+      
+      if (options.enhanceResolution) {
+        command += ' -density 300 -units PixelsPerInch';
+      }
+      
+      if (options.denoise) {
+        command += ' -despeckle -median 1';
+      }
+      
+      if (options.deskew) {
+        command += ' -deskew 40%';
+      }
+      
+      if (options.contrast) {
+        command += ` -contrast-stretch 0.1%x0.1%`;
+      }
+      
+      if (options.brightness) {
+        command += ` -brightness-contrast 0x${options.brightness}`;
+      }
+      
+      command += ` "${outputPath}"`;
+      
+      await execAsync(command);
+      
+      if (!fs.existsSync(outputPath)) {
+        throw new Error('Preprocessing failed to generate output file');
+      }
+      
+      return outputPath;
+    } catch (error) {
+      logger.warn(`Image preprocessing failed, using original: ${error}`);
+      return inputPath; // Fallback to original if preprocessing fails
+    }
+  }
+
+  /**
+   * Tesseract optimization 
+   */
+  async tesseractOptimize(inputPath: string): Promise<string> {
+    const outputPath = this.generateOutputPath(inputPath, 'tesseract');
+    return this.preprocessImage(inputPath, outputPath, {
+      enhanceResolution: true,
+      denoise: true,
+      deskew: true,
+      contrast: 1.1
+    });
+  }
+
+  /**
+   * PDF optimization
+   */
+  async pdfOptimize(inputPath: string): Promise<string> {
+    // For PDF inputs, return original path as OCRmyPDF handles PDF processing directly
+    return inputPath;
+  }
+
   /**
    * Clean up temporary files
    */

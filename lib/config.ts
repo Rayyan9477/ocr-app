@@ -41,6 +41,16 @@ interface AppConfig {
     pageErrorThreshold: number;
     enableConfidenceTracking: boolean;
   };
+  
+  // OCR Engine Paths
+  pythonPath: string;
+  pythonModulePath: string;
+  
+  // Model paths
+  modelPaths: {
+    nanovlm: string;
+    tesseract: string;
+  };
 }
 
 // Helper function to get a boolean env var
@@ -107,6 +117,16 @@ export const config: AppConfig = {
     pageWarningThreshold: getNumberEnv('CONFIDENCE_PAGE_WARNING_THRESHOLD', 85),
     pageErrorThreshold: getNumberEnv('CONFIDENCE_PAGE_ERROR_THRESHOLD', 70),
     enableConfidenceTracking: getBoolEnv('ENABLE_CONFIDENCE_TRACKING', true),
+  },
+  
+  // OCR Engine Paths
+  pythonPath: '/usr/bin/python3',
+  pythonModulePath: '/usr/src/app/python',
+  
+  // Model paths
+  modelPaths: {
+    nanovlm: '/usr/src/app/models/nanovlm',
+    tesseract: '/usr/share/tesseract-ocr/4.00/tessdata',
   },
 };
 
