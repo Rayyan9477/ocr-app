@@ -132,6 +132,18 @@ echo "Testing individual engine success..."
 echo "$RESPONSE" | grep -o '"successful":\[[^]]*\]' | sed 's/"successful"://g' || echo "Could not extract successful engines"
 echo ""
 
+# Test NanoVLM integration
+echo "Testing NanoVLM integration..."
+./test-nanovlm-comprehensive.sh
+NANOVLM_TEST_STATUS=$?
+
+if [ $NANOVLM_TEST_STATUS -eq 0 ]; then
+    echo "✅ NanoVLM integration tests passed"
+else
+    echo "❌ NanoVLM integration tests failed"
+    echo "Check test-results/nanovlm/ for details"
+fi
+
 echo -e "${BLUE}📋 SUMMARY OF FIXES:${NC}"
 echo -e "${GREEN}✅ Issue 1: Multiple engines - FIXED (now using all 4 engines)${NC}"
 echo -e "${GREEN}✅ Issue 2: Confidence detection - FIXED (using processed files)${NC}"

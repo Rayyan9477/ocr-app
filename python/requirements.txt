@@ -1,0 +1,13 @@
+# Core dependencies
+pillow>=9.0.0
+numpy>=1.21.0
+torch>=2.0.0  # For future model integration
+transformers>=4.30.0  # For future model integration
+
+# Image processing
+opencv-python>=4.8.0
+scikit-image>=0.19.0
+
+# Utilities
+tqdm>=4.65.0
+rich>=13.0.0

@@ -8,6 +8,7 @@ import { NanoVLMService, OCRResult } from './nano-vlm-service';
 import { PreprocessingService } from './preprocessing-service';
 import { autoCustomization, OptimizedOCRSettings } from './auto-customization';
 import { preprocessingService } from './preprocessing-service';
+import { ModelService } from './models/interfaces/model-service.interface';
 
 const execAsync = promisify(exec);
 
@@ -44,14 +45,28 @@ export interface OCREngine {
 }
 
 export class MultiEngineOCR {
-  private engines: OCREngine[] = [];
+  private engines: Map<string, ModelService> = new Map();
   private preprocessingService: PreprocessingService;
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
   
+  private readonly enginesConfig: OCREngine[] = [
+    {
+      name: 'nanovlm',
+      command: () => 'echo "NanoVLM service processing"',
+      isServiceBased: true,
+      serviceUrl: process.env.NANOVLM_SERVICE_URL || 'http://nanovlm-service:8003',
+      specialization: ['general_text', 'poor_quality'],
+      processingTime: 'medium',
+      confidenceScoring: true
+    }
+  ];
+  
   constructor() {
     this.preprocessingService = new PreprocessingService();
-    // Don't call initializeEngines() here to avoid async constructor issues
+    
+    // Add NanoVLM as an available engine
+    this.engines.set('nanovlm', new NanoVLMService());
   }
   
   /**
@@ -793,6 +808,72 @@ export class MultiEngineOCR {
       await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
       
       logger.info(`nanoVLM processing completed, output written to: ${outputPath}`);
+    }
+  }
+  
+  private async processWithNanoVLM(
+    filePath: string,
+    outputPath: string,
+    options: OCROptions = {}
+  ): Promise<OCRResult> {
+    try {
+      const formData = new FormData();
+      const imageStream = fs.createReadStream(filePath);
+      formData.append('file', imageStream);
+      formData.append('page_number', '1');
+      formData.append('enhancement_mode', options.enhancementMode || 'standard');
+      formData.append('language', options.language || 'en');
+
+      const response = await fetch(`${this.engines.find(e => e.name === 'nanovlm').serviceUrl}/ocr/process-page`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`NanoVLM service error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error('NanoVLM processing failed');
+      }
+
+      // Save the text output
+      const text = result.results[0]?.text || '';
+      await fs.promises.writeFile(outputPath, text);
+
+      return {
+        success: true,
+        text,
+        confidence: result.results[0]?.confidence || 0,
+        processingTime: 0,
+        engine: 'nanovlm',
+        outputPath
+      };
+    } catch (error) {
+      console.error('NanoVLM processing error:', error);
+      return {
+        success: false,
+        text: '',
+        confidence: 0,
+        processingTime: 0,
+        engine: 'nanovlm',
+        error: String(error),
+        outputPath: ''
+      };
+    }
+  }
+
+  private getEnhancementMode(documentType: string): string {
+    switch (documentType) {
+      case 'poor_quality':
+        return 'aggressive';
+      case 'medical':
+      case 'handwritten':
+        return 'enhanced';
+      default:
+        return 'standard';
     }
   }
 }

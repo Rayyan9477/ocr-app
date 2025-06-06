@@ -22,6 +22,10 @@ yarn-error.log*
 .env
 .env.*
 .env-*
+venv/
+*venv/*
+venv
+*.safetensors
 
 # vercel
 .vercel

@@ -1,0 +1,68 @@
+name: NanoVLM Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'python/nanovlm/**'
+      - 'lib/nano-vlm-service.ts'
+      - 'test/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'python/nanovlm/**'
+      - 'lib/nano-vlm-service.ts'
+      - 'test/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, "3.10"]
+        node-version: [16.x, 18.x]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r python/requirements.txt
+        
+    - name: Install Node.js dependencies
+      run: npm ci
+        
+    - name: Build TypeScript
+      run: npm run build:ts
+      
+    - name: Run Python tests
+      run: |
+        cd python/nanovlm
+        python -m pytest tests/
+        
+    - name: Run TypeScript tests
+      run: npm run test:nanovlm
+
+    - name: Run integration tests
+      run: npm run test:nanovlm:comprehensive
+      
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          python/nanovlm/tests/output/
+          test/output/

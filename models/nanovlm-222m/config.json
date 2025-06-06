@@ -1,0 +1,8 @@
+{
+  "model_path": "model.safetensors",
+  "max_batch_size": 16,
+  "device": "cuda",
+  "fallback_device": "cpu",
+  "max_sequence_length": 1024,
+  "image_size": 224
+}

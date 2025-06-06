@@ -5,9 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next dev",
-    "build": "next build",
+    "build": "tsc && next build",
     "start": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next start",
     "lint": "next lint",
+    "test": "jest --config jest.config.js",
+    "test:nanovlm": "node dist/test/test-nanovlm.js",
+    "test:nanovlm:watch": "nodemon -x 'npm run test:nanovlm' -w test/test-nanovlm.ts -w lib/nano-vlm-service.ts",
+    "test:nanovlm:comprehensive": "./test-nanovlm-comprehensive.sh",
+    "setup:nanovlm": "npm run build:ts && node dist/scripts/setup-nanovlm.js",
+    "verify:nanovlm": "chmod +x ./verify-nanovlm-integration.sh && ./verify-nanovlm-integration.sh",
+    "build:nanovlm": "chmod +x ./build-nanovlm.sh && ./build-nanovlm.sh",
+    "build:ts": "tsc",
+    "pretest": "npm run build:ts",
     "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh",
     "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true"
   },
@@ -55,8 +64,8 @@
     "next": "15.2.4",
     "next-themes": "^0.4.4",
     "node-fetch": "^3.3.2",
-    "pdf-poppler": "^0.2.1",
     "pdf-lib": "^1.17.1",
+    "pdf-poppler": "^0.2.1",
     "react": "^18.2.0",
     "react-day-picker": "8.10.1",
     "react-dom": "^18.2.0",
@@ -67,14 +76,22 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.6",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "@huggingface/inference": "^2.6.4",
+    "python-shell": "^5.0.0"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^22",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/python-shell": "^1.0.3",
+    "jest": "^29.7.0",
+    "jest-environment-node": "^29.7.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5"
+    "ts-jest": "^29.3.4",
+    "typescript": "^5.8.3",
+    "nodemon": "^3.0.2"
   }
 }

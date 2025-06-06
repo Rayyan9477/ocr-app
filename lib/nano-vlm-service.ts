@@ -79,9 +79,9 @@ export class NanoVLMService {
         PYTHONPATH: this.pythonModulePath + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '')
       };
       
-      // Build command arguments based on document type and options
+      // Build command arguments
       const args = [
-        path.join(this.pythonModulePath, 'nanovlm', 'process.py'),
+        path.join(this.pythonModulePath, 'nanovlm', 'processor.py'),
         '--model_path', this.modelPath,
         '--input', imagePath,
         '--output', outputPath
@@ -138,9 +138,9 @@ export class NanoVLMService {
       logger.info('Checking nanoVLM availability...');
       
       // Check if our Python module exists
-      const processPath = path.join(this.pythonModulePath, 'nanovlm', 'process.py');
-      if (!fs.existsSync(processPath)) {
-        logger.error(`nanoVLM process module not found at: ${processPath}`);
+      const processorPath = path.join(this.pythonModulePath, 'nanovlm', 'processor.py');
+      if (!fs.existsSync(processorPath)) {
+        logger.error(`nanoVLM processor module not found at: ${processorPath}`);
         return false;
       }
       
@@ -157,7 +157,6 @@ export class NanoVLMService {
       return true;
     } catch (error) {
       logger.error(`NanoVLM is not available: ${error}`);
-      
       // Enhanced debugging information
       this.logDiagnostics();
       
@@ -176,13 +175,13 @@ export class NanoVLMService {
       logger.debug(`Python module exists: ${fs.existsSync(this.pythonModulePath)}`);
       
       // Check specific files
-      const processPath = path.join(this.pythonModulePath, 'nanovlm', 'process.py');
-      logger.debug(`Process script exists: ${fs.existsSync(processPath)}`);
+      const processorPath = path.join(this.pythonModulePath, 'nanovlm', 'processor.py');
+      logger.debug(`Processor script exists: ${fs.existsSync(processorPath)}`);
       
       const initPath = path.join(this.pythonModulePath, 'nanovlm', '__init__.py');
       logger.debug(`Init file exists: ${fs.existsSync(initPath)}`);
       
-      // List contents if directories exist
+      // List directory contents
       if (fs.existsSync(this.pythonModulePath)) {
         const moduleContents = fs.readdirSync(this.pythonModulePath);
         logger.debug(`Python module directory contents: ${moduleContents.join(', ')}`);
@@ -207,45 +206,30 @@ export class NanoVLMService {
   
   private executePythonProcess(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
     return new Promise((resolve, reject) => {
-      const processEnv = env || process.env;
-      logger.debug(`Executing Python process: ${this.pythonEnvPath} ${args.join(' ')}`);
-      logger.debug(`Environment PYTHONPATH: ${processEnv.PYTHONPATH}`);
-      
-      const childProcess = spawn(this.pythonEnvPath, args, {
-        env: processEnv,
-        cwd: process.cwd()
-      });
+      const process = spawn(this.pythonEnvPath, args, { env });
       
       let stdout = '';
       let stderr = '';
       
-      childProcess.stdout.on('data', (data) => {
+      process.stdout.on('data', (data) => {
         stdout += data.toString();
-        logger.debug(`Python stdout: ${data.toString()}`);
       });
       
-      childProcess.stderr.on('data', (data) => {
+      process.stderr.on('data', (data) => {
         stderr += data.toString();
-        logger.debug(`Python stderr: ${data.toString()}`);
       });
       
-      childProcess.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`Python process exited with code ${code}: ${stderr}`));
-        } else {
+      process.on('close', (code) => {
+        if (code === 0) {
           resolve(stdout);
+        } else {
+          reject(new Error(`Python process failed with code ${code}: ${stderr}`));
         }
       });
       
-      childProcess.on('error', (err) => {
-        reject(new Error(`Failed to start Python process: ${err.message}`));
+      process.on('error', (err) => {
+        reject(err);
       });
-      
-      // Add timeout to prevent hanging
-      setTimeout(() => {
-        childProcess.kill();
-        reject(new Error('Python process timed out after 30 seconds'));
-      }, 30000);
     });
   }
 }

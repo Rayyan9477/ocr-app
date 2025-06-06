@@ -8,6 +8,7 @@ import appConfig from "@/lib/config"
 import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
 import { multiEngineOCR } from "@/lib/multi-engine-ocr"
 import logger from "@/lib/logger"
+import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper"
 
 // Configure Next.js to handle large files
 export const config = {
@@ -266,9 +267,11 @@ export const POST = async (request: NextRequest) => {
         });
       }
       
-      // Check for specific error about page already having text
-      const errorMsg = execError instanceof Error ? execError.message : String(execError);
-      if ((errorMsg.includes('page already has text') || errorMsg.includes('PriorOcrFoundError')) && !options.force) {
+      // Handle OCR failure with our error handler
+      const errorMessage = execError instanceof Error ? execError.message : String(execError);
+      
+      // Check for specific error about page already having text first
+      if ((errorMessage.includes('page already has text') || errorMessage.includes('PriorOcrFoundError')) && !options.force) {
         console.log("Detected document with existing text. Retrying with --force-ocr option...");
         
         // Create a new command with force-ocr enabled and PDF output type to avoid bloat
@@ -301,10 +304,12 @@ export const POST = async (request: NextRequest) => {
               }
             }
 
+            // Successful retry with force option
             return createJsonResponse({
               success: true,
               inputFile: fileName,
               outputFile: path.basename(retryOutputPath),
+              details: "Successfully processed with force-ocr option",
               details: "Document had existing text layer. Successfully processed with --force-ocr option.",
               warnings: retryResult.stderr || undefined,
               confidence: retryConfidenceData ? {

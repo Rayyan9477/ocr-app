@@ -97,3 +97,40 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  nanovlm-service:
+    build:
+      context: ./docker/nanovlm
+      dockerfile: Dockerfile
+    image: nanovlm-service:${NANOVLM_VERSION:-1.0.0}
+    container_name: nanovlm-service
+    ports:
+      - "${NANOVLM_PORT:-8003}:8003"
+    volumes:
+      - ${UPLOADS_DIR:-./uploads}:/app/uploads:ro
+      - ${PROCESSED_DIR:-./processed}:/app/processed
+      - ./tmp:/app/tmp
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NANOVLM_LOG_LEVEL=${NANOVLM_LOG_LEVEL:-INFO}
+      - MAX_WORKERS=${NANOVLM_MAX_WORKERS:-2}
+      - FORCE_CPU=${FORCE_CPU:-false}
+    deploy:
+      resources:
+        limits:
+          memory: ${NANOVLM_MEMORY:-4G}
+          cpus: ${NANOVLM_CPUS:-2}
+        reservations:
+          memory: ${NANOVLM_MEMORY_RESERVATION:-2G}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
