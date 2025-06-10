@@ -131,21 +131,14 @@ export class PreprocessingService {
         finalOutputPath = path.join(sessionDir, 'enhanced.pdf');
         
         try {
-          // Use img2pdf to combine all pages into a single PDF
+          // Use ImageMagick convert to combine all pages into a single PDF
           const pagesList = processedPages.map(p => `"${p}"`).join(' ');
-          await execAsync(`img2pdf ${pagesList} -o "${finalOutputPath}"`);
-          operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using img2pdf`);
-        } catch (img2pdfError) {
-          logger.warn('img2pdf not available, using ImageMagick convert as fallback');
-          try {
-            const pagesList = processedPages.map(p => `"${p}"`).join(' ');
-            await execAsync(`convert ${pagesList} "${finalOutputPath}"`);
-            operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using convert`);
-          } catch (convertError) {
-            logger.error('Multi-page PDF conversion failed, falling back to first page only');
-            finalOutputPath = processedPages[0];
-            operations.push('Keeping first enhanced page only (multi-page PDF conversion failed)');
-          }
+          await execAsync(`convert ${pagesList} "${finalOutputPath}"`);
+          operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using convert`);
+        } catch (convertError) {
+          logger.error('Multi-page PDF conversion failed, falling back to first page only');
+          finalOutputPath = processedPages[0];
+          operations.push('Keeping first enhanced page only (multi-page PDF conversion failed)');
         }
       } else {
         // Handle image input

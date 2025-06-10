@@ -1,17 +1,7 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  images: {
-    unoptimized: true,
-  },
-  experimental: {
-    largePageDataBytes: 128 * 1024 * 1024, // 128MB
-  },
-}
+/**
+ * Next.js Configuration
+ * Root configuration that imports from modular config
+ */
+import nextConfig from './config/next.config.js'
 
-export default nextConfig;
+export default nextConfig
