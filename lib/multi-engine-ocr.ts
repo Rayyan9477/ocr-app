@@ -93,52 +93,71 @@ export class MultiEngineOCR {
     
     logger.info('Initializing OCR engines...');
     
-    // Add nanoVLM engine with explicit availability check
+    // Add OCRmyPDF as the primary engine
+    const ocrmypdfAvailable = await this.checkOCRmyPDFAvailability();
+    logger.info(`OCRmyPDF availability: ${ocrmypdfAvailable}`);
+    
+    if (ocrmypdfAvailable) {
+      this.engines.set('ocrmypdf', {
+        name: 'ocrmypdf',
+        service: null, // OCRmyPDF uses direct command execution
+        available: true,
+        specialization: ['pdf', 'structured_documents'],
+        confidence: false,
+        preprocessor: (inputPath, documentType) => {
+          logger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`);
+          return this.preprocessingService.pdfOptimize(inputPath);
+        }
+      });
+    }
+    
+    // Add Tesseract as the second engine
+    const tesseractAvailable = await this.checkTesseractAvailability();
+    logger.info(`Tesseract availability: ${tesseractAvailable}`);
+    
+    if (tesseractAvailable) {
+      this.engines.set('tesseract', {
+        name: 'tesseract',
+        service: null, // Tesseract uses direct command execution
+        available: true,
+        specialization: ['general', 'text'],
+        confidence: true,
+        preprocessor: (inputPath, documentType) => {
+          logger.info(`Preprocessing for Tesseract, document type: ${documentType}`);
+          return this.preprocessingService.tesseractOptimize(inputPath);
+        }
+      });
+    }
+    
+    // Add NanoVLM as the third engine
     const nanoVLMService = new NanoVLMService();
     const nanoVLMAvailable = await nanoVLMService.isAvailable().catch(err => {
       logger.error(`Error checking nanoVLM availability: ${err}`);
       return false;
     });
     
-    logger.info(`nanoVLM availability: ${nanoVLMAvailable}`);
+    logger.info(`NanoVLM availability: ${nanoVLMAvailable}`);
     
-    this.engines.push({
-      name: 'nanovlm',
-      service: nanoVLMService,
-      available: nanoVLMAvailable,
-      specialization: ['handwriting', 'tables', 'poor_quality'],
-      confidence: true,
-      preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for nanoVLM, document type: ${documentType}`);
-        switch(documentType) {
-          case 'handwriting':
-            return this.preprocessingService.nanoVLMHandwritingOptimize(inputPath);
-          case 'table':
-            return this.preprocessingService.nanoVLMTableOptimize(inputPath);
-          default:
-            return this.preprocessingService.nanoVLMGeneralOptimize(inputPath);
+    if (nanoVLMAvailable) {
+      this.engines.set('nanovlm', {
+        name: 'nanovlm',
+        service: nanoVLMService,
+        available: true,
+        specialization: ['handwriting', 'tables', 'poor_quality'],
+        confidence: true,
+        preprocessor: (inputPath, documentType) => {
+          logger.info(`Preprocessing for NanoVLM, document type: ${documentType}`);
+          switch(documentType) {
+            case 'handwriting':
+              return this.preprocessingService.nanoVLMHandwritingOptimize(inputPath);
+            case 'table':
+              return this.preprocessingService.nanoVLMTableOptimize(inputPath);
+            default:
+              return this.preprocessingService.nanoVLMGeneralOptimize(inputPath);
+          }
         }
-      }
-    });
-    
-    // Log the available engines
-    logger.info(`Available engines: ${this.engines.filter(e => e.available).map(e => e.name).join(', ')}`);
-    
-    // Add Tesseract engine
-    const tesseractAvailable = await this.checkTesseractAvailability();
-    logger.info(`Tesseract availability: ${tesseractAvailable}`);
-    
-    this.engines.push({
-      name: 'tesseract',
-      service: null, // Tesseract uses direct command execution
-      available: tesseractAvailable,
-      specialization: ['general', 'text'],
-      confidence: true,
-      preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for Tesseract, document type: ${documentType}`);
-        return this.preprocessingService.tesseractOptimize(inputPath);
-      }
-    });
+      });
+    }
     
     // Add OCRmyPDF engine
     const ocrmypdfAvailable = await this.checkOCRmyPDFAvailability();
@@ -158,7 +177,10 @@ export class MultiEngineOCR {
     
     // Log final available engines
     const availableEngines = this.engines.filter(e => e.available);
-    logger.info(`Total available engines: ${availableEngines.length} - ${availableEngines.map(e => e.name).join(', ')}`);
+    const availableEngineNames = Array.from(this.engines.values())
+      .filter(e => e.available)
+      .map(e => e.name);
+    logger.info(`Total available engines: ${availableEngineNames.length} - ${availableEngineNames.join(', ')}`);
   }
   
   /**
@@ -267,8 +289,8 @@ export class MultiEngineOCR {
             optimizedSettings
           );
           
-          // Handle service-based engines differently
-          if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
+          // Handle NanoVLM service engine differently
+          if (engine.name === 'nanovlm') {
             await this.processWithServiceEngine(engine, processedInputPath, outputPath, language, 'general');
           } else {
             // Traditional command-line engines
@@ -441,7 +463,7 @@ export class MultiEngineOCR {
       const outputPath = join(outputDir, generateOutputFilename(inputPath, engineName, 'smart_ocr'));
       
       // Handle service-based engines
-      if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
+      if (engine.name === 'nanovlm') {
         await this.processWithServiceEngine(engine, processedInputPath, outputPath, 'eng', documentType);
       } else {
         // Traditional command-line engines
@@ -467,9 +489,7 @@ export class MultiEngineOCR {
         const result = JSON.parse(resultContent);
         extractedText = result.text || '';
         confidence = result.confidence || 0;
-      } else if (engine.name === 'paddleocr' || engine.name === 'kraken') {
-        // For other service engines, extract from JSON result
-        const fs = await import('fs/promises');
+      }
         const resultContent = await fs.readFile(outputPath, 'utf-8');
         const result = JSON.parse(resultContent);
         extractedText = result.text || '';
@@ -560,12 +580,6 @@ export class MultiEngineOCR {
       
       command += ` "${inputPath}" "${outputPath}"`;
       return command;
-    } else if (engine.name === 'paddleocr') {
-      // Service-based engine - return placeholder command
-      return `echo "PaddleOCR service processing"`;
-    } else if (engine.name === 'kraken') {
-      // Service-based engine - return placeholder command  
-      return `echo "Kraken service processing"`;
     } else if (engine.name === 'nanovlm') {
       // NanoVLM service - return placeholder command
       return `echo "NanoVLM service processing"`;
@@ -733,7 +747,7 @@ export class MultiEngineOCR {
   }
 
   /**
-   * Process document with service-based engines (PaddleOCR, Kraken, NanoVLM)
+   * Process document with NanoVLM service engine
    */
   private async processWithServiceEngine(
     engine: OCREngine,
@@ -749,49 +763,7 @@ export class MultiEngineOCR {
       throw new Error(`Invalid input path type: ${typeof inputPath}, expected string`);
     }
     
-    logger.info(`Processing with service engine: ${engine.name}, input: ${inputPath}, document type: ${documentType}`);
-    
-    if (engine.name === 'paddleocr') {
-      // PaddleOCR service call
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', 'standard');
-      
-      const response = await fetch('http://localhost:8000/ocr/process', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`PaddleOCR service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
-      
-    } else if (engine.name === 'kraken') {
-      // Kraken service call
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', 'standard');
-      formData.append('language', language);
-      
-      const response = await fetch('http://localhost:8001/ocr/process', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Kraken service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
-    } else if (engine.name === 'nanovlm') {
+    logger.info(`Processing with NanoVLM service: input: ${inputPath}, document type: ${documentType}`);} else if (engine.name === 'nanovlm') {
       // NanoVLM direct service call (not HTTP)
       logger.info(`Calling nanoVLM service with input: ${inputPath}`);
       

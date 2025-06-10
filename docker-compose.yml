@@ -32,8 +32,8 @@ services:
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-eng}
       - ENABLE_OPTIMIZATION=${ENABLE_OPTIMIZATION:-true}
       - JBIG2_PATH=/usr/bin/jbig2
-      # PaddleOCR service URL
-      - PADDLEOCR_SERVICE_URL=http://paddleocr-service:8000
+      # NanoVLM service URL
+      - NANOVLM_SERVICE_URL=http://nanovlm-service:8003
     # Increase memory limits to handle large file uploads and processing
     deploy:
       resources:
@@ -58,45 +58,9 @@ services:
         max-size: "10m"
         max-file: "3"
     depends_on:
-      - paddleocr-service
+      - nanovlm-service
 
-  paddleocr-service:
-    build:
-      context: ./docker/paddleocr
-      dockerfile: Dockerfile
-    image: paddleocr-service:${PADDLEOCR_VERSION:-1.0.0}
-    container_name: paddleocr-service
-    ports:
-      - "${PADDLEOCR_PORT:-8000}:8000"
-    volumes:
-      # Share uploads directory for processing
-      - ${UPLOADS_DIR:-./uploads}:/app/uploads:ro
-      - ${PROCESSED_DIR:-./processed}:/app/processed
-      # Temporary directory for PaddleOCR processing
-      - ./tmp:/app/tmp
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PADDLEOCR_LOG_LEVEL=${PADDLEOCR_LOG_LEVEL:-INFO}
-      - MAX_WORKERS=${PADDLEOCR_MAX_WORKERS:-2}
-    deploy:
-      resources:
-        limits:
-          memory: ${PADDLEOCR_MEMORY:-2G}
-          cpus: ${PADDLEOCR_CPUS:-1}
-        reservations:
-          memory: ${PADDLEOCR_MEMORY_RESERVATION:-1G}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+
 
   nanovlm-service:
     build:

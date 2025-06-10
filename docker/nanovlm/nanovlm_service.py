@@ -5,14 +5,15 @@ Optimized for high-accuracy text recognition
 import os
 import logging
 import tempfile
+import traceback
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 import uvicorn
+from pathlib import Path
 from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
 import torch
 
@@ -31,6 +32,14 @@ app = FastAPI(
 model = None
 image_processor = None
 tokenizer = None
+
+class OCRProcessingError(Exception):
+    """Custom exception for OCR processing errors"""
+    def __init__(self, message: str, status_code: int = 500, details: Optional[Dict] = None):
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        super().__init__(self.message)
 
 def initialize_nanovlm_model():
     """Initialize NanoVLM model and processors"""
@@ -134,6 +143,15 @@ def process_with_nanovlm(image_path: str) -> Dict[str, Any]:
             "confidence": 0.0
         }
 
+def cleanup_temp_files(files: List[str]) -> None:
+    """Clean up temporary files"""
+    for file_path in files:
+        try:
+            if file_path and os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to clean up temporary file {file_path}: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize model on startup"""
@@ -142,87 +160,115 @@ async def startup_event():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    if model is None or image_processor is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not initialized")
-    return {"status": "healthy", "model": "nanoVLM-222M"}
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "service": "NanoVLM OCR"
+    }
 
+# Core OCR processing route
 @app.post("/ocr/process-page")
 async def process_page(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     page_number: int = Form(...),
     enhancement_mode: str = Form(default="standard"),
     language: str = Form(default="en")
 ):
     """Process a single page with NanoVLM OCR"""
-    if model is None:
-        raise HTTPException(status_code=503, detail="Model not initialized")
-    
+    temp_files = []
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+        
+    if page_number < 1:
+        raise HTTPException(status_code=400, detail="Invalid page number")
+        
     try:
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        temp_files.append(temp_file.name)
+        
+        # Save uploaded content
+        content = await file.read()
+        temp_file.write(content)
+        temp_file.close()
+        
+        # Validate image
+        try:
+            with Image.open(temp_file.name) as img:
+                logger.info(f"Processing image: {img.size}")
+        except Exception as e:
+            raise OCRProcessingError("Invalid image file", status_code=400, details={"error": str(e)})
             
-            try:
-                # Preprocess image
-                processed_path = preprocess_image(temp_file_path, enhancement_mode)
+        # Process image
+        try:
+            processed_path = preprocess_image(temp_file.name, enhancement_mode)
+            temp_files.append(processed_path)
+            
+            result = process_with_nanovlm(processed_path)
+            
+            if not isinstance(result, dict) or 'text' not in result:
+                raise OCRProcessingError("Invalid processor result")
                 
-                # Process with NanoVLM
-                result = process_with_nanovlm(processed_path)
-                
-                # Prepare response
-                response = {
-                    "success": True,
-                    "page_number": page_number,
-                    "results": [{
-                        "text": result["text"],
-                        "confidence": result["confidence"],
-                        "page": page_number,
-                        "bbox": {"x": 0, "y": 0, "width": 100, "height": 100}
-                    }],
-                    "engine": "NanoVLM",
-                    "enhancement_mode": enhancement_mode,
-                    "language": language,
-                    "confidence_stats": {
-                        "average": result["confidence"],
-                        "min": result["confidence"],
-                        "max": result["confidence"]
-                    }
+            response = {
+                "success": True,
+                "results": [{
+                    "text": result.get("text", ""),
+                    "confidence": result.get("confidence", 0.0),
+                    "page": page_number
+                }],
+                "engine": "NanoVLM",
+                "enhancement_mode": enhancement_mode,
+                "language": language,
+                "metadata": {
+                    "filename": file.filename,
+                    "file_size": len(content),
+                    "mime_type": file.content_type
                 }
-                
-                return JSONResponse(response)
-                
-            finally:
-                # Clean up temporary files
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                if processed_path != temp_file_path and os.path.exists(processed_path):
-                    os.unlink(processed_path)
-                    
+            }
+            
+            background_tasks.add_task(cleanup_temp_files, temp_files)
+            return JSONResponse(response)
+            
+        except Exception as e:
+            raise OCRProcessingError(
+                "Processing failed",
+                details={"error": str(e), "page": page_number}
+            )
+            
+    except OCRProcessingError as e:
+        logger.error(f"OCR error: {e.message}")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={"error": e.message, "details": e.details}
+        )
+        
     except Exception as e:
-        logger.error(f"Error processing page {page_number}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error: {e}")
+        logger.debug(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Internal server error", "message": str(e)}
+        )
+        
+    finally:
+        cleanup_temp_files(temp_files)
 
 @app.get("/ocr/capabilities")
 async def get_capabilities():
-    """Get OCR engine capabilities and supported features"""
+    """Get OCR engine capabilities"""
     return {
         "engine": "NanoVLM",
-        "model": "nanoVLM-222M",
-        "supported_languages": ["en"],
-        "enhancement_modes": ["standard", "enhanced", "aggressive"],
+        "version": "nanoVLM-222M",
+        "supported_formats": ["png", "jpg", "jpeg", "tiff", "bmp"],
         "features": [
             "high_accuracy_text_recognition",
-            "robust_text_extraction",
-            "layout_awareness",
-            "noise_resistance"
+            "handwriting_recognition",
+            "table_recognition",
+            "poor_quality_enhancement"
         ],
-        "optimal_for": [
-            "general_text",
-            "structured_documents",
-            "poor_quality_scans"
-        ]
+        "enhancement_modes": ["standard", "aggressive"]
     }
 
 if __name__ == "__main__":

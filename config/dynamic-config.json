@@ -14,20 +14,18 @@
     "confidenceThreshold": 75,
     "customParameters": {},
     "engines": [
-      "tesseract",
       "ocrmypdf",
-      "paddleocr"
+      "tesseract",
+      "nanovlm"
     ],
     "maxEngines": 3,
     "parallelProcessing": true,
     "enginePriority": [
-      "tesseract",
       "ocrmypdf",
-      "paddleocr"
+      "tesseract", 
+      "nanovlm"
     ],
-    "fallbackEngines": [
-      "kraken"
-    ],
+    "fallbackEngines": [],
     "parameters": {
       "psm": 1,
       "oem": 3,

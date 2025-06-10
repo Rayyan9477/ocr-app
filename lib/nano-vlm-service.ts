@@ -30,7 +30,7 @@ export class NanoVLMService {
     this.modelPath = modelPath;
     this.pythonModulePath = path.join(process.cwd(), 'python');
     
-    // Use system Python directly
+    // Use system Python or specified path
     if (pythonEnvPath) {
       this.pythonEnvPath = pythonEnvPath;
     } else {
@@ -38,47 +38,43 @@ export class NanoVLMService {
       this.pythonEnvPath = isWindows ? 'python' : 'python3';
       logger.info('Using system Python for nanoVLM processing');
     }
-    
-    // Log configuration for debugging
-    logger.info(`NanoVLM Service Configuration:
-      Model Path: ${this.modelPath}
-      Python Path: ${this.pythonEnvPath}
-      Python Module Path: ${this.pythonModulePath}
-      Platform: ${process.platform}`);
-    
-    // Create model directory if it doesn't exist
-    if (!fs.existsSync(this.modelPath)) {
-      fs.mkdirSync(this.modelPath, { recursive: true });
-      logger.info(`Created model directory at ${this.modelPath}`);
-    }
   }
-  
+
   async processImage(
     imagePath: string, 
     outputDir: string, 
     options: NanoVLMOptions = {}
   ): Promise<OCRResult> {
     const startTime = Date.now();
-    
+    let outputPath: string | undefined;
+    let tempFiles: string[] = [];
+
     try {
       // Validate input path
       if (!fs.existsSync(imagePath)) {
         throw new Error(`Input image not found: ${imagePath}`);
       }
-      
+
       // Create output directory if it doesn't exist
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-      
-      const outputPath = path.join(outputDir, `${path.basename(imagePath, path.extname(imagePath))}_result.json`);
-      
-      // Set PYTHONPATH to include our module directory
+      fs.mkdirSync(outputDir, { recursive: true });
+
+      outputPath = path.join(
+        outputDir,
+        `${path.basename(imagePath, path.extname(imagePath))}_result.json`
+      );
+
+      // Track any temporary files created during processing
+      const trackTempFile = (filePath: string) => {
+        tempFiles.push(filePath);
+        return filePath;
+      };
+
+      // Process image with appropriate environment setup
       const env = {
         ...process.env,
         PYTHONPATH: this.pythonModulePath + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '')
       };
-      
+
       // Build command arguments
       const args = [
         path.join(this.pythonModulePath, 'nanovlm', 'processor.py'),
@@ -86,50 +82,62 @@ export class NanoVLMService {
         '--input', imagePath,
         '--output', outputPath
       ];
-      
+
+      // Add optional arguments
       if (options.documentType) {
         args.push('--document_type', options.documentType);
       }
-      
       if (options.confidenceThreshold) {
         args.push('--confidence_threshold', options.confidenceThreshold.toString());
       }
-      
       if (options.enhanceResolution) {
         args.push('--enhance_resolution');
       }
-      
       if (options.preserveLayout) {
         args.push('--preserve_layout');
       }
-      
-      // Execute the Python script
+
+      // Execute Python processor
+      logger.info(`Processing image with nanoVLM: ${imagePath}`);
       const result = await this.executePythonProcess(args, env);
-      
-      // Verify output file exists before reading
+
+      // Verify output file exists and is valid JSON
       if (!fs.existsSync(outputPath)) {
         throw new Error(`Output file not created: ${outputPath}`);
       }
+
+      // Parse and validate output
+      const outputContent = fs.readFileSync(outputPath, 'utf8');
+      const outputData = JSON.parse(outputContent);
       
-      // Read and parse the output file
-      const outputData = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+      if (!outputData.success) {
+        throw new Error(outputData.error || 'Processing failed without specific error');
+      }
       
-      const processingTime = Date.now() - startTime;
-      
+      // Return structured result
       return {
-        text: outputData.text,
+        text: outputData.text || '',
         confidence: outputData.confidence || 0,
         structuredData: outputData.structured_data,
         layout: outputData.layout,
-        processingTime
+        processingTime: Date.now() - startTime,
+        outputPath // Include output file path
       };
     } catch (error) {
-      logger.error(`Error processing image with nanoVLM: ${error}`);
-      return {
-        text: '',
-        confidence: 0,
-        processingTime: Date.now() - startTime
-      };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error processing image with nanoVLM: ${errorMessage}`);
+      throw error;
+    } finally {
+      // Clean up any temporary files
+      tempFiles.forEach(filePath => {
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch (cleanupError) {
+          logger.warn(`Failed to clean up temporary file ${filePath}: ${cleanupError}`);
+        }
+      });
     }
   }
 
@@ -217,6 +225,7 @@ export class NanoVLMService {
       
       process.stderr.on('data', (data) => {
         stderr += data.toString();
+        logger.debug(`NanoVLM stderr: ${data.toString()}`);
       });
       
       process.on('close', (code) => {
@@ -228,8 +237,16 @@ export class NanoVLMService {
       });
       
       process.on('error', (err) => {
-        reject(err);
+        reject(new Error(`Failed to start Python process: ${err.message}`));
       });
+      
+      // Add timeout
+      const timeout = setTimeout(() => {
+        process.kill();
+        reject(new Error('Python process timed out after 30 seconds'));
+      }, 30000);
+      
+      process.on('close', () => clearTimeout(timeout));
     });
   }
 }

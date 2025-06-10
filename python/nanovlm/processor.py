@@ -13,13 +13,60 @@ import time
 from PIL import Image
 import traceback
 from typing import Dict, Any, Optional
+import logging
 
 class NanoVLMProcessor:
-    def __init__(self, model_path: str):
-        """Initialize NanoVLM processor with model path"""
-        self.model_path = model_path
+    def __init__(self):
+        self.logger = logging.getLogger('nanovlm')
+        self.setup_logging()
         self.supported_types = ['general', 'handwritten', 'table', 'poor_quality']
+        self.supported_formats = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp'}
+
+    def setup_logging(self):
+        """Configure logging with proper handlers"""
+        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        os.makedirs(log_dir, exist_ok=True)
         
+        log_file = os.path.join(log_dir, f'nanovlm_{time.strftime("%Y%m%d")}.log')
+        file_handler = logging.FileHandler(log_file)
+        console_handler = logging.StreamHandler()
+        
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+        self.logger.setLevel(logging.DEBUG if os.getenv('NANOVLM_LOG_LEVEL') == 'DEBUG' else logging.INFO)
+
+    def validate_paths(self, image_path: str, output_dir: str) -> None:
+        """Validate input and output paths"""
+        # Check if input file exists
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Input file not found: {image_path}")
+
+        # Validate file format
+        ext = os.path.splitext(image_path)[1].lower()
+        if ext not in self.supported_formats:
+            raise ValueError(f"Unsupported file format: {ext}. Supported formats: {', '.join(self.supported_formats)}")
+
+        # Check if input file is readable
+        try:
+            with open(image_path, 'rb') as f:
+                pass
+        except Exception as e:
+            raise IOError(f"Cannot read input file: {image_path} - {str(e)}")
+
+        # Validate output directory
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            test_file = os.path.join(output_dir, 'test_write.tmp')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+        except Exception as e:
+            raise IOError(f"Cannot write to output directory: {output_dir} - {str(e)}")
+
     def process_document(
         self,
         image_path: str,
@@ -30,19 +77,27 @@ class NanoVLMProcessor:
     ) -> Dict[str, Any]:
         """Process document with NanoVLM and return results"""
         start_time = time.time()
-        
+        output_dir = os.path.dirname(image_path)
+        output_file = None
+
         try:
-            # Validate input
-            if not os.path.exists(image_path):
-                raise FileNotFoundError(f"Input file not found: {image_path}")
-            
+            self.logger.info(f"Processing document: {image_path}")
+            self.logger.debug(f"Options: type={document_type}, threshold={confidence_threshold}, "
+                            f"enhance={enhance_resolution}, preserve_layout={preserve_layout}")
+
+            # Validate paths and options
+            self.validate_paths(image_path, output_dir)
+
             if document_type not in self.supported_types:
                 raise ValueError(f"Unsupported document type: {document_type}")
-            
-            # Load and preprocess image
+
+            if not 0 <= confidence_threshold <= 1:
+                raise ValueError(f"Confidence threshold must be between 0 and 1, got {confidence_threshold}")
+
+            # Process image
             image = Image.open(image_path)
             
-            # Apply document-specific processing
+            # Select appropriate processing method
             if document_type == 'handwritten':
                 processed_text = self._process_handwritten(image)
             elif document_type == 'table':
@@ -51,33 +106,53 @@ class NanoVLMProcessor:
                 processed_text = self._process_poor_quality(image)
             else:
                 processed_text = self._process_general(image)
-            
-            # Calculate confidence and prepare result
+
+            # Calculate confidence and get layout info
             confidence = self._calculate_confidence(processed_text)
-            
-            # Apply layout processing if requested
             layout = self._extract_layout(image) if preserve_layout else None
             
-            # Prepare structured data
-            structured_data = self._extract_structured_data(processed_text)
-            
-            return {
+            # Prepare output file path
+            output_file = os.path.join(
+                output_dir,
+                f"{os.path.splitext(os.path.basename(image_path))[0]}_result.json"
+            )
+
+            # Prepare and write result
+            result = {
+                'success': True,
                 'text': processed_text,
                 'confidence': confidence,
                 'processing_time': round((time.time() - start_time) * 1000),  # ms
                 'layout': layout,
-                'structured_data': structured_data,
                 'document_type': document_type,
-                'enhancement_used': True if enhance_resolution else False
+                'enhancement_used': enhance_resolution
             }
-            
+
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+
+            self.logger.info(f"Successfully processed document: {image_path}")
+            return result
+
         except Exception as e:
-            print(f"Error processing document: {str(e)}")
-            traceback.print_exc()
-            return {
+            self.logger.error(f"Error processing document: {str(e)}")
+            self.logger.debug(f"Traceback: {traceback.format_exc()}")
+
+            error_result = {
+                'success': False,
                 'error': str(e),
+                'error_type': type(e).__name__,
                 'processing_time': round((time.time() - start_time) * 1000)
             }
+
+            if output_file:
+                try:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        json.dump(error_result, f, indent=2, ensure_ascii=False)
+                except Exception as write_error:
+                    self.logger.error(f"Failed to write error result: {write_error}")
+
+            raise
 
     def _process_handwritten(self, image: Image.Image) -> str:
         """Process handwritten text with specialized enhancement"""
