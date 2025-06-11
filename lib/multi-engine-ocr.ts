@@ -407,3 +407,6 @@ export class MultiEngineOCR {
 }
 
 export default MultiEngineOCR
+
+// Named export for backwards compatibility
+export const multiEngineOCR = new MultiEngineOCR()
