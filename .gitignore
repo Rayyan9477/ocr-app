@@ -26,6 +26,9 @@ venv/
 *venv/*
 venv
 *.safetensors
+nanovlm_env/
+nanovlm_env/*
+
 
 # vercel
 .vercel

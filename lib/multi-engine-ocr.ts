@@ -5,7 +5,8 @@
 
 import { PreprocessingService } from './preprocessing-service'
 import { NanoVLMService } from './nano-vlm-service'
-import { execAsync, logger } from './utils'
+import { execAsync } from './server-utils'
+import logger from './logger'
 import * as path from 'path'
 import * as fs from 'fs/promises'
 

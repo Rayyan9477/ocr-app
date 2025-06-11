@@ -1,8 +1,36 @@
 import torch
 from PIL import Image, ImageEnhance
 from transformers import VisionEncoderDecoderModel, AutoTokenizer, ViTImageProcessor
+import os
+import requests
+from tqdm import tqdm
+
+def download_model(model_path):
+    """Download the model weights if they don't exist"""
+    os.makedirs(model_path, exist_ok=True)
+    model_file = f"{model_path}/model.safetensors"
+    
+    if not os.path.exists(model_file):
+        print("Downloading model weights...")
+        url = "https://huggingface.co/lusxvr/nanoVLM-222M/resolve/main/model.safetensors"
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(model_file, 'wb') as f, tqdm(
+            desc=model_file,
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as pbar:
+            for data in response.iter_content(chunk_size=1024):
+                size = f.write(data)
+                pbar.update(size)
 
 def load_model(model_path):
+    # Download model if needed
+    download_model(model_path)
+    
     print("Loading NanoVLM model...")
     import transformers
     transformers.utils.DOWNLOAD_TIMEOUT = 60
@@ -31,9 +59,19 @@ def load_model(model_path):
     weights = load_file(f"{model_path}/model.safetensors")
     model.load_state_dict(weights, strict=False)
     
-    # Move model to GPU if available
+    # Determine device and optimize for CPU if GPU is not available
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        # Enable PyTorch optimizations for CPU
+        torch.set_num_threads(4)  # Adjust based on available CPU cores
+        # Convert model to float32 for better CPU performance
+        model = model.float()
     model.to(device)
+    
+    # Enable model optimization
+    model.eval()  # Set to evaluation mode
+    torch.set_grad_enabled(False)  # Disable gradient computation
+    
     return model, tokenizer, feature_extractor, device
 
 def enhance_image(image, method='default'):
@@ -476,29 +514,23 @@ def select_best_text(texts, min_confidence=0.6):
     return best_text[0], best_text[1]
 
 def main():
+    # Print system information
+    print("PyTorch version:", torch.__version__)
+    print("CUDA available:", torch.cuda.is_available())
+    if torch.cuda.is_available():
+        print("GPU device:", torch.cuda.get_device_name(0))
+        print("GPU memory:", torch.cuda.get_device_properties(0).total_memory / 1024**3, "GB")
+    print("\nStarting model loading...")
+    
+    # Set up model path
     model_path = "models/nanovlm-222m"
-    test_image = "test_vlm_input.png"
     
     try:
-        print("Starting model loading...")
         model, tokenizer, feature_extractor, device = load_model(model_path)
-        print(f"Model loaded successfully. Using device: {device}")
+        print(f"\nModel loaded successfully!")
+        print(f"Using device: {device}")
+        print("\nSetup complete! The NanoVLM environment is ready for use.")
         
-        print("Starting image processing...")
-        best_text, alternatives = process_image(test_image, model, tokenizer, feature_extractor, device)
-        
-        print("\nRecognized Text (Primary):")
-        print("-" * 50)
-        print(best_text)
-        print("-" * 50)
-        
-        if alternatives:
-            print("\nAlternative Readings:")
-            for text, score in alternatives:
-                print(f"\nConfidence Score: {score:.2f}")
-                print("-" * 30)
-                print(text)
-            
     except Exception as e:
         import traceback
         print(f"Error: {str(e)}")

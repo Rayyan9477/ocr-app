@@ -20,6 +20,22 @@ export const serverLogger = {
 };
 
 /**
+ * Run a shell command and return its output
+ */
+export async function runCommand(command: string) {
+  try {
+    const { stdout, stderr } = await execAsync(command);
+    return { success: true, stdout, stderr };
+  } catch (error) {
+    console.error('Command execution error:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+}
+
+/**
  * Wrapper for child_process.spawn with logging
  * @param command The command to run
  * @param args Arguments for the command
