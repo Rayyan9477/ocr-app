@@ -1,8 +1,24 @@
 {
-  "model_path": "model.safetensors",
-  "max_batch_size": 16,
-  "device": "cpu",
-  "fallback_device": "cpu",
-  "max_sequence_length": 1024,
-  "image_size": 224
+  "model_type": "vision-encoder-decoder",
+  "encoder": {
+    "model_type": "vit",
+    "hidden_size": 768,
+    "num_hidden_layers": 12,
+    "num_attention_heads": 12,
+    "intermediate_size": 3072,
+    "hidden_act": "gelu",
+    "image_size": 224,
+    "patch_size": 16
+  },
+  "decoder": {
+    "model_type": "bert",
+    "hidden_size": 768,
+    "num_hidden_layers": 6,
+    "num_attention_heads": 12,
+    "intermediate_size": 3072,
+    "hidden_act": "gelu",
+    "max_position_embeddings": 1024
+  },
+  "vocab_size": 30522,
+  "max_length": 1024
 }

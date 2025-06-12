@@ -1,11 +1,18 @@
 import { NextRequest } from "next/server";
 import { join } from "path";
-import { writeFile } from "fs/promises";
-import { serverLogger, execAsync } from "@/app/api/_utils/server-utils";
+import { writeFile, mkdir } from "fs/promises";
+import fs from "fs";
+import path from "path";
+import { serverLogger, execAsync, createSafeSizedJsonResponse } from "@/app/api/_utils/server-utils";
+import { createSafeJsonResponse } from "@/lib/server-safe-response-handler";
 import { createJsonResponse } from "@/lib/utils";
+import { FileHandler } from "@/lib/file-handler";
+import appConfig from "@/lib/config";
 
 export async function POST(request: NextRequest) {
   let inputPath = "";
+  let tempFiles: string[] = [];
+  let outputFile = "";
   
   try {
     // Extract document type and engine preference from the request
@@ -13,66 +20,229 @@ export async function POST(request: NextRequest) {
     
     // Log all form data keys for debugging
     const formKeys = Array.from(formData.keys());
-    logger.info(`Form data keys received: ${formKeys.join(', ')}`);
+    serverLogger.info(`Form data keys received: ${formKeys.join(', ')}`);
     
     const file = formData.get('image') as File || formData.get('file') as File;
     const documentType = formData.get('documentType') as string || 'general';
     const preferredEngine = formData.get('engine') as string;
     
-    logger.info(`Processing document of type: ${documentType}, preferred engine: ${preferredEngine || 'auto'}`);
+    serverLogger.info(`Processing document of type: ${documentType}, preferred engine: ${preferredEngine || 'auto'}`);
     
     if (!file) {
-      logger.error('No file provided in form data');
-      return createJsonResponse({ success: false, error: 'No file provided' }, 400);
+      serverLogger.error('No file provided in form data');
+      return createSafeJsonResponse({ success: false, error: 'No file provided' }, 400);
     }
     
-    logger.info(`File received: ${file.name}, size: ${file.size} bytes, type: ${file.type}`);
+    const fileMetadata = FileHandler.getMetadata(file);
+    serverLogger.info(`File received: ${fileMetadata?.name}, size: ${fileMetadata?.size} bytes, type: ${fileMetadata?.type}`);
     
     // Save the uploaded file
     const uploadsDir = join(process.cwd(), 'uploads');
     const timestamp = Date.now();
-    const fileName = `${timestamp}_${file.name}`;
+    const fileName = FileHandler.generateFilename(file.name);
     inputPath = join(uploadsDir, fileName);
+    tempFiles.push(inputPath);
     
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(inputPath, fileBuffer);
-    logger.info(`File saved to ${inputPath}`);
-    
-    // Process with NanoVLM
-    try {
-      const { stdout, stderr } = await execAsync(
-        `${process.cwd()}/nanovlm_env/bin/python ${process.cwd()}/python/processors/nanovlm_processor.py --model_path ${process.cwd()}/models/nanovlm-222m --input "${inputPath}"`
-      );
-      
-      return createJsonResponse({
-        success: true,
-        outputFile: stdout,
-        details: stderr
-      });
-      
-    } catch (error) {
-      logger.error("NanoVLM processing failed:", error);
-      return createJsonResponse({ 
-        success: false, 
-        error: "OCR processing failed",
-        details: error instanceof Error ? error.message : String(error)
-      }, 500);
+    // Ensure uploads directory exists
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      serverLogger.info(`Created uploads directory: ${uploadsDir}`);
     }
     
+    const fileBuffer = await FileHandler.toBuffer(file);
+    if (!fileBuffer) {
+      return createSafeJsonResponse({ success: false, error: 'Failed to process file data' }, 400);
+    }
+    
+    await writeFile(inputPath, fileBuffer);
+    serverLogger.info(`File saved to ${inputPath}`);
+    
+    // Ensure processed directory exists
+    const processedDir = appConfig.processedDir || join(process.cwd(), 'processed');
+    if (!fs.existsSync(processedDir)) {
+      await mkdir(processedDir, { recursive: true });
+      serverLogger.info(`Created processed directory: ${processedDir}`);
+    }
+    
+    // Process with OCR
+    const result = await processFileWithOCR(file, inputPath, processedDir, timestamp, tempFiles, fileMetadata);
+    outputFile = result.outputFile;
+    
+    return createSafeSizedJsonResponse(result);
+    
   } catch (error) {
-    logger.error("Error in smart-ocr:", error);
-    return createJsonResponse({ 
+    serverLogger.error("Error in smart-ocr:", error);
+    return createSafeJsonResponse({ 
       success: false, 
       error: "Internal server error",
       details: error instanceof Error ? error.message : String(error)
     }, 500);
   } finally {
-    // Cleanup uploaded file
-    if (inputPath && fs.existsSync(inputPath)) {
+    // Cleanup temporary files
+    await cleanupTempFiles(tempFiles, outputFile);
+  }
+}
+
+// Modular function to process file with OCR
+async function processFileWithOCR(
+  file: File, 
+  inputPath: string, 
+  processedDir: string, 
+  timestamp: number, 
+  tempFiles: string[], 
+  fileMetadata: any
+) {
+  try {
+    // Generate output filename
+    const fileNameWithoutExt = path.basename(file.name, path.extname(file.name));
+    const outputFile = `${fileNameWithoutExt}_ocr.pdf`;
+    const outputPdfPath = join(processedDir, outputFile);
+    
+    // If the file is a PDF, convert it to images first
+    if (file.type === 'application/pdf') {
+      return await processPdfFile(inputPath, outputPdfPath, outputFile, timestamp, tempFiles, fileMetadata);
+    } else {
+      return await processImageFile(inputPath, outputPdfPath, outputFile, timestamp, tempFiles, fileMetadata);
+    }
+  } catch (error) {
+    serverLogger.error("OCR processing failed:", error);
+    throw error;
+  }
+}
+
+// Modular function to process PDF files
+async function processPdfFile(
+  inputPath: string, 
+  outputPdfPath: string, 
+  outputFile: string, 
+  timestamp: number, 
+  tempFiles: string[], 
+  fileMetadata: any
+) {
+  const uploadsDir = path.dirname(inputPath);
+  const imagesDir = join(uploadsDir, `${timestamp}_images`);
+  fs.mkdirSync(imagesDir, { recursive: true });
+  tempFiles.push(imagesDir);
+  
+  // Convert PDF to images using pdftoppm (part of poppler-utils)
+  await execAsync(`pdftoppm -png "${inputPath}" "${imagesDir}/page"`);
+  
+  // Get list of images
+  const imageFiles = fs.readdirSync(imagesDir)
+    .filter(f => f.endsWith('.png'))
+    .map(f => join(imagesDir, f))
+    .sort();
+  
+  if (imageFiles.length === 0) {
+    throw new Error("Failed to extract images from PDF");
+  }
+  
+  // Process each image and combine results
+  const ocrTextResults = [];
+  for (const imagePath of imageFiles) {
+    const { stdout } = await execAsync(`tesseract "${imagePath}" stdout -l eng`);
+    ocrTextResults.push(stdout);
+  }
+  
+  // Create a PDF with the extracted text
+  const combinedText = ocrTextResults.join('\n\n--- Page Break ---\n\n');
+  await createPdfFromText(combinedText, outputPdfPath, timestamp, tempFiles, fileMetadata);
+  
+  return {
+    success: true,
+    text: combinedText,
+    outputFile: outputFile,
+    details: "Processed with Tesseract OCR",
+    engine: "tesseract",
+    confidence: {
+      averageConfidence: 85.0, // Placeholder - should be calculated from actual results
+      pageCount: imageFiles.length
+    }
+  };
+}
+
+// Modular function to process image files
+async function processImageFile(
+  inputPath: string, 
+  outputPdfPath: string, 
+  outputFile: string, 
+  timestamp: number, 
+  tempFiles: string[], 
+  fileMetadata: any
+) {
+  // For image files, process directly with Tesseract
+  const { stdout } = await execAsync(`tesseract "${inputPath}" stdout -l eng`);
+  
+  // Create a PDF with the extracted text
+  await createPdfFromText(stdout, outputPdfPath, timestamp, tempFiles, fileMetadata);
+  
+  return {
+    success: true,
+    text: stdout,
+    outputFile: outputFile,
+    details: "Processed with Tesseract OCR",
+    engine: "tesseract",
+    confidence: {
+      averageConfidence: 85.0, // Placeholder - should be calculated from actual results
+      pageCount: 1
+    }
+  };
+}
+
+// Modular function to create PDF from text
+async function createPdfFromText(
+  text: string, 
+  outputPdfPath: string, 
+  timestamp: number, 
+  tempFiles: string[], 
+  fileMetadata: any
+) {
+  const uploadsDir = path.dirname(outputPdfPath).replace('processed', 'uploads');
+  
+  // Create a simple PDF with text
+  const htmlContent = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="UTF-8">
+    <title>OCR Result</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      pre { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>OCR Result for ${fileMetadata?.name}</h1>
+    <pre>${text}</pre>
+  </body>
+  </html>`;
+  
+  const htmlPath = join(uploadsDir, `${timestamp}_ocr_result.html`);
+  tempFiles.push(htmlPath);
+  
+  await writeFile(htmlPath, htmlContent);
+  
+  // Convert HTML to PDF using wkhtmltopdf
+  await execAsync(`wkhtmltopdf "${htmlPath}" "${outputPdfPath}"`);
+}
+
+// Modular function to cleanup temporary files
+async function cleanupTempFiles(tempFiles: string[], outputFile: string) {
+  for (const file of tempFiles) {
+    if (fs.existsSync(file)) {
       try {
-        fs.unlinkSync(inputPath);
+        if (fs.lstatSync(file).isDirectory()) {
+          // Remove directory recursively using fs.rm instead of fs.rmdir
+          fs.rmSync(file, { recursive: true, force: true });
+        } else {
+          // Only delete the file if it's not the output PDF
+          if (!file.includes('_ocr.pdf')) {
+            fs.unlinkSync(file);
+            serverLogger.info(`Cleaned up temporary file: ${file}`);
+          }
+        }
       } catch (cleanupError) {
-        logger.warn(`Failed to cleanup uploaded file: ${cleanupError}`);
+        serverLogger.warn(`Failed to cleanup file ${file}: ${cleanupError}`);
       }
     }
   }

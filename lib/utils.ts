@@ -17,6 +17,9 @@ export function createJsonResponse(data: any, status: number = 200) {
   });
 }
 
+// Removed createSafeJsonResponse function - now using server-safe-response-handler.ts for server-side
+// and safe-response-handler.ts for client-side usage
+
 /**
  * Simple logger utility for client-side logging
  */

@@ -7,6 +7,8 @@ Handles OCR requests with error handling and enhanced preprocessing
 import os
 import sys
 import logging
+import argparse
+import json
 import torch
 from PIL import Image
 from typing import Dict, Any

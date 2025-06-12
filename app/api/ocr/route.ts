@@ -10,13 +10,10 @@ import { multiEngineOCR } from "@/lib/multi-engine-ocr"
 import logger from "@/lib/logger"
 import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper"
 
-// Configure Next.js to handle large files
-export const config = {
-  api: {
-    bodyParser: false,
-    responseLimit: false,
-  },
-}
+// Configure route segment for large files (Next.js 14 way)
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300; // 5 minutes
+
 // Helper function to create consistent JSON responses
 // Add error handling to validate JSON response structure
 const createJsonResponse = (data: any, status: number = 200) => {
@@ -29,7 +26,7 @@ const createJsonResponse = (data: any, status: number = 200) => {
       },
     });
   } catch (error) {
-    logger.error('Failed to create JSON response:', error);
+    logger.error(`Failed to create JSON response: ${error}`);
     return new NextResponse(
       JSON.stringify({ success: false, error: 'Internal Server Error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -309,7 +306,6 @@ export const POST = async (request: NextRequest) => {
               success: true,
               inputFile: fileName,
               outputFile: path.basename(retryOutputPath),
-              details: "Successfully processed with force-ocr option",
               details: "Document had existing text layer. Successfully processed with --force-ocr option.",
               warnings: retryResult.stderr || undefined,
               confidence: retryConfidenceData ? {
@@ -339,12 +335,9 @@ export const POST = async (request: NextRequest) => {
         const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
         await mkdir(fallbackOutputDir, { recursive: true });
         
-        const ensembleResult = await multiEngineOCR.processWithEnsemble(
+        const ensembleResult = await multiEngineOCR.processWithMultipleEngines(
           inputPath,
-          fallbackOutputDir,
-          options.language,
-          false, // Don't use preprocessing for fallback to save time
-          true   // Use auto-customization
+          ['tesseract', 'ocrmypdf'] // Use available engines
         );
         
         if (ensembleResult.hasSuccessfulResults && ensembleResult.bestResult.outputPath) {

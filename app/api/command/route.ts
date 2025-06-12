@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { runCommand } from '@/lib/server-utils';
+import { runCommand } from '@/app/api/_utils/server-utils';
 
 export async function POST(request: NextRequest) {
   try {
-    const { command } = await request.json();
+    const body = await request.json() as { command?: string };
+    const { command } = body;
     if (!command || typeof command !== 'string') {
       return NextResponse.json(
         { success: false, error: 'Invalid command' },

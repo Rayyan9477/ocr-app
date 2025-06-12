@@ -18,6 +18,8 @@ import { BrandedNotification } from "@/components/branded-notification"
 import { DependencyStatus } from "@/components/dependency-status"
 import { SmartSearch } from "@/components/smart-search"
 import { cn } from "@/lib/utils"
+import { processLargePdf, isLargePdf } from "@/lib/large-pdf-client"
+import { safeJsonParse } from "@/lib/safe-response-handler"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
 
@@ -294,7 +296,31 @@ export default function Home() {
         
         // If JSON parsing fails, read as text
         const responseText = await responseForText.text();
-        appendOutput(`Raw response: ${responseText.substring(0, 200)}...`);
+        
+        // Check if response is very large (which might cause parsing issues)
+        if (responseText.length > 1000000) { // 1MB
+          appendOutput(`Response is very large (${(responseText.length/1024/1024).toFixed(2)}MB). This may be causing the parsing issue.`);
+        } else {
+          appendOutput(`Raw response: ${responseText.substring(0, 200)}...`);
+        }
+        
+        // Try to extract critical information using regex instead of full JSON parsing
+        try {
+          const successMatch = /\"success\":true/.test(responseText);
+          const outputFileMatch = responseText.match(/\"outputFile\":\"([^\"]+)\"/);
+          
+          if (successMatch && outputFileMatch && outputFileMatch[1]) {
+            appendOutput(`✅ Extracted output file from response: ${outputFileMatch[1]}`);
+            return {
+              success: true,
+              outputFile: outputFileMatch[1],
+              text: "Text too large to display - see PDF for full content",
+              details: "Processed successfully but response was too large to parse as JSON"
+            };
+          }
+        } catch (regexError) {
+          console.error("Failed extracting data with regex:", regexError);
+        }
         
         // Check if file was actually processed despite the JSON error or HTTP status
         // Extract the base filename without extension
@@ -346,18 +372,57 @@ export default function Home() {
           appendOutput(`📄 Output file available: ${foundFile}`);
           
           // Add to processed files even if we had a JSON parsing error
-        addProcessedFile({
-          name: foundFile,
-          path: `/api/download?file=${encodeURIComponent(foundFile)}`,
-        });
+          addProcessedFile({
+            name: foundFile,
+            path: `/api/download?file=${encodeURIComponent(foundFile)}`,
+          });
           
           return {
             success: true,
-            outputFile: foundFile
+            outputFile: foundFile,
+            details: "Processed successfully despite response parsing issues"
           };
         }
         
-        throw new Error(`Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
+        // Handle large response better than just showing an error
+        if (responseText.length > 500000) { // 500KB
+          appendOutput("⚠️ The response was too large to parse correctly, but processing might have completed.");
+          appendOutput("Checking for output files in the processed directory...");
+          
+          // Try checking the status endpoint for recent files
+          try {
+            const statusResponse = await fetch('/api/status');
+            if (statusResponse.ok) {
+              const statusData = await statusResponse.json();
+              // Look for recently created files (last 5 minutes)
+              const recentTime = Date.now() - 5 * 60 * 1000;
+              const recentFiles = statusData.files?.filter((f: any) => 
+                f.name.includes('_ocr.pdf') && (f.timestamp > recentTime)
+              );
+              
+              if (recentFiles?.length > 0) {
+                // Sort by timestamp descending to get most recent
+                recentFiles.sort((a: any, b: any) => b.timestamp - a.timestamp);
+                const mostRecentFile = recentFiles[0];
+                
+                appendOutput(`✅ Found recently processed file: ${mostRecentFile.name}`);
+                addProcessedFile({
+                  name: mostRecentFile.name,
+                  path: `/api/download?file=${encodeURIComponent(mostRecentFile.name)}`,
+                });
+                
+                return {
+                  success: true,
+                  outputFile: mostRecentFile.name
+                };
+              }
+            }
+          } catch (statusError) {
+            console.error("Error checking status for recent files:", statusError);
+          }
+        }
+        
+        throw new Error(`Server returned invalid JSON response. This may be due to a large file or complex OCR content.`);
       }
     } catch (error) {
       console.error("Error during OCR execution:", error);
@@ -610,61 +675,99 @@ export default function Home() {
           throw new Error(`File too large: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE_MB}MB.`);
         }
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("language", opts.language);
-        formData.append("deskew", opts.deskew.toString());
-        formData.append("skipText", opts.skipText.toString());
-        formData.append("force", opts.force.toString());
-        formData.append("redoOcr", opts.redoOcr.toString());
-        formData.append("removeBackground", opts.removeBackground.toString());
-        formData.append("clean", opts.clean.toString());
-        formData.append("optimize", opts.optimize.toString());
-        formData.append("rotate", opts.rotate);
-        formData.append("pdfRenderer", opts.pdfRenderer);
-        
-        // Add smart OCR options
-        formData.append("useSmartOCR", opts.useSmartOCR.toString());
-        formData.append("usePreprocessing", opts.usePreprocessing.toString());
-        formData.append("useMultiEngine", opts.useMultiEngine.toString());
-        formData.append("confidenceThreshold", opts.confidenceThreshold.toString());
-
-        // Store the formData for potential retries
-        setLastSubmittedFormData(formData);
-
-        setProcessingStep(1);
-        setProcessingStepName("Uploading file");
-        appendOutput(`Uploading file (${(file.size / (1024 * 1024)).toFixed(2)} MB) and starting OCR process...`);
-
-        try {
-          // Use smart OCR API if enabled, otherwise use regular OCR API
-          const apiEndpoint = opts.useSmartOCR ? "/api/smart-ocr" : "/api/ocr";
-          data = await executeOcrWithRetry(formData, file.name, false, apiEndpoint);
+        // Check if this is a large PDF file that needs special handling
+        if (isLargePdf(file) && opts.useSmartOCR) {
+          appendOutput(`Detected large PDF: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB). Using optimized large PDF processing...`);
           
-          // Verify data has the required output file information
-          if (!data || !data.outputFile) {
-            console.error("Missing output file information in OCR response:", data);
-            throw new Error("Server response missing output file information");
+          setProcessingStep(1);
+          setProcessingStepName("Processing large PDF");
+          
+          try {
+            // Process the large PDF with the specialized handler
+            data = await processLargePdf(file, {
+              documentType: documentTypeFromOptions(opts),
+              chunkedProcessing: true,
+              preferredEngine: 'nanovlm',
+              maxRetries: 1,
+              onProgress: (progress) => {
+                setLoadingProgress(5 + (progressPerFile * index) + (progress * progressPerFile * 0.8));
+              }
+            });
+            
+            // Verify data has the required output file information
+            if (!data || !data.outputFile) {
+              console.error("Missing output file information in large PDF response:", data);
+              throw new Error("Server response missing output file information");
+            }
+            
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            appendOutput(`❌ Error processing large PDF ${file.name}: ${errorMessage}`);
+            console.error("Error processing large PDF:", error);
+            setError(errorMessage);
+            
+            // Try standard OCR as fallback
+            appendOutput(`Attempting standard OCR as fallback for ${file.name}...`);
+            data = await executeStandardOcr(file, opts);
           }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          appendOutput(`❌ Error processing ${file.name}: ${errorMessage}`);
+        } else {
+          // Standard OCR processing for regular files
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("language", opts.language);
+          formData.append("deskew", opts.deskew.toString());
+          formData.append("skipText", opts.skipText.toString());
+          formData.append("force", opts.force.toString());
+          formData.append("redoOcr", opts.redoOcr.toString());
+          formData.append("removeBackground", opts.removeBackground.toString());
+          formData.append("clean", opts.clean.toString());
+          formData.append("optimize", opts.optimize.toString());
+          formData.append("rotate", opts.rotate);
+          formData.append("pdfRenderer", opts.pdfRenderer);
           
-          // Show more detailed error information
-          if (error instanceof Error && error.stack) {
-            console.error("Error stack:", error.stack);
+          // Add smart OCR options
+          formData.append("useSmartOCR", opts.useSmartOCR.toString());
+          formData.append("usePreprocessing", opts.usePreprocessing.toString());
+          formData.append("useMultiEngine", opts.useMultiEngine.toString());
+          formData.append("confidenceThreshold", opts.confidenceThreshold.toString());
+
+          // Store the formData for potential retries
+          setLastSubmittedFormData(formData);
+
+          setProcessingStep(1);
+          setProcessingStepName("Uploading file");
+          appendOutput(`Uploading file (${(file.size / (1024 * 1024)).toFixed(2)} MB) and starting OCR process...`);
+
+          try {
+            // Use smart OCR API if enabled, otherwise use regular OCR API
+            const apiEndpoint = opts.useSmartOCR ? "/api/smart-ocr" : "/api/ocr";
+            data = await executeOcrWithRetry(formData, file.name, false, apiEndpoint);
+            
+            // Verify data has the required output file information
+            if (!data || !data.outputFile) {
+              console.error("Missing output file information in OCR response:", data);
+              throw new Error("Server response missing output file information");
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            appendOutput(`❌ Error processing ${file.name}: ${errorMessage}`);
+            
+            // Show more detailed error information
+            if (error instanceof Error && error.stack) {
+              console.error("Error stack:", error.stack);
+            }
+            
+            setError(errorMessage);
+            
+            // Use branded notification instead of toast
+            setNotificationProps({
+              title: "Processing Error",
+              description: `Failed to process ${file.name}: ${errorMessage.substring(0, 100)}${errorMessage.length > 100 ? '...' : ''}`,
+              variant: "error"
+            });
+            setShowNotification(true);
+            continue;
           }
-          
-          setError(errorMessage);
-          
-          // Use branded notification instead of toast
-          setNotificationProps({
-            title: "Processing Error",
-            description: `Failed to process ${file.name}: ${errorMessage.substring(0, 100)}${errorMessage.length > 100 ? '...' : ''}`,
-            variant: "error"
-          });
-          setShowNotification(true);
-          continue;
         }
 
         // Display stdout and stderr in terminal if they exist
@@ -740,7 +843,7 @@ export default function Home() {
     setIsProcessing(false);
     setProcessingStep(0);
     setProcessingStepName("");
-    setOverallProgress(100)
+    setOverallProgress(100);
     setLoadingMessage("Processing completed successfully!");
     
     // Delay hiding the loading screen for a better UX
@@ -827,6 +930,54 @@ export default function Home() {
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [showNotification]);
+
+  /**
+   * Execute standard OCR process for a file
+   */
+  const executeStandardOcr = async (file: File, opts: any) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("language", opts.language);
+    formData.append("deskew", opts.deskew.toString());
+    formData.append("skipText", opts.skipText.toString());
+    formData.append("force", opts.force.toString());
+    formData.append("redoOcr", opts.redoOcr.toString());
+    formData.append("removeBackground", opts.removeBackground.toString());
+    formData.append("clean", opts.clean.toString());
+    formData.append("optimize", opts.optimize.toString());
+    formData.append("rotate", opts.rotate);
+    formData.append("pdfRenderer", opts.pdfRenderer);
+    
+    // Add smart OCR options
+    formData.append("useSmartOCR", opts.useSmartOCR.toString());
+    formData.append("usePreprocessing", opts.usePreprocessing.toString());
+    formData.append("useMultiEngine", opts.useMultiEngine.toString());
+    formData.append("confidenceThreshold", opts.confidenceThreshold.toString());
+
+    // Store the formData for potential retries
+    setLastSubmittedFormData(formData);
+
+    setProcessingStep(1);
+    setProcessingStepName("Uploading file");
+    appendOutput(`Trying standard OCR process...`);
+
+    // Use smart OCR API if enabled, otherwise use regular OCR API
+    const apiEndpoint = opts.useSmartOCR ? "/api/smart-ocr" : "/api/ocr";
+    return await executeOcrWithRetry(formData, file.name, false, apiEndpoint);
+  }
+
+  /**
+   * Convert command options to document type for OCR API
+   */
+  const documentTypeFromOptions = (opts: any): string => {
+    // Map options to document type
+    if (opts.documentType) {
+      return opts.documentType;
+    }
+
+    // Default to general
+    return 'general';
+  };
 
   // Update the UI to improve UX
   return (

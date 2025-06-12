@@ -375,6 +375,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-// Export the analytics store for use by other APIs
-export { analyticsStore };
