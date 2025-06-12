@@ -1,21 +1,20 @@
+#!/usr/bin/env python3
 """
-NanoVLM OCR Specialized Service
-Optimized for high-accuracy text recognition
+NanoVLM OCR Service
+FastAPI-based service for OCR processing
 """
+
 import os
 import logging
-import sys
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, Optional
 import tempfile
-import traceback
 from pathlib import Path
-import torch
-from PIL import Image
-import cv2
-import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 import uvicorn
+import torch
+from PIL import Image
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,12 +29,16 @@ app = FastAPI(
 
 # Global model instances
 model = None
-processor = None
+image_processor = None
 tokenizer = None
+
+class OCRProcessingError(Exception):
+    """Custom exception for OCR processing errors"""
+    pass
 
 def initialize_nanovlm_model():
     """Initialize NanoVLM model and processors"""
-    global model, processor, tokenizer
+    global model, image_processor, tokenizer
     try:
         logger.info("Initializing NanoVLM model...")
         
@@ -48,7 +51,7 @@ def initialize_nanovlm_model():
         
         # Load model components
         model = VisionEncoderDecoderModel.from_pretrained(model_path)
-        processor = ViTImageProcessor.from_pretrained(model_path)
+        image_processor = ViTImageProcessor.from_pretrained(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         # Set up device and optimize for CPU if GPU not available
@@ -80,38 +83,78 @@ async def startup_event():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    if model is None or processor is None or tokenizer is None:
+    if model is None or image_processor is None or tokenizer is None:
         raise HTTPException(status_code=503, detail="Model not initialized")
     return {"status": "healthy", "model": "nanovlm-222m"}
 
-@app.post("/ocr/process-page")
-async def process_page(
+@app.post("/process")
+async def process_document(
     file: UploadFile = File(...),
-    enhance_resolution: bool = Form(False)
+    enhance_resolution: bool = Form(False),
+    language: str = Form("en")
 ) -> Dict[str, Any]:
-    """Process a single page with NanoVLM OCR"""
+    """Process a document with NanoVLM OCR"""
     try:
-        # Create temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+        # Save uploaded file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
             content = await file.read()
             tmp.write(content)
             tmp.flush()
             
-            # Process with NanoVLM
-            from python.processors.nanovlm_processor import process_image
-            result = process_image(os.getenv("MODEL_PATH", "models/nanovlm-222m"), tmp.name)
+            # Process the file
+            result = process_with_nanovlm(tmp.name)
             
-            # Clean up
+            # Clean up temp file
             os.unlink(tmp.name)
             
-            if "error" in result:
-                raise HTTPException(status_code=500, detail=result["error"])
-            
             return result
+            
     except Exception as e:
-        logger.error(f"Error processing page: {e}")
+        logger.error(f"Processing failed: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Processing failed: {str(e)}"
+        )
+
+def process_with_nanovlm(image_path: str) -> Dict[str, Any]:
+    """Process image with NanoVLM model"""
+    try:
+        # Load and preprocess image
+        image = Image.open(image_path).convert("RGB")
+        pixel_values = image_processor(image, return_tensors="pt").pixel_values.to(model.device)
+        
+        # Generate text
+        generated_ids = model.generate(
+            pixel_values,
+            max_length=100,
+            num_beams=4,
+            temperature=1.0,
+            top_k=50,
+            top_p=0.95,
+            repetition_penalty=1.0,
+            length_penalty=1.0,
+            early_stopping=True
+        )
+        
+        # Decode text
+        generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+        
+        # Calculate confidence (simplified for example)
+        confidence = min(100.0, max(0.0, len(generated_text.split()) * 5))
+        
+        return {
+            "text": generated_text,
+            "confidence": confidence
+        }
+        
+    except Exception as e:
+        logger.error(f"NanoVLM processing failed: {e}")
+        return {
+            "text": "",
+            "confidence": 0.0,
+            "error": str(e)
+        }
 
 @app.get("/ocr/capabilities")
 async def get_capabilities() -> Dict[str, Any]:

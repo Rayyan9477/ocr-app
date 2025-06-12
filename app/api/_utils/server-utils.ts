@@ -1,7 +1,7 @@
-// Server-side utilities - only use in API routes or server components
-// Do not import this file in client components or pages
+'use server';
+
+import { exec } from 'child_process';
 import { promisify } from 'util';
-import { exec, spawn } from 'child_process';
 
 /**
  * Promisified exec function for running shell commands
@@ -18,3 +18,19 @@ export const serverLogger = {
   warn: (message: string, ...args: any[]) => console.warn(`[SERVER WARN] ${message}`, ...args),
   debug: (message: string, ...args: any[]) => console.debug(`[SERVER DEBUG] ${message}`, ...args),
 };
+
+/**
+ * Run a shell command and return its output
+ */
+export async function runCommand(command: string) {
+  try {
+    const { stdout, stderr } = await execAsync(command);
+    return { success: true, stdout, stderr };
+  } catch (error) {
+    console.error('Command execution error:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+}

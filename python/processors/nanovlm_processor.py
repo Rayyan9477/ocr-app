@@ -1,40 +1,41 @@
 #!/usr/bin/env python3
+"""
+NanoVLM OCR Processor
+Handles OCR requests with error handling and enhanced preprocessing
+"""
 
-import argparse
-import json
-import sys
-import torch
-from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
-from PIL import Image
-import logging
 import os
+import sys
+import logging
+import torch
+from PIL import Image
+from typing import Dict, Any
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("nanovlm")
 
 def process_image(model_path: str, image_path: str) -> dict:
     try:
         logger.info(f"Loading model from {model_path}")
-        model = VisionEncoderDecoderModel.from_pretrained(model_path)
-        processor = ViTImageProcessor.from_pretrained(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-
+        model = AutoModelForVision2Seq.from_pretrained(model_path)
+        processor = AutoProcessor.from_pretrained(model_path)
+        
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")
         
+        # Apply CPU optimizations if needed
         if device == "cpu":
-            # Enable PyTorch optimizations for CPU
             torch.set_num_threads(4)  # Adjust based on available CPU cores
-            # Convert model to float32 for better CPU performance
             model = model.float()
         
         model.to(device)
-        model.eval()  # Set to evaluation mode
-        torch.set_grad_enabled(False)  # Disable gradient computation
+        model.eval()
+        torch.set_grad_enabled(False)
         
         logger.info(f"Processing image: {image_path}")
-        image = Image.open(image_path).convert('RGB')
+        image = Image.open(image_path)
         inputs = processor(images=image, return_tensors="pt").to(device)
         
         outputs = model.generate(
@@ -45,34 +46,26 @@ def process_image(model_path: str, image_path: str) -> dict:
             early_stopping=True
         )
         
-        text = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+        text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
         
         # Calculate confidence score based on output probabilities
         with torch.no_grad():
             logits = model(**inputs).logits
             probs = torch.softmax(logits, dim=-1)
-            confidence = float(torch.mean(torch.max(probs, dim=-1).values))
-        
+            confidence = float(probs.max().cpu().numpy())
+            
         return {
             "text": text,
-            "confidence": confidence,
-            "metadata": {
-                "model": "nanovlm-222m",
-                "device": device,
-                "image_size": image.size
-            }
+            "confidence": confidence * 100,  # Convert to percentage
+            "device": device
         }
+        
     except Exception as e:
         logger.error(f"Error processing image: {str(e)}")
         return {
             "error": str(e),
             "text": "",
-            "confidence": 0.0,
-            "metadata": {
-                "model": "nanovlm-222m",
-                "device": device if 'device' in locals() else "unknown",
-                "error": True
-            }
+            "confidence": 0.0
         }
 
 def main():

@@ -18,7 +18,7 @@ export function createJsonResponse(data: any, status: number = 200) {
 }
 
 /**
- * Simple logger utility
+ * Simple logger utility for client-side logging
  */
 export const logger = {
   info: (message: string, ...args: any[]) => console.log(`[INFO] ${message}`, ...args),

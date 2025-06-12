@@ -3,14 +3,14 @@
  * Provides a unified interface for multiple OCR engines with proper ES module compatibility
  */
 
-import { PreprocessingService } from './preprocessing-service'
-import { NanoVLMService } from './nano-vlm-service'
-import { execAsync } from './server-utils'
-import logger from './logger'
-import * as path from 'path'
-import * as fs from 'fs/promises'
+import { serverLogger, execAsync } from '@/app/api/_utils/server-utils';
+import path from 'path';
+import fs from 'fs';
+import { preprocessingService } from './preprocessing-service';
 
-// Helper function to truncate text for API responses
+/**
+ * Helper function to truncate text for API responses
+ */
 function truncateTextForResponse(text: string, maxLength: number = 1000): string {
   if (!text || text.length <= maxLength) {
     return text
@@ -18,7 +18,9 @@ function truncateTextForResponse(text: string, maxLength: number = 1000): string
   return text.substring(0, maxLength) + '... [truncated - full text available in output file]'
 }
 
-// Helper function to generate proper output filename based on input
+/**
+ * Helper function to generate proper output filename based on input
+ */
 function generateOutputFilename(inputPath: string, engineName: string, suffix: string = 'ocr'): string {
   const inputBasename = path.basename(inputPath)
   const nameWithoutExt = path.parse(inputBasename).name
@@ -38,29 +40,27 @@ export interface OCREngine {
   available: boolean
   specialization: string[]
   confidence: boolean
-  preprocessor: (inputPath: string, documentType?: string) => Promise<string>
+  preprocessor?: (inputPath: string, documentType?: string) => Promise<string>
 }
 
 export interface ProcessingResult {
   engine: string
   success: boolean
-  outputPath: string
+  outputPath?: string
   confidence: number
   text: string
-  processingTime: number
   error?: string
+  processingTime?: number
 }
 
 export class MultiEngineOCR {
   private engines: Map<string, OCREngine> = new Map()
-  private preprocessingService: PreprocessingService
-  private initialized = false
-  private initializationPromise: Promise<void> | null = null
-  
+  private preprocessingService: typeof preprocessingService
+
   constructor() {
-    this.preprocessingService = new PreprocessingService()
+    this.preprocessingService = preprocessingService
   }
-  
+
   /**
    * Ensure engines are initialized before use
    */
@@ -80,7 +80,7 @@ export class MultiEngineOCR {
   }
   
   private async initializeEngines(): Promise<void> {
-    logger.info('Initializing OCR engines...')
+    serverLogger.info('Initializing OCR engines...')
     
     // Initialize engines in order of preference
     await this.initializeOCRmyPDF()
@@ -90,12 +90,12 @@ export class MultiEngineOCR {
     // Log final available engines
     const availableEngines = Array.from(this.engines.values()).filter(e => e.available)
     const availableEngineNames = availableEngines.map(e => e.name)
-    logger.info(`Total available engines: ${availableEngineNames.length} - ${availableEngineNames.join(', ')}`)
+    serverLogger.info(`Total available engines: ${availableEngineNames.length} - ${availableEngineNames.join(', ')}`)
   }
   
   private async initializeOCRmyPDF(): Promise<void> {
     const available = await this.checkOCRmyPDFAvailability()
-    logger.info(`OCRmyPDF availability: ${available}`)
+    serverLogger.info(`OCRmyPDF availability: ${available}`)
     
     this.engines.set('ocrmypdf', {
       name: 'ocrmypdf',
@@ -104,7 +104,7 @@ export class MultiEngineOCR {
       specialization: ['pdf', 'structured_documents'],
       confidence: false,
       preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`)
+        serverLogger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`)
         return this.preprocessingService.pdfOptimize(inputPath)
       }
     })
@@ -112,7 +112,7 @@ export class MultiEngineOCR {
   
   private async initializeTesseract(): Promise<void> {
     const available = await this.checkTesseractAvailability()
-    logger.info(`Tesseract availability: ${available}`)
+    serverLogger.info(`Tesseract availability: ${available}`)
     
     this.engines.set('tesseract', {
       name: 'tesseract',
@@ -121,7 +121,7 @@ export class MultiEngineOCR {
       specialization: ['general', 'text'],
       confidence: true,
       preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for Tesseract, document type: ${documentType}`)
+        serverLogger.info(`Preprocessing for Tesseract, document type: ${documentType}`)
         return this.preprocessingService.tesseractOptimize(inputPath)
       }
     })
@@ -134,11 +134,11 @@ export class MultiEngineOCR {
     try {
       available = await nanoVLMService.isAvailable()
     } catch (error) {
-      logger.error(`Error checking nanoVLM availability: ${error}`)
+      serverLogger.error(`Error checking nanoVLM availability: ${error}`)
       available = false
     }
     
-    logger.info(`NanoVLM availability: ${available}`)
+    serverLogger.info(`NanoVLM availability: ${available}`)
     
     this.engines.set('nanovlm', {
       name: 'nanovlm',
@@ -147,7 +147,7 @@ export class MultiEngineOCR {
       specialization: ['handwriting', 'tables', 'poor_quality'],
       confidence: true,
       preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for NanoVLM, document type: ${documentType}`)
+        serverLogger.info(`Preprocessing for NanoVLM, document type: ${documentType}`)
         switch(documentType) {
           case 'handwriting':
             return this.preprocessingService.nanoVLMHandwritingOptimize(inputPath)
@@ -168,7 +168,7 @@ export class MultiEngineOCR {
       await execAsync('tesseract --version')
       return true
     } catch (error) {
-      logger.warn(`Tesseract not available: ${error}`)
+      serverLogger.warn(`Tesseract not available: ${error}`)
       return false
     }
   }
@@ -181,7 +181,7 @@ export class MultiEngineOCR {
       await execAsync('ocrmypdf --version')
       return true
     } catch (error) {
-      logger.warn(`OCRmyPDF not available: ${error}`)
+      serverLogger.warn(`OCRmyPDF not available: ${error}`)
       return false
     }
   }
@@ -233,7 +233,7 @@ export class MultiEngineOCR {
       return result
       
     } catch (error) {
-      logger.error(`Error processing with ${engineName}: ${error}`)
+      serverLogger.error(`Error processing with ${engineName}: ${error}`)
       return {
         engine: engineName,
         success: false,
@@ -300,7 +300,7 @@ export class MultiEngineOCR {
     try {
       if (engine.name === 'tesseract') {
         const txtFile = outputPath.replace('.pdf', '.txt')
-        extractedText = await fs.readFile(txtFile, 'utf-8')
+        extractedText = await fs.promises.readFile(txtFile, 'utf-8')
         
         if (engine.confidence) {
           confidence = await this.extractTesseractConfidence(inputPath)
@@ -311,7 +311,7 @@ export class MultiEngineOCR {
         extractedText = stdout.trim()
       }
     } catch (textError) {
-      logger.warn(`Failed to extract text from ${engine.name} output: ${textError}`)
+      serverLogger.warn(`Failed to extract text from ${engine.name} output: ${textError}`)
       extractedText = '[Content exists but text extraction failed]'
     }
     
@@ -347,7 +347,7 @@ export class MultiEngineOCR {
       
       return wordCount > 0 ? Math.round(totalConfidence / wordCount) : 0
     } catch (error) {
-      logger.warn(`Failed to extract Tesseract confidence: ${error}`)
+      serverLogger.warn(`Failed to extract Tesseract confidence: ${error}`)
       return 0
     }
   }
@@ -369,7 +369,7 @@ export class MultiEngineOCR {
         const result = await this.processWithEngine(inputPath, engineName, documentType)
         results.push(result)
       } catch (error) {
-        logger.error(`Failed to process with ${engineName}: ${error}`)
+        serverLogger.error(`Failed to process with ${engineName}: ${error}`)
         results.push({
           engine: engineName,
           success: false,
