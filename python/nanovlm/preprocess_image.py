@@ -33,7 +33,8 @@ def deskew_image(image):
     
     if lines is not None:
         angles = []
-        for rho, theta in lines[:20]:  # Use first 20 lines
+        for line in lines[:20]:  # Use first 20 lines
+            rho, theta = line[0]  # Unpack from the array
             angle = theta * 180 / np.pi
             if angle < 45:
                 angles.append(angle)

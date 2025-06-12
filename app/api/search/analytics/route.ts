@@ -263,7 +263,7 @@ class AnalyticsStore {
         this.hourlyDistribution = new Map(data.hourlyDistribution || []);
       }
     } catch (error) {
-      logger.error('Error loading analytics from file:', error);
+      logger.error(`Error loading analytics from file: ${error}`);
     }
   }
 
@@ -284,7 +284,7 @@ class AnalyticsStore {
       
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
     } catch (error) {
-      logger.error('Error saving analytics to file:', error);
+      logger.error(`Error saving analytics to file: ${error}`);
     }
   }
 }
@@ -343,7 +343,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Analytics API error:', error);
+    logger.error(`Analytics API error: ${error}`);
     return NextResponse.json(
       { error: 'Analytics fetch failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -353,12 +353,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json() as { action?: string; query?: string; resultsCount?: number; searchTime?: number; cached?: boolean; avgConfidence?: number; hasHandwriting?: boolean; documentCount?: number; };
     const { action, ...data } = body;
 
     if (action === 'log-search') {
       analyticsStore.logSearch({
         timestamp: new Date().toISOString(),
+        query: data.query || '',
+        resultsCount: data.resultsCount || 0,
+        searchTime: data.searchTime || 0,
+        cached: data.cached || false,
+        avgConfidence: data.avgConfidence || 0,
+        hasHandwriting: data.hasHandwriting || false,
+        documentCount: data.documentCount || 0,
         ...data
       });
 
@@ -368,7 +375,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 
   } catch (error) {
-    logger.error('Analytics POST API error:', error);
+    logger.error(`Analytics POST API error: ${error}`);
     return NextResponse.json(
       { error: 'Analytics update failed' },
       { status: 500 }

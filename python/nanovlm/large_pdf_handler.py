@@ -192,9 +192,68 @@ class LargePDFHandler:
         if not processor:
             raise ValueError("No OCR processor provided for chunk processing")
         
-        # Process the chunk
-        result = processor.process_document(pdf_path, **kwargs)
-        return result
+        # Remove processor-related arguments from kwargs to avoid passing them to process_document
+        # These are used by the LargePDFHandler but not expected by NanoVLMProcessor.process_document
+        process_kwargs = {k: v for k, v in kwargs.items() 
+                         if k not in ['processor', 'fallback_processor']}
+        
+        # Convert PDF chunk to images first (NanoVLMProcessor expects image files)
+        images_dir = os.path.join(self.temp_dir, f"images_{os.path.basename(pdf_path)}")
+        os.makedirs(images_dir, exist_ok=True)
+        
+        try:
+            # Convert PDF to images using pdftoppm
+            subprocess.run(
+                ['pdftoppm', '-png', '-r', '300', pdf_path, os.path.join(images_dir, 'page')],
+                check=True,
+                capture_output=True
+            )
+            
+            # Get list of generated images
+            image_files = [f for f in os.listdir(images_dir) if f.endswith('.png')]
+            image_files.sort()  # Ensure proper page order
+            
+            if not image_files:
+                raise ValueError(f"No images generated from PDF chunk: {pdf_path}")
+            
+            # Process each image and combine results
+            chunk_results = []
+            for image_file in image_files:
+                image_path = os.path.join(images_dir, image_file)
+                
+                # Process this image with the processor
+                image_result = processor.process_document(image_path, **process_kwargs)
+                chunk_results.append(image_result)
+            
+            # Combine results from all images in this chunk
+            if len(chunk_results) == 1:
+                # Single image, return as-is
+                return chunk_results[0]
+            else:
+                # Multiple images, combine them
+                combined_result = {
+                    'success': all(r.get('success', False) for r in chunk_results),
+                    'text': '',
+                    'confidence': {'averageConfidence': 0, 'pageCount': len(chunk_results)},
+                    'processing_time': sum(r.get('processing_time', 0) for r in chunk_results),
+                    'engine': chunk_results[0].get('engine', 'unknown') if chunk_results else 'unknown'
+                }
+                
+                # Combine text and calculate average confidence
+                successful_results = [r for r in chunk_results if r.get('success', False)]
+                if successful_results:
+                    combined_result['text'] = '\n\n'.join(r.get('text', '') for r in successful_results)
+                    avg_conf = sum(r.get('confidence', 0) for r in successful_results) / len(successful_results)
+                    combined_result['confidence']['averageConfidence'] = avg_conf
+                
+                return combined_result
+                
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error converting PDF chunk to images: {e}")
+            raise ValueError(f"Failed to convert PDF chunk to images: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing PDF chunk: {e}")
+            raise
     
     def _combine_chunk_results(self, chunk_results: List[Dict[str, Any]], total_pages: int) -> Dict[str, Any]:
         """Combine results from all chunks into a single result"""

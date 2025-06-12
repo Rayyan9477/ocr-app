@@ -157,9 +157,34 @@ export async function fixPdfDiacritics(pdfPath: string): Promise<string> {
       
       await fs.promises.writeFile(htmlPath, htmlContent, 'utf8');
       
-      // Convert the HTML back to PDF
-      await execAsync(`wkhtmltopdf "${htmlPath}" "${improvedPdfPath}"`);
-      
+      // Try to convert the HTML back to PDF with fallbacks
+      try {
+        // Check if wkhtmltopdf is installed before trying to use it
+        try {
+          await execAsync('command -v wkhtmltopdf');
+          // If command exists, use wkhtmltopdf
+          await execAsync(`wkhtmltopdf "${htmlPath}" "${improvedPdfPath}"`);
+        } catch (wkhtmlError) {
+          // wkhtmltopdf not found, proceed directly to fallbacks
+          throw new Error('wkhtmltopdf not available');
+        }
+      } catch (error) {
+        console.warn('PDF creation failed in diacritic-handler, trying alternatives:', error);
+        
+        // Fallback: try create-minimal-pdf.sh
+        try {
+          const fallbackScript = path.join(process.cwd(), 'lib', 'create-minimal-pdf.sh');
+          if (fs.existsSync(fallbackScript)) {
+            await execAsync(`bash "${fallbackScript}" "${improvedPdfPath}" "Corrected Medical Document" "${htmlPath}"`);
+          } else {
+            // Last resort: Just use the original PDF
+            await fs.promises.copyFile(pdfPath, improvedPdfPath);
+          }
+        } catch (fallbackError) {
+          console.error('All PDF creation methods failed in diacritic-handler:', fallbackError);
+          await fs.promises.copyFile(pdfPath, improvedPdfPath);
+        }
+      }
       // Clean up temporary files
       await fs.promises.unlink(textPath);
       await fs.promises.unlink(htmlPath);

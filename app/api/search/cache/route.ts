@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Cache management GET API error:', error);
+    logger.error(`Cache management GET API error: ${error}`);
     return NextResponse.json(
       { error: 'Cache management failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -126,9 +126,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    let body: any = {};
+    let body: { action?: string; [key: string]: any } = { action: 'clear' };
     try {
-      body = await request.json();
+      body = await request.json() as { action?: string; [key: string]: any };
     } catch (error) {
       // If no body or invalid JSON, default to clear action
       body = { action: 'clear' };
@@ -159,8 +159,8 @@ export async function POST(request: NextRequest) {
       // Use default popular queries if none provided
       if (!queriesToWarm || queriesToWarm.length === 0) {
         const response = await fetch(`${request.nextUrl.origin}/api/search/cache?action=popular-queries`);
-        const popularData = await response.json();
-        queriesToWarm = popularData.suggestions;
+        const popularData = await response.json() as { suggestions?: Array<{ query: string; options?: SearchOptions }> };
+        queriesToWarm = popularData.suggestions || [];
       }
 
       const warmupResults = [];
@@ -191,11 +191,11 @@ export async function POST(request: NextRequest) {
           });
 
           if (searchResponse.ok) {
-            const searchData = await searchResponse.json();
+            const searchData = await searchResponse.json() as { totalResults?: number };
             warmupResults.push({
               query: query,
               success: true,
-              resultsCount: searchData.totalResults
+              resultsCount: searchData.totalResults || 0
             });
           } else {
             warmupResults.push({
@@ -276,7 +276,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 
   } catch (error) {
-    logger.error('Cache management POST API error:', error);
+    logger.error(`Cache management POST API error: ${error}`);
     return NextResponse.json(
       { error: 'Cache operation failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -309,7 +309,7 @@ export async function DELETE(request: NextRequest) {
     }, { status: 400 });
 
   } catch (error) {
-    logger.error('Cache management DELETE API error:', error);
+    logger.error(`Cache management DELETE API error: ${error}`);
     return NextResponse.json(
       { error: 'Cache invalidation failed' },
       { status: 500 }

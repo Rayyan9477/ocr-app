@@ -15,6 +15,7 @@ import uvicorn
 import torch
 from PIL import Image
 import traceback
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

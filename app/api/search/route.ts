@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Search API error:', error);
+    logger.error(`Search API error: ${error}`);
     return NextResponse.json(
       { error: 'Internal search error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json() as { query?: string; options?: SearchOptions; documentIds?: string[] };
     const { query, options = {}, documentIds = [] } = body;
 
     if (!query) {
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Search POST API error:', error);
+    logger.error(`Search POST API error: ${error}`);
     return NextResponse.json(
       { error: 'Internal search error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -226,7 +226,7 @@ async function loadDocumentsData(documentFilter?: string | string[] | null): Pro
           documents.push(searchDoc);
         }
       } catch (error) {
-        logger.error(`Error loading document ${baseName}:`, error);
+        logger.error(`Error loading document ${baseName}: ${error}`);
       }
     }
 
@@ -234,7 +234,7 @@ async function loadDocumentsData(documentFilter?: string | string[] | null): Pro
     return documents;
 
   } catch (error) {
-    logger.error('Error loading documents data:', error);
+    logger.error(`Error loading documents data: ${error}`);
     return documents;
   }
 }
@@ -333,7 +333,7 @@ function convertToSearchFormat(fileName: string, confidenceData: any): DocumentS
     };
 
   } catch (error) {
-    logger.error(`Error converting document ${fileName} to search format:`, error);
+    logger.error(`Error converting document ${fileName} to search format: ${error}`);
     return null;
   }
 }

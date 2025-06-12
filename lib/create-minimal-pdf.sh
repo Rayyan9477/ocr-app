@@ -59,7 +59,8 @@ echo "OCR Error: ${ERROR_MESSAGE:-"Unknown error"}" > "$TEMP_TEXT"
 echo "For file: $(basename "$INPUT_PATH" 2>/dev/null || echo "Unknown")" >> "$TEMP_TEXT"
 echo "Created at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$TEMP_TEXT"
 
-# Try to convert HTML to PDF using wkhtmltopdf
+# Try to convert HTML to PDF using multiple methods
+# 1. First check if wkhtmltopdf is available without actually running it
 if command -v wkhtmltopdf >/dev/null 2>&1; then
   echo "Creating PDF using wkhtmltopdf..."
   if wkhtmltopdf "$TEMP_HTML" "$OUTPUT_PATH" 2>/dev/null; then
@@ -67,21 +68,47 @@ if command -v wkhtmltopdf >/dev/null 2>&1; then
     rm -f "$TEMP_HTML"
     exit 0
   fi
-  echo "wkhtmltopdf failed, trying alternative methods..."
+  echo "wkhtmltopdf command failed, trying alternative methods..."
+else
+  echo "wkhtmltopdf not found on this system, using alternative methods..."
 fi
 
 # Try to convert using convert (ImageMagick)
 if command -v convert >/dev/null 2>&1; then
-  echo "Creating minimal PDF using ImageMagick..."
-  # Create a small image with text and convert to PDF
-  convert -size 612x792 xc:white -gravity center -pointsize 24 -annotate 0 "OCR Error: ${ERROR_MESSAGE}" "$OUTPUT_PATH" 2>/dev/null || \
-  # Even simpler fallback - just create a blank page
-  convert -size 612x792 xc:white "$OUTPUT_PATH" 2>/dev/null
+  echo "Creating PDF using ImageMagick..."
+  
+  # Method 1: Use the HTML file if possible by converting to image first
+  if [ -f "$TEMP_HTML" ]; then
+    # Try to use wkhtmltoimage if available to get better quality
+    if command -v wkhtmltoimage >/dev/null 2>&1; then
+      TEMP_IMG="${DIR_NAME}/temp_${TIMESTAMP}.png"
+      if wkhtmltoimage "$TEMP_HTML" "$TEMP_IMG" 2>/dev/null; then
+        convert "$TEMP_IMG" "$OUTPUT_PATH" 2>/dev/null && rm -f "$TEMP_IMG" && {
+          echo "Created PDF using wkhtmltoimage + ImageMagick: $OUTPUT_PATH"
+          rm -f "$TEMP_HTML"
+          exit 0
+        }
+      fi
+    fi
+  fi
+  
+  # Method 2: Create a text-based image and convert to PDF
+  convert -size 612x792 xc:white -gravity center -pointsize 24 \
+    -annotate 0 "OCR Result" \
+    -pointsize 14 -annotate +0+100 "$(cat "$TEMP_TEXT" | head -n 20)" \
+    "$OUTPUT_PATH" 2>/dev/null || \
+  # Method 3: Even simpler fallback - just create a blank page with minimal text
+  convert -size 612x792 xc:white -gravity center -pointsize 18 \
+    -annotate 0 "OCR Result Document" "$OUTPUT_PATH" 2>/dev/null
+
   if [ -f "$OUTPUT_PATH" ]; then
-    echo "Created minimal PDF using ImageMagick: $OUTPUT_PATH"
+    echo "Created PDF using ImageMagick: $OUTPUT_PATH"
     rm -f "$TEMP_HTML"
     exit 0
   fi
+  echo "ImageMagick conversion failed, trying next method..."
+else
+  echo "ImageMagick not found, trying next method..."
 fi
 
 # If original input file was provided, try to copy it as a fallback

@@ -1,14 +1,16 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { writeFile, mkdir, stat } from "fs/promises"
-import { join } from "path"
-import path from "path"
-import { exec } from "child_process"
-import { existsSync, statSync } from "fs"
-import appConfig from "@/lib/config"
-import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
-import { multiEngineOCR } from "@/lib/multi-engine-ocr"
-import logger from "@/lib/logger"
-import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper"
+import { type NextRequest, NextResponse } from "next/server";
+import { writeFile, mkdir, stat } from "fs/promises";
+import { join } from "path";
+import path from "path";
+import { exec } from "child_process";
+import { existsSync, statSync } from "fs";
+import appConfig from "@/lib/config";
+import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector";
+import { multiEngineOCR } from "@/lib/multi-engine-ocr";
+import logger from "@/lib/logger";
+import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper";
+
+export {}; // Ensure file is treated as a module
 
 // Configure route segment for large files (Next.js 14 way)
 export const dynamic = 'force-dynamic';
@@ -65,20 +67,20 @@ const execWithTimeout = async (cmd: string, timeout: number = 300000) => {
 // Ensure upload and processed directories exist
 const ensureDirectories = async () => {
   try {
-    const uploadDir = join(process.cwd(), "uploads")
-    const processedDir = join(process.cwd(), "processed")
+    const uploadDir = join(process.cwd(), "uploads");
+    const processedDir = join(process.cwd(), "processed");
 
     if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true, mode: 0o777 })
-      console.log(`Created upload directory: ${uploadDir}`)
+      await mkdir(uploadDir, { recursive: true, mode: 0o777 });
+      console.log(`Created upload directory: ${uploadDir}`);
     }
 
     if (!existsSync(processedDir)) {
-      await mkdir(processedDir, { recursive: true, mode: 0o777 })
-      console.log(`Created processed directory: ${processedDir}`)
+      await mkdir(processedDir, { recursive: true, mode: 0o777 });
+      console.log(`Created processed directory: ${processedDir}`);
     }
   } catch (error) {
-    console.error("Error ensuring directories:", error)
+    console.error("Error ensuring directories:", error);
   }
 };
 
@@ -134,8 +136,6 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
   // Set max image pixels to support large documents and all pages
   command += `--max-image-mpixels 0 `;
 
-  // Note: OCRmyPDF processes all pages by default, no need for --pages parameter
-
   // Add input and output paths
   command += `"${inputPath}" "${outputPath}"`;
   
@@ -143,8 +143,106 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
   return command;
 };
 
+// Handle multi-engine OCR fallback
+async function handleMultiEngineFallback(inputPath: string, fileName: string, primaryError: any) {
+  logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback`);
+  
+  try {
+    const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
+    await mkdir(fallbackOutputDir, { recursive: true });
+    
+    const ensembleResults = await multiEngineOCR.processWithMultipleEngines(
+      inputPath,
+      ['tesseract', 'ocrmypdf'] // Use available engines
+    );
+    
+    // Check if any engine produced successful results
+    const successfulResults = ensembleResults.filter(result => result.success);
+    if (successfulResults.length > 0) {
+      // Find the best result based on confidence
+      const bestResult = successfulResults.reduce((best, current) => 
+        (current.confidence > best.confidence) ? current : best, successfulResults[0]);
+      
+      if (bestResult.outputPath) {
+        // Move the successful result to standard processed directory
+        const fallbackFinalPath = join(
+          process.cwd(),
+          "processed",
+          `${path.basename(fileName, '.pdf')}_${Date.now()}_fallback_ocr.pdf`
+        );
+      
+        // Copy the result file
+        await import('fs/promises').then(fs => 
+          fs.copyFile(bestResult.outputPath!, fallbackFinalPath)
+        );
+        
+        // Extract confidence scores for fallback result if enabled
+        let fallbackConfidenceData: DocumentConfidence | null = null;
+        if (appConfig.confidence.enableConfidenceTracking) {
+          try {
+            fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
+            if (fallbackConfidenceData) {
+              await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
+            }
+          } catch (confidenceError) {
+            logger.warn(`Failed to extract confidence scores for fallback result: ${confidenceError}`);
+          }
+        }
+        
+        return {
+          success: true,
+          inputFile: fileName,
+          outputFile: path.basename(fallbackFinalPath),
+          engine: bestResult.engine,
+          warning: "Primary OCR failed, succeeded with multi-engine fallback",
+          details: `Fallback used ${successfulResults.length}/${ensembleResults.length} engines successfully`,
+          engines: {
+            used: ensembleResults.map(r => r.engine),
+            successful: successfulResults.map(r => r.engine),
+            failed: ensembleResults.filter(r => !r.success).map(r => r.engine)
+          },
+          customizationApplied: false,
+          confidence: fallbackConfidenceData ? {
+            averageConfidence: fallbackConfidenceData.averageConfidence,
+            hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
+            warningPages: fallbackConfidenceData.warningPages,
+            errorPages: fallbackConfidenceData.errorPages,
+            pageCount: fallbackConfidenceData.pageConfidences.length
+          } : undefined
+        };
+      }
+    }
+    
+    // If we reach here, all engines failed
+    logger.error(`Multi-engine fallback also failed for ${fileName}`);
+    return {
+      success: false,
+      error: "Both primary OCR and multi-engine fallback failed",
+      inputFile: fileName,
+      details: {
+        primaryError: primaryError instanceof Error ? primaryError.message : String(primaryError),
+        fallbackEngines: ensembleResults.map(r => ({
+          engine: r.engine,
+          error: r.error
+        }))
+      }
+    };
+  } catch (fallbackError) {
+    logger.error(`Multi-engine fallback failed with exception: ${fallbackError}`);
+    return {
+      success: false,
+      error: "Both primary OCR and multi-engine fallback failed",
+      inputFile: fileName,
+      details: {
+        primaryError: primaryError instanceof Error ? primaryError.message : String(primaryError),
+        fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      }
+    };
+  }
+}
+
 // Main POST handler
-export const POST = async (request: NextRequest) => {
+export async function POST(request: NextRequest) {
   console.log("OCR API called with POST method");
   
   let inputPath = "";
@@ -329,93 +427,9 @@ export const POST = async (request: NextRequest) => {
       }
       
       // Try multi-engine OCR as fallback when primary OCR fails
-      logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback`);
-      
-      try {
-        const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
-        await mkdir(fallbackOutputDir, { recursive: true });
-        
-        const ensembleResult = await multiEngineOCR.processWithMultipleEngines(
-          inputPath,
-          ['tesseract', 'ocrmypdf'] // Use available engines
-        );
-        
-        if (ensembleResult.hasSuccessfulResults && ensembleResult.bestResult.outputPath) {
-          // Move the successful result to standard processed directory
-          const fallbackFinalPath = join(
-            process.cwd(),
-            "processed",
-            `${path.basename(fileName, '.pdf')}_${Date.now()}_fallback_ocr.pdf`
-          );
-          
-          // Copy the result file
-          await import('fs/promises').then(fs => 
-            fs.copyFile(ensembleResult.bestResult.outputPath!, fallbackFinalPath)
-          );
-          
-          // Extract confidence scores for fallback result if enabled
-          let fallbackConfidenceData: DocumentConfidence | null = null;
-          if (appConfig.confidence.enableConfidenceTracking) {
-            try {
-              fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
-              if (fallbackConfidenceData) {
-                await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
-              }
-            } catch (confidenceError) {
-              logger.warn("Failed to extract confidence scores for fallback result:", confidenceError);
-            }
-          }
-          
-          return createJsonResponse({
-            success: true,
-            inputFile: fileName,
-            outputFile: path.basename(fallbackFinalPath),
-            engine: ensembleResult.bestResult.engine,
-            warning: "Primary OCR failed, succeeded with multi-engine fallback",
-            details: `Fallback used ${ensembleResult.successCount}/${ensembleResult.allResults.length} engines successfully`,
-            engines: {
-              used: ensembleResult.allResults.map(r => r.engine),
-              successful: ensembleResult.allResults.filter(r => r.success).map(r => r.engine),
-              failed: ensembleResult.allResults.filter(r => !r.success).map(r => r.engine)
-            },
-            customizationApplied: ensembleResult.customizationApplied,
-            confidence: fallbackConfidenceData ? {
-              averageConfidence: fallbackConfidenceData.averageConfidence,
-              hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
-              warningPages: fallbackConfidenceData.warningPages,
-              errorPages: fallbackConfidenceData.errorPages,
-              pageCount: fallbackConfidenceData.pageConfidences.length
-            } : undefined
-          });
-        } else {
-          logger.error(`Multi-engine fallback also failed for ${fileName}`);
-          return createJsonResponse({
-            success: false,
-            error: "Both primary OCR and multi-engine fallback failed",
-            inputFile: fileName,
-            details: {
-              primaryError: errorMsg,
-              fallbackEngines: ensembleResult.allResults.map(r => ({
-                engine: r.engine,
-                error: r.error
-              }))
-            }
-          }, 500);
-        }
-      } catch (fallbackError) {
-        logger.error("Multi-engine fallback failed with exception:", fallbackError);
-        return createJsonResponse({
-          success: false,
-          error: "Both primary OCR and multi-engine fallback failed",
-          inputFile: fileName,
-          details: {
-            primaryError: errorMsg,
-            fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-          }
-        }, 500);
-      }
+      const fallbackResult = await handleMultiEngineFallback(inputPath, fileName, execError);
+      return createJsonResponse(fallbackResult, fallbackResult.success ? 200 : 500);
     }
-    
   } catch (error) {
     console.error("Unexpected error during OCR process:", error);
     
@@ -428,20 +442,20 @@ export const POST = async (request: NextRequest) => {
 }
 
 // Other HTTP methods
-export const GET = async () => {
+export async function GET() {
   return createJsonResponse({ success: false, error: "Method Not Allowed" }, 405);
 }
 
-export const PUT = async () => {
+export async function PUT() {
   return createJsonResponse({ success: false, error: "Method Not Allowed" }, 405);
 }
 
-export const DELETE = async () => {
+export async function DELETE() {
   return createJsonResponse({ success: false, error: "Method Not Allowed" }, 405);
 }
 
 // Support OPTIONS for CORS requests
-export const OPTIONS = async () => {
+export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
     headers: {

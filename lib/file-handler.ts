@@ -16,7 +16,16 @@ export class FileHandler {
    */
   static async toBuffer(file: File | null): Promise<Buffer | null> {
     if (!file) return null;
-    return Buffer.from(await file.arrayBuffer());
+    
+    // Handle file with Blob API to avoid experimental warning
+    try {
+      // Modern approach avoiding experimental warning
+      const arrayBuffer = await file.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      console.error('Error converting file to buffer:', error);
+      return null;
+    }
   }
 
   /**

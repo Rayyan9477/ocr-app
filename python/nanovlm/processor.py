@@ -350,28 +350,138 @@ class NanoVLMProcessor:
 
     def _process_handwritten(self, image: Image.Image) -> str:
         """Process handwritten text with specialized enhancement"""
-        # TODO: Implement actual handwritten text processing
-        return "Sample handwritten text recognition"
+        import cv2
+        import numpy as np
+        import pytesseract
+        
+        # Convert PIL Image to numpy array for OpenCV
+        img_np = np.array(image)
+        
+        # Convert to grayscale if needed
+        if len(img_np.shape) == 3:
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_np
+            
+        # Apply adaptive threshold to get a binary image
+        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        
+        # Use Tesseract with settings optimized for handwritten text
+        custom_config = r'--oem 1 --psm 6'
+        result = pytesseract.image_to_string(binary, config=custom_config)
+        
+        return result
 
     def _process_table(self, image: Image.Image) -> str:
         """Process tabular data with structure preservation"""
-        # TODO: Implement actual table processing
-        return "Sample table data recognition"
+        import cv2
+        import numpy as np
+        import pytesseract
+        
+        # Convert PIL Image to numpy array for OpenCV
+        img_np = np.array(image)
+        
+        # Convert to grayscale if needed
+        if len(img_np.shape) == 3:
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_np
+            
+        # Apply threshold to get a binary image
+        _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # Use Tesseract with table extraction config
+        custom_config = r'--oem 1 --psm 6 -c preserve_interword_spaces=1'
+        result = pytesseract.image_to_string(binary, config=custom_config)
+        
+        return result
 
     def _process_poor_quality(self, image: Image.Image) -> str:
         """Process poor quality documents with image enhancement"""
-        # TODO: Implement actual poor quality document processing
-        return "Sample poor quality document recognition"
+        import cv2
+        import numpy as np
+        import pytesseract
+        
+        # Convert PIL Image to numpy array for OpenCV
+        img_np = np.array(image)
+        
+        # Convert to grayscale if needed
+        if len(img_np.shape) == 3:
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_np
+            
+        # Apply preprocessing to enhance poor quality document
+        # Denoise
+        denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+        
+        # Contrast enhancement
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(denoised)
+        
+        # Adaptive threshold
+        binary = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        
+        # Use Tesseract with specific config
+        custom_config = r'--oem 1 --psm 6'
+        result = pytesseract.image_to_string(binary, config=custom_config)
+        
+        return result
 
     def _process_general(self, image: Image.Image) -> str:
         """Process general documents"""
-        # TODO: Implement actual general document processing
-        return "Sample general document recognition"
+        import cv2
+        import numpy as np
+        import pytesseract
+        
+        # Convert PIL Image to numpy array for OpenCV
+        img_np = np.array(image)
+        
+        # Convert to grayscale if needed
+        if len(img_np.shape) == 3:
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_np
+            
+        # Apply threshold to get a binary image
+        _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # Use Tesseract for OCR
+        result = pytesseract.image_to_string(binary)
+        
+        return result
 
     def _calculate_confidence(self, text: str) -> float:
         """Calculate confidence score for OCR result"""
-        # TODO: Implement actual confidence calculation
-        return 0.85
+        # Calculate confidence based on text characteristics
+        if not text or not text.strip():
+            return 0.0
+            
+        # Base confidence on text length and character variety
+        text_length = len(text.strip())
+        if text_length == 0:
+            return 0.0
+        elif text_length < 10:
+            base_confidence = 0.3
+        elif text_length < 50:
+            base_confidence = 0.5
+        elif text_length < 200:
+            base_confidence = 0.7
+        else:
+            base_confidence = 0.8
+            
+        # Adjust based on character variety (more variety = higher confidence)
+        unique_chars = len(set(text.lower()))
+        char_variety_factor = min(1.0, unique_chars / 20.0)
+        
+        # Adjust based on common words presence
+        common_words = ['the', 'and', 'is', 'in', 'to', 'of', 'a', 'for', 'on', 'with']
+        word_matches = sum(1 for word in common_words if word in text.lower())
+        word_factor = min(1.0, word_matches / 5.0)
+        
+        # Calculate final confidence
+        confidence = base_confidence * (0.7 + 0.2 * char_variety_factor + 0.1 * word_factor)
+        return min(1.0, max(0.0, confidence))
 
     def _extract_layout(self, image: Image.Image) -> list:
         """Extract document layout information"""

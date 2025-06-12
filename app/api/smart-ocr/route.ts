@@ -9,6 +9,9 @@ import { createJsonResponse } from "@/lib/utils";
 import { FileHandler } from "@/lib/file-handler";
 import appConfig from "@/lib/config";
 
+// Import the HTML to PDF fallback converter
+const htmlToPdfFallback = require('@/lib/html-to-pdf-fallback');
+
 export async function POST(request: NextRequest) {
   let inputPath = "";
   let tempFiles: string[] = [];
@@ -222,8 +225,26 @@ async function createPdfFromText(
   
   await writeFile(htmlPath, htmlContent);
   
-  // Convert HTML to PDF using wkhtmltopdf
-  await execAsync(`wkhtmltopdf "${htmlPath}" "${outputPdfPath}"`);
+  try {
+    // Use our enhanced HTML to PDF fallback converter that handles multiple methods
+    const success = await htmlToPdfFallback.convertHtmlToPdf(
+      htmlPath, 
+      outputPdfPath, 
+      `OCR Result for ${fileMetadata?.name}`
+    );
+    
+    if (success) {
+      serverLogger.info(`Successfully created PDF at ${outputPdfPath}`);
+    } else {
+      // Last resort if all conversion methods fail
+      serverLogger.warn('All PDF conversion methods failed, creating basic text file as PDF');
+      await writeFile(outputPdfPath, text);
+    }
+  } catch (error) {
+    serverLogger.error('Error in PDF conversion:', error);
+    // Final fallback
+    await writeFile(outputPdfPath, text);
+  }
 }
 
 // Modular function to cleanup temporary files

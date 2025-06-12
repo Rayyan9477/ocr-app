@@ -146,7 +146,7 @@ export async function POST(
   }
   
   try {
-    const data = await request.json();
+    const data = await request.json() as { text?: string };
     
     if (!data.text) {
       return createJsonResponse({ success: false, error: 'No text content provided' }, 400);

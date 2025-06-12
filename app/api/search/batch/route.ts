@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
   const startTimeISO = new Date().toISOString();
 
   try {
-    const body: BatchSearchRequest = await request.json();
+    const body = await request.json() as BatchSearchRequest;
     const { 
       queries, 
       documentIds = [], 
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response);
 
   } catch (error) {
-    logger.error('Batch search API error:', error);
+    logger.error(`Batch search API error: ${error}`);
     return NextResponse.json(
       { 
         error: 'Batch search failed', 
@@ -259,7 +259,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Batch search GET API error:', error);
+    logger.error(`Batch search GET API error: ${error}`);
     return NextResponse.json(
       { error: 'Batch search info failed' },
       { status: 500 }

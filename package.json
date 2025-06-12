@@ -7,8 +7,10 @@
   },
   "scripts": {
     "dev": "next dev",
+    "dev:no-warnings": "NODE_OPTIONS='--no-warnings' next dev",
     "build": "next build",
     "start": "next start",
+    "start:no-warnings": "NODE_OPTIONS='--no-warnings' next start",
     "lint": "next lint",
     "test": "jest --config jest.config.js",
     "test:nanovlm": "node dist/test/test-nanovlm.js",

@@ -664,8 +664,10 @@ export default function Home() {
       const opts = { ...commandOptions };
       let data: any = null;
 
-      // Update loading progress based on current file index
+      // Calculate progress per file once
       const progressPerFile = 90 / files.length; // Save 5% for start and 5% for end
+
+      // Update loading progress based on current file index
       setLoadingProgress(5 + (progressPerFile * index));
       setLoadingMessage(`Processing file ${index + 1} of ${files.length}: ${file.name}`);
 
@@ -674,8 +676,8 @@ export default function Home() {
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
           throw new Error(`File too large: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum size is ${MAX_FILE_SIZE_MB}MB.`);
         }
-
-        // Check if this is a large PDF file that needs special handling
+      
+      // Check if this is a large PDF file that needs special handling
         if (isLargePdf(file) && opts.useSmartOCR) {
           appendOutput(`Detected large PDF: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB). Using optimized large PDF processing...`);
           
@@ -823,7 +825,6 @@ export default function Home() {
         setShowNotification(true);
 
         // Update loading progress for completed file
-        const progressPerFile = 90 / files.length;
         setLoadingProgress(5 + (progressPerFile * (index + 1)));
       } catch (error) {
         const errorMessage = (error as Error).message;

@@ -95,26 +95,28 @@ export async function POST(request: NextRequest) {
       const pythonScript = join(process.cwd(), 'python', 'smart_ocr.py');
       
       const args = [
-        `--input "${inputPath}"`,
-        `--output_dir "${processedDir}"`,
-        `--output_file "${outputFile}"`,
-        `--document_type "${documentType}"`,
+        '--input', inputPath,
+        '--output_dir', processedDir,
+        '--output_file', outputFile,
+        '--document_type', documentType,
         '--advanced',
         '--handle_large_pdf',
-        chunkedProcessing ? '--chunked_processing' : '',
         '--report_metrics'
       ];
       
-      if (preferredEngine) {
-        args.push(`--engine "${preferredEngine}"`);
+      if (chunkedProcessing) {
+        args.push('--chunked_processing');
       }
       
-      const cmdArgs = args.filter(Boolean).join(' ');
-      const cmd = `python3 "${pythonScript}" ${cmdArgs}`;
+      if (preferredEngine) {
+        args.push('--engine', preferredEngine);
+      }
       
-      serverLogger.info(`Executing: ${cmd}`);
+      const cmd = ['python3', pythonScript, ...args];
       
-      const { stdout, stderr } = await execAsync(cmd);
+      serverLogger.info(`Executing: ${cmd.join(' ')}`);
+      
+      const { stdout, stderr } = await execAsync(cmd.join(' '));
       
       // Process the output to extract JSON result
       let result: any = { success: false };

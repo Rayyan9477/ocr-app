@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Error in reprocess-page API:', error);
+    logger.error(`Error in reprocess-page API: ${error}`);
     return createJsonResponse({
       success: false,
       error: 'Failed to reprocess pages',
@@ -174,7 +174,7 @@ export async function GET(request: NextRequest) {
       }
     });
   } catch (error) {
-    logger.error('Error checking reprocess status:', error);
+    logger.error(`Error checking reprocess status: ${error}`);
     return createJsonResponse({
       success: false,
       error: 'Failed to check reprocessing status',
@@ -220,7 +220,7 @@ async function getPaddleOCRCapabilities() {
     }
     return null;
   } catch (error) {
-    logger.warn('Could not fetch PaddleOCR capabilities:', error);
+    logger.warn(`Could not fetch PaddleOCR capabilities: ${error}`);
     return null;
   }
 }
@@ -282,7 +282,7 @@ async function reprocessPages(
         logger.info(`Page ${pageNumber} reprocessed with PaddleOCR: avg confidence ${paddleResult.results.avg_confidence.toFixed(2)}%`);
         
       } catch (pageError) {
-        logger.error(`Failed to reprocess page ${pageNumber}:`, pageError);
+        logger.error(`Failed to reprocess page ${pageNumber}: ${pageError}`);
         // Continue with other pages even if one fails
       }
     }
@@ -426,7 +426,7 @@ async function updateConfidenceWithReprocessedPages(
     return existingData;
     
   } catch (error) {
-    logger.error('Failed to update confidence data after reprocessing:', error);
+    logger.error(`Failed to update confidence data after reprocessing: ${error}`);
     return null;
   }
 }
@@ -453,6 +453,6 @@ async function logReprocessingActivity(outputFilePath: string, logEntry: any) {
     logger.info(`Logged reprocessing activity to ${logFilePath}`);
     
   } catch (error) {
-    logger.warn('Failed to log reprocessing activity:', error);
+    logger.warn(`Failed to log reprocessing activity: ${error}`);
   }
 }

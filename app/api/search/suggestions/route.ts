@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Search suggestions API error:', error);
+    logger.error(`Search suggestions API error: ${error}`);
     return NextResponse.json(
       { error: 'Internal suggestions error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -117,7 +117,7 @@ async function loadVocabulary(includeHandwriting: boolean, minConfidence: number
           }
         }
       } catch (error) {
-        logger.error(`Error processing confidence file ${confidenceFile}:`, error);
+        logger.error(`Error processing confidence file ${confidenceFile}: ${error}`);
       }
     }
 
@@ -125,7 +125,7 @@ async function loadVocabulary(includeHandwriting: boolean, minConfidence: number
     return vocabulary;
 
   } catch (error) {
-    logger.error('Error loading vocabulary:', error);
+    logger.error(`Error loading vocabulary: ${error}`);
     return vocabulary;
   }
 }

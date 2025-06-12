@@ -18,7 +18,7 @@ interface ExportRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: ExportRequest = await request.json();
+    const body = await request.json() as ExportRequest;
     const { results, format, query, includeMetadata = true, filename } = body;
 
     if (!results || !Array.isArray(results)) {
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     return response;
 
   } catch (error) {
-    logger.error('Export API error:', error);
+    logger.error(`Export API error: ${error}`);
     return NextResponse.json(
       { error: 'Export failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -294,7 +294,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    logger.error('Export GET API error:', error);
+    logger.error(`Export GET API error: ${error}`);
     return NextResponse.json(
       { error: 'Export info failed' },
       { status: 500 }
