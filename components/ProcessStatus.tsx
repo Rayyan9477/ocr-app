@@ -1,5 +1,4 @@
 import React from 'react';
-import { Box, Typography, CircularProgress, Button } from '@mui/material';
 
 // Helper function to infer output filename
 const inferOutputFileName = (inputFileName: string): string => {
@@ -35,55 +34,60 @@ export function ProcessStatus({ processing, error, file }: ProcessStatusProps) {
       file = { ...file, path: inferredPath };
     }
     
+    // Ensure path is defined before using it
+    if (!file.path) {
+      console.error("Cannot download file: path is undefined");
+      return;
+    }
+    
     // Download the file from the server
     window.open(`/api/download?file=${encodeURIComponent(file.path)}`, "_blank");
   };
 
   return (
-    <Box>
+    <div className="process-status">
       {processing && (
-        <Box display="flex" alignItems="center" gap={2}>
-          <CircularProgress size={24} />
-          <Typography>Processing {file?.name}...</Typography>
-        </Box>
+        <div className="flex items-center gap-2 mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          <span className="text-blue-800 font-medium">
+            Processing {file?.name}...
+          </span>
+        </div>
       )}
       
       {error && (
-        <Box color="error.main">
-          <Typography variant="body1">{error}</Typography>
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-red-800 font-medium mb-2">Error occurred:</div>
+          <div className="text-red-700">{error}</div>
           {file && (
-            <Box mt={2}>
-              <Typography variant="body2">
+            <div className="mt-3">
+              <div className="text-sm text-red-600 mb-2">
                 A fallback file may be available for download
-              </Typography>
-              <Button 
-                variant="contained" 
-                color="primary"
+              </div>
+              <button 
                 onClick={() => file && handleDownload(file)}
-                sx={{ mt: 1 }}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors"
               >
                 Download Result
-              </Button>
-            </Box>
+              </button>
+            </div>
           )}
-        </Box>
+        </div>
       )}
       
       {!processing && !error && file && file.path && (
-        <Box>
-          <Typography variant="body1">
+        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="text-green-800 font-medium mb-3">
             Successfully processed {file.name}
-          </Typography>
-          <Button
-            variant="contained"
-            color="primary"
+          </div>
+          <button
             onClick={() => handleDownload(file)}
-            sx={{ mt: 2 }}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
           >
             Download Processed File
-          </Button>
-        </Box>
+          </button>
+        </div>
       )}
-    </Box>
+    </div>
   );
 }

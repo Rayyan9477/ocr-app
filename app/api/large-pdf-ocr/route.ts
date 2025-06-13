@@ -189,7 +189,14 @@ export async function POST(request: NextRequest) {
         result.confidence = normalizeConfidenceData(result.confidence);
       } else {
         // Provide default confidence structure if missing
-        result.confidence = { averageConfidence: 0 };
+        result.confidence = { 
+          averageConfidence: 0,
+          pageConfidences: [],
+          hasLowConfidencePages: false,
+          warningPages: [],
+          errorPages: [],
+          pageCount: 0
+        };
       }
       
       // Add metadata if missing

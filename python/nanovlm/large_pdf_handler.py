@@ -243,8 +243,20 @@ class LargePDFHandler:
                 successful_results = [r for r in chunk_results if r.get('success', False)]
                 if successful_results:
                     combined_result['text'] = '\n\n'.join(r.get('text', '') for r in successful_results)
-                    avg_conf = sum(r.get('confidence', 0) for r in successful_results) / len(successful_results)
-                    combined_result['confidence']['averageConfidence'] = avg_conf
+                    # Safely calculate average confidence
+                    confidence_values = []
+                    for r in successful_results:
+                        conf = r.get('confidence', 0)
+                        if isinstance(conf, (int, float)):
+                            confidence_values.append(float(conf))
+                        elif isinstance(conf, dict) and 'averageConfidence' in conf:
+                            confidence_values.append(float(conf['averageConfidence']))
+                        else:
+                            confidence_values.append(0.0)
+                    
+                    if confidence_values:
+                        avg_conf = sum(confidence_values) / len(confidence_values)
+                        combined_result['confidence']['averageConfidence'] = avg_conf
                 
                 return combined_result
                 
@@ -298,17 +310,37 @@ class LargePDFHandler:
                 
                 # Combine confidence data
                 if 'confidence' in result:
-                    # Normalize confidence entry so it's always a dict
-                    conf = result['confidence']
-                    conf_dict = normalize_confidence(conf)
-                    
-                    # Now safely extract values using the get_confidence_value helper
-                    chunk_confidence = get_confidence_value(conf_dict, 'averageConfidence', 0.0)
-                    page_conf_list = conf_dict.get('pageConfidences', [])
-                    total_confidence += chunk_confidence
-                    successful_chunks += 1
-                    # Add page confidences if available
-                    combined['confidence']['pageConfidences'].extend(page_conf_list)
+                    try:
+                        # Normalize confidence entry so it's always a dict
+                        conf = result['confidence']
+                        logger.debug(f"Processing confidence data: {conf} (type: {type(conf)})")
+                        
+                        conf_dict = normalize_confidence(conf)
+                        logger.debug(f"Normalized confidence data: {conf_dict}")
+                        
+                        # Now safely extract values from the normalized dict
+                        chunk_confidence = conf_dict.get('averageConfidence', 0.0)
+                        page_conf_list = conf_dict.get('pageConfidences', [])
+                        
+                        # Ensure we're adding numbers, not mixing types
+                        if isinstance(chunk_confidence, (int, float)):
+                            total_confidence += float(chunk_confidence)
+                            successful_chunks += 1
+                            logger.debug(f"Added chunk confidence: {chunk_confidence}, total: {total_confidence}")
+                        else:
+                            logger.warning(f"Skipping non-numeric chunk confidence: {chunk_confidence} (type: {type(chunk_confidence)})")
+                        
+                        # Add page confidences if available and they're numeric
+                        if isinstance(page_conf_list, list):
+                            numeric_confidences = [float(conf) for conf in page_conf_list if isinstance(conf, (int, float))]
+                            combined['confidence']['pageConfidences'].extend(numeric_confidences)
+                            logger.debug(f"Added {len(numeric_confidences)} page confidences")
+                        else:
+                            logger.warning(f"Page confidences not a list: {page_conf_list} (type: {type(page_conf_list)})")
+                    except Exception as conf_error:
+                        logger.error(f"Error processing confidence data for chunk {i}: {conf_error}")
+                        logger.error(f"Confidence data was: {result.get('confidence', 'None')}")
+                        # Continue processing without this chunk's confidence
         
         # Calculate average confidence
         if successful_chunks > 0:
@@ -353,19 +385,25 @@ def normalize_confidence(confidence_data) -> Dict[str, Any]:
     Returns:
         Dict with normalized confidence data
     """
+    logger.debug(f"Normalizing confidence data: {confidence_data} (type: {type(confidence_data)})")
+    
     # If confidence is a number, convert to standard format
     if isinstance(confidence_data, (int, float)):
-        return {
+        result = {
             'averageConfidence': float(confidence_data),
             'pageConfidences': []
         }
+        logger.debug(f"Normalized numeric confidence: {result}")
+        return result
     
     # If confidence is None, return default
     if confidence_data is None:
-        return {
+        result = {
             'averageConfidence': 0.0,
             'pageConfidences': []
         }
+        logger.debug(f"Normalized None confidence: {result}")
+        return result
     
     # If confidence is already a dict, ensure it has the required fields
     if isinstance(confidence_data, dict):
@@ -386,18 +424,29 @@ def normalize_confidence(confidence_data) -> Dict[str, Any]:
             else:
                 result['averageConfidence'] = 0.0
         
-        # Ensure pageConfidences exists
+        # Ensure pageConfidences exists and is a list
         if 'pageConfidences' not in result:
             result['pageConfidences'] = []
+        elif not isinstance(result['pageConfidences'], list):
+            logger.warning(f"pageConfidences is not a list: {result['pageConfidences']}, converting to empty list")
+            result['pageConfidences'] = []
         
+        # Ensure averageConfidence is numeric
+        if not isinstance(result['averageConfidence'], (int, float)):
+            logger.warning(f"averageConfidence is not numeric: {result['averageConfidence']}, defaulting to 0.0")
+            result['averageConfidence'] = 0.0
+        
+        logger.debug(f"Normalized dict confidence: {result}")
         return result
     
     # Fallback for unexpected types
-    logger.warning(f"Unexpected confidence data type: {type(confidence_data)}")
-    return {
+    logger.warning(f"Unexpected confidence data type: {type(confidence_data)}, value: {confidence_data}")
+    result = {
         'averageConfidence': 0.0,
         'pageConfidences': []
     }
+    logger.debug(f"Fallback confidence: {result}")
+    return result
 
 def get_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
     """

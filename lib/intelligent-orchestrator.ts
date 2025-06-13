@@ -15,6 +15,7 @@ import { fourEngineOCR } from './four-engine-ocr';
 import { preprocessingService } from './preprocessing-service';
 import { extractConfidenceScores } from './confidence-detector';
 import { normalizeConfidenceData, getAverageConfidence } from './types/ocr-types';
+import { normalizeConfidenceData as normalizeConfData } from './confidence-utils';
 import { DocumentAnalysis } from './document-analyzer';
 import { ResultMerger } from './result-merger';
 import { OCRResult } from './nano-vlm-service';

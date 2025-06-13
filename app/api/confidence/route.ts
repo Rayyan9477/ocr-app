@@ -3,6 +3,7 @@ import { readdir, readFile } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
 import { loadConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
+import { normalizeConfidenceData } from "@/lib/confidence-utils"
 
 // Helper function to create consistent JSON responses
 const createJsonResponse = (data: any, status: number = 200) => {
@@ -37,13 +38,16 @@ export const GET = async (request: NextRequest) => {
         const confidenceFiles = files.filter(f => f.endsWith('_confidence.json'));
         
         for (const file of confidenceFiles) {
-          const confidenceData = await loadConfidenceData(join(processedDir, file.replace('_confidence.json', '.pdf')));
-          if (confidenceData && confidenceData.documentId === documentId) {
-            return createJsonResponse({
-              success: true,
-              confidence: confidenceData
-            });
-          }
+          const confidenceData = await loadConfidenceData(join(processedDir, file.replace('_confidence.json', '.pdf')));        if (confidenceData && confidenceData.documentId === documentId) {
+          const normalizedConfidence = normalizeConfidenceData(confidenceData.averageConfidence);
+          return createJsonResponse({
+            success: true,
+            confidence: {
+              ...confidenceData,
+              normalizedConfidence
+            }
+          });
+        }
         }
         
         return createJsonResponse({
@@ -55,9 +59,13 @@ export const GET = async (request: NextRequest) => {
       if (targetFile && existsSync(targetFile)) {
         const confidenceData = await loadConfidenceData(targetFile);
         if (confidenceData) {
+          const normalizedConfidence = normalizeConfidenceData(confidenceData.averageConfidence);
           return createJsonResponse({
             success: true,
-            confidence: confidenceData
+            confidence: {
+              ...confidenceData,
+              normalizedConfidence
+            }
           });
         } else {
           return createJsonResponse({
@@ -107,17 +115,21 @@ export const GET = async (request: NextRequest) => {
             ? Math.round((documentsWithLowConfidence / totalDocuments) * 100 * 100) / 100 
             : 0
         },
-        documents: allConfidenceData.map(d => ({
-          documentId: d.documentId,
-          inputFile: d.inputFile.split('/').pop(),
-          outputFile: d.outputFile.split('/').pop(),
-          averageConfidence: Math.round(d.averageConfidence * 100) / 100,
-          hasLowConfidencePages: d.hasLowConfidencePages,
-          warningPages: d.warningPages,
-          errorPages: d.errorPages,
-          pageCount: d.pageConfidences.length,
-          processedAt: d.processedAt
-        }))
+        documents: allConfidenceData.map(d => {
+          const normalizedConfidence = normalizeConfidenceData(d.averageConfidence);
+          return {
+            documentId: d.documentId,
+            inputFile: d.inputFile.split('/').pop(),
+            outputFile: d.outputFile.split('/').pop(),
+            averageConfidence: Math.round(d.averageConfidence * 100) / 100,
+            hasLowConfidencePages: d.hasLowConfidencePages,
+            warningPages: d.warningPages,
+            errorPages: d.errorPages,
+            pageCount: d.pageConfidences.length,
+            processedAt: d.processedAt,
+            normalizedConfidence
+          };
+        })
       });
     }
   } catch (error) {

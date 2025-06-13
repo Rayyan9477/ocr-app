@@ -4,7 +4,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import logger from './logger';
 import config from './config';
-import { ConfidenceData, normalizeConfidenceData } from './types/ocr-types';
+import { ConfidenceData, DocumentConfidence as DCType, normalizeConfidenceData } from './types/ocr-types';
 
 const execAsync = promisify(exec);
 
@@ -206,7 +206,7 @@ export async function extractConfidenceScores(
     }
 
   } catch (error) {
-    logger.error(`Failed to extract confidence scores from ${inputPath}: ${error}`);
+    logger.error(`Failed to extract confidence scores from ${inputPath}:`, error);
     
     // Return fallback confidence data instead of null
     return await getFallbackConfidenceData(inputPath, outputPath);
@@ -280,9 +280,9 @@ async function parseHocrForConfidence(
       totalWords += page.words.length;
       
       // Determine page status
-      if (pageAvg < config.confidence.pageErrorThreshold) {
+      if (pageAvg < config.confidence.errorThreshold) {
         errorPages.push(pageNumber);
-      } else if (pageAvg < config.confidence.pageWarningThreshold) {
+      } else if (pageAvg < config.confidence.warningThreshold) {
         warningPages.push(pageNumber);
       }
       
@@ -291,7 +291,7 @@ async function parseHocrForConfidence(
         averageConfidence: Math.round(pageAvg * 100) / 100,
         wordCount: page.words.length,
         lowConfidenceWords: page.words
-          .filter(word => word.confidence < config.confidence.pageWarningThreshold)
+          .filter(word => word.confidence < config.confidence.warningThreshold)
           .map(word => ({
             word: word.text,
             confidence: Math.round(word.confidence * 100) / 100,
@@ -436,3 +436,4 @@ export async function loadConfidenceData(outputPath: string): Promise<DocumentCo
   }
 }
 
+export type { DocumentConfidence };

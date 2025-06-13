@@ -10,6 +10,24 @@ export interface TestResult {
   documentType: string;
 }
 
+export interface EngineStats {
+  averageAccuracy: number;
+  averageProcessingTime: number;
+  sampleCount: number;
+}
+
+export interface Recommendation {
+  documentType: string;
+  recommendedEngine: string;
+  reason: string;
+}
+
+export interface TestReport {
+  summary: Record<string, EngineStats>;
+  byDocumentType: Record<string, Record<string, EngineStats>>;
+  recommendations: Recommendation[];
+}
+
 export class ABTestingFramework {
   private engineResults: Map<string, TestResult[]> = new Map();
   private resultsPath: string;
@@ -33,17 +51,19 @@ export class ABTestingFramework {
     // Extract confidence consistently using our utility
     const confidenceScore = getAverageConfidence(result.confidence);
     
-    this.engineResults.get(engineName).push({
-      accuracy,
-      processingTime: result.processingTime,
-      confidenceScore,
-      documentType
-    });
+    const engineResults = this.engineResults.get(engineName);
+    if (engineResults) {
+      engineResults.push({
+        accuracy,
+        processingTime: result.processingTime,
+        confidenceScore,
+        documentType
+      });
+    }
   }
   
-  async generateReport() {
-    const report = {
-      timestamp: new Date().toISOString(),
+  async generateReport(): Promise<TestReport> {
+    const report: TestReport = {
       summary: {},
       byDocumentType: {},
       recommendations: []
@@ -70,9 +90,11 @@ export class ABTestingFramework {
         
         const typeResults = results.filter(r => r.documentType === docType);
         const typeAvgAccuracy = typeResults.reduce((sum, r) => sum + r.accuracy, 0) / typeResults.length;
+        const typeAvgProcessingTime = typeResults.reduce((sum, r) => sum + r.processingTime, 0) / typeResults.length;
         
         report.byDocumentType[docType][engine] = {
           averageAccuracy: typeAvgAccuracy,
+          averageProcessingTime: typeAvgProcessingTime,
           sampleCount: typeResults.length
         };
       }

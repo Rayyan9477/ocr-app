@@ -304,7 +304,7 @@ async function loadDocumentsData(documentFilter?: string[] | null): Promise<Docu
           documents.push(document);
         }
       } catch (error) {
-        logger.error(`Error reading confidence file ${file}:`, error);
+        logger.error(`Error reading confidence file ${file}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -312,7 +312,7 @@ async function loadDocumentsData(documentFilter?: string[] | null): Promise<Docu
     return documents;
 
   } catch (error) {
-    logger.error('Error loading documents data:', error);
+    logger.error(`Error loading documents data: ${error instanceof Error ? error.message : String(error)}`);
     return documents;
   }
 }
@@ -367,7 +367,7 @@ function convertToSearchData(confidenceData: any, filename: string): DocumentSea
     };
 
   } catch (error) {
-    logger.error(`Error converting confidence data for ${filename}:`, error);
+    logger.error(`Error converting confidence data for ${filename}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }

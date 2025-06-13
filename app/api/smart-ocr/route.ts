@@ -8,6 +8,7 @@ import { createSafeJsonResponse } from "@/lib/server-safe-response-handler";
 import { createJsonResponse } from "@/lib/utils";
 import { FileHandler } from "@/lib/file-handler";
 import appConfig from "@/lib/config";
+import { normalizeConfidenceData } from "@/lib/confidence-utils";
 
 // Import the HTML to PDF fallback converter
 const htmlToPdfFallback = require('@/lib/html-to-pdf-fallback');
@@ -157,9 +158,10 @@ async function processPdfFile(
     outputFile: outputFile,
     details: "Processed with Tesseract OCR",
     engine: "tesseract",
-    confidence: {
-      averageConfidence: 85.0, // Placeholder - should be calculated from actual results
-      pageCount: imageFiles.length
+    confidence: normalizeConfidenceData(85.0).averageConfidence, // Placeholder - should be calculated from actual results
+    confidenceData: {
+      pageCount: imageFiles.length,
+      normalizedConfidence: normalizeConfidenceData(85.0)
     }
   };
 }
@@ -185,9 +187,10 @@ async function processImageFile(
     outputFile: outputFile,
     details: "Processed with Tesseract OCR",
     engine: "tesseract",
-    confidence: {
-      averageConfidence: 85.0, // Placeholder - should be calculated from actual results
-      pageCount: 1
+    confidence: normalizeConfidenceData(85.0).averageConfidence, // Placeholder - should be calculated from actual results
+    confidenceData: {
+      pageCount: 1,
+      normalizedConfidence: normalizeConfidenceData(85.0)
     }
   };
 }

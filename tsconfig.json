@@ -40,6 +40,11 @@
   ],
   "exclude": [
     "node_modules",
-    "_backup"
+    "_backup",
+    "index.ts",
+    "dev-server.js",
+    "**/*-backup.*",
+    "**/*.backup",
+    "**/*-fixed.*"
   ]
 }

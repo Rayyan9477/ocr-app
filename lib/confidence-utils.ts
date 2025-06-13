@@ -1,7 +1,7 @@
 /**
  * Utilities for handling OCR confidence data
  */
-import { ConfidenceData, normalizeConfidenceData, getAverageConfidence } from './types/ocr-types';
+import { ConfidenceData, getAverageConfidence } from './types/ocr-types';
 
 /**
  * Normalizes confidence data to a consistent structure, handling both
@@ -13,8 +13,9 @@ import { ConfidenceData, normalizeConfidenceData, getAverageConfidence } from '.
 export function normalizeConfidenceData(confidence: number | ConfidenceData | any): ConfidenceData {
   // If confidence is a number, convert to standard format
   if (typeof confidence === 'number') {
+    const clampedConfidence = Math.max(0, Math.min(100, confidence));
     return {
-      averageConfidence: confidence
+      averageConfidence: clampedConfidence
     };
   }
   
@@ -27,38 +28,55 @@ export function normalizeConfidenceData(confidence: number | ConfidenceData | an
   
   // If confidence is already an object with averageConfidence, ensure it's properly structured
   if (typeof confidence === 'object') {
-    // Handle case where averageConfidence might be missing
-    if (typeof confidence.averageConfidence !== 'number') {
-      // Try to extract from other properties or use a default
-      const avgConfidence = 
-        typeof confidence.overall === 'number' ? confidence.overall :
-        typeof confidence.average === 'number' ? confidence.average : 
-        typeof confidence.confidence === 'number' ? confidence.confidence : 0;
-      
-      return {
-        ...confidence,
-        averageConfidence: avgConfidence
-      };
+    let avgConfidence = 0;
+    
+    // Handle case where averageConfidence might be missing or invalid
+    if (typeof confidence.averageConfidence === 'number' && !isNaN(confidence.averageConfidence)) {
+      avgConfidence = confidence.averageConfidence;
+    } else {
+      // Try to extract from other properties
+      if (typeof confidence.overall === 'number' && !isNaN(confidence.overall)) {
+        avgConfidence = confidence.overall;
+      } else if (typeof confidence.average === 'number' && !isNaN(confidence.average)) {
+        avgConfidence = confidence.average;
+      } else if (typeof confidence.confidence === 'number' && !isNaN(confidence.confidence)) {
+        avgConfidence = confidence.confidence;
+      } else if (Array.isArray(confidence.pageConfidences) && confidence.pageConfidences.length > 0) {
+        // Handle legacy pageConfidences averaging
+        const validConfidences = confidence.pageConfidences.filter((conf: any) => 
+          typeof conf === 'number' && !isNaN(conf));
+        if (validConfidences.length > 0) {
+          avgConfidence = validConfidences.reduce((sum: number, conf: number) => sum + conf, 0) / validConfidences.length;
+        }
+      }
     }
     
-    // Check if the object might have a nested structure
-    if (confidence.confidence && typeof confidence.confidence === 'object' && 
-        typeof confidence.confidence.averageConfidence === 'number') {
-      return {
-        ...confidence,
-        averageConfidence: confidence.confidence.averageConfidence,
-        // Preserve any existing data in the confidence object
-        ...(confidence.confidence.pageConfidence && { pageConfidence: confidence.confidence.pageConfidence }),
-        ...(confidence.confidence.wordConfidence && { wordConfidence: confidence.confidence.wordConfidence }),
-        ...(confidence.confidence.sectionConfidence && { sectionConfidence: confidence.confidence.sectionConfidence })
-      };
+    // Clamp the confidence value
+    const clampedConfidence = Math.max(0, Math.min(100, avgConfidence));
+    
+    const result: ConfidenceData = {
+      averageConfidence: clampedConfidence
+    };
+    
+    // Add optional properties if they exist and are valid
+    if (confidence.pageConfidence !== undefined) {
+      result.pageConfidence = confidence.pageConfidence;
+    }
+    if (Array.isArray(confidence.pageConfidences)) {
+      result.pageConfidences = confidence.pageConfidences;
+    }
+    if (confidence.wordConfidence !== undefined) {
+      result.wordConfidence = confidence.wordConfidence;
+    }
+    if (confidence.sectionConfidence !== undefined) {
+      result.sectionConfidence = confidence.sectionConfidence;
     }
     
-    // Return the already well-formed confidence object
-    return confidence;
+    return result;
   }
   
   // Fallback for unexpected formats
+  console.warn('Unexpected confidence format, using default:', confidence);
   return {
     averageConfidence: 0
   };
@@ -81,27 +99,29 @@ export function getConfidenceValue(
   
   if (confidence && typeof confidence === 'object') {
     // Handle nested confidence objects
-    if ('confidence' in confidence && typeof confidence.confidence === 'object' && 
-        'averageConfidence' in confidence.confidence) {
-      return typeof confidence.confidence.averageConfidence === 'number' 
-        ? confidence.confidence.averageConfidence 
+    if ('confidence' in confidence && 
+        typeof (confidence as any).confidence === 'object' && 
+        (confidence as any).confidence !== null &&
+        'averageConfidence' in (confidence as any).confidence) {
+      return typeof (confidence as any).confidence.averageConfidence === 'number' 
+        ? (confidence as any).confidence.averageConfidence 
         : defaultValue;
     }
     
     // Handle direct averageConfidence property
     if ('averageConfidence' in confidence) {
-      return typeof confidence.averageConfidence === 'number' 
-        ? confidence.averageConfidence 
+      return typeof (confidence as any).averageConfidence === 'number' 
+        ? (confidence as any).averageConfidence 
         : defaultValue;
     }
     
     // Try alternative properties
-    if ('overall' in confidence && typeof confidence.overall === 'number') {
-      return confidence.overall;
+    if ('overall' in confidence && typeof (confidence as any).overall === 'number') {
+      return (confidence as any).overall;
     }
     
-    if ('average' in confidence && typeof confidence.average === 'number') {
-      return confidence.average;
+    if ('average' in confidence && typeof (confidence as any).average === 'number') {
+      return (confidence as any).average;
     }
   }
   
@@ -190,6 +210,3 @@ export function getConfidenceThresholds(values: number[]): {
     high: highThreshold
   };
 }
-
-// Re-export the normalization functions for convenience
-export { normalizeConfidenceData, getAverageConfidence };

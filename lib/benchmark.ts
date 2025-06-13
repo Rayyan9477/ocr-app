@@ -69,9 +69,8 @@ export class Benchmark {
           }
           
           const result = await this.multiEngineOCR.processWithEngine(
-            engineName,
             path.join(process.cwd(), dataset.path),
-            outputDir,
+            engineName,
             dataset.documentType
           );
           

@@ -9,6 +9,7 @@ import { extractConfidenceScores, saveConfidenceData, type DocumentConfidence } 
 import { multiEngineOCR } from "@/lib/multi-engine-ocr";
 import logger from "@/lib/logger";
 import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper";
+import { normalizeConfidenceData } from "@/lib/confidence-utils";
 
 export {}; // Ensure file is treated as a module
 
@@ -202,12 +203,13 @@ async function handleMultiEngineFallback(inputPath: string, fileName: string, pr
             failed: ensembleResults.filter(r => !r.success).map(r => r.engine)
           },
           customizationApplied: false,
-          confidence: fallbackConfidenceData ? {
-            averageConfidence: fallbackConfidenceData.averageConfidence,
+          confidence: fallbackConfidenceData ? normalizeConfidenceData(fallbackConfidenceData.averageConfidence).averageConfidence : undefined,
+          confidenceData: fallbackConfidenceData ? {
             hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
             warningPages: fallbackConfidenceData.warningPages,
             errorPages: fallbackConfidenceData.errorPages,
-            pageCount: fallbackConfidenceData.pageConfidences.length
+            pageCount: fallbackConfidenceData.pageConfidences.length,
+            normalizedConfidence: normalizeConfidenceData(fallbackConfidenceData.averageConfidence)
           } : undefined
         };
       }
@@ -319,16 +321,20 @@ export async function POST(request: NextRequest) {
           outputFile: path.basename(outputPath),
           details: result.stderr || result.stdout,
         };
+        
         // Normalize confidence
         if (confidenceData) {
-          successData.confidence = confidenceData.averageConfidence;
+          const normalizedConfidence = normalizeConfidenceData(confidenceData.averageConfidence);
+          successData.confidence = normalizedConfidence.averageConfidence;
           successData.confidenceData = {
             hasLowConfidencePages: confidenceData.hasLowConfidencePages,
             warningPages: confidenceData.warningPages,
             errorPages: confidenceData.errorPages,
-            pageCount: confidenceData.pageConfidences.length
+            pageCount: confidenceData.pageConfidences.length,
+            normalizedConfidence
           };
         }
+        
         // Add processingTime if available
         if (result && result.stdout) {
           // Unable to extract processing time from stdout for standard OCR
@@ -361,12 +367,13 @@ export async function POST(request: NextRequest) {
           outputFile: path.basename(outputPath),
           warning: "OCR completed with warnings",
           details: execError instanceof Error ? execError.message : String(execError),
-          confidence: confidenceData ? {
-            averageConfidence: confidenceData.averageConfidence,
+          confidence: confidenceData ? normalizeConfidenceData(confidenceData.averageConfidence).averageConfidence : undefined,
+          confidenceData: confidenceData ? {
             hasLowConfidencePages: confidenceData.hasLowConfidencePages,
             warningPages: confidenceData.warningPages,
             errorPages: confidenceData.errorPages,
-            pageCount: confidenceData.pageConfidences.length
+            pageCount: confidenceData.pageConfidences.length,
+            normalizedConfidence: normalizeConfidenceData(confidenceData.averageConfidence)
           } : undefined
         });
       }
@@ -415,12 +422,13 @@ export async function POST(request: NextRequest) {
               outputFile: path.basename(retryOutputPath),
               details: "Document had existing text layer. Successfully processed with --force-ocr option.",
               warnings: retryResult.stderr || undefined,
-              confidence: retryConfidenceData ? {
-                averageConfidence: retryConfidenceData.averageConfidence,
+              confidence: retryConfidenceData ? normalizeConfidenceData(retryConfidenceData.averageConfidence).averageConfidence : undefined,
+              confidenceData: retryConfidenceData ? {
                 hasLowConfidencePages: retryConfidenceData.hasLowConfidencePages,
                 warningPages: retryConfidenceData.warningPages,
                 errorPages: retryConfidenceData.errorPages,
-                pageCount: retryConfidenceData.pageConfidences.length
+                pageCount: retryConfidenceData.pageConfidences.length,
+                normalizedConfidence: normalizeConfidenceData(retryConfidenceData.averageConfidence)
               } : undefined
             });
           }

@@ -7,6 +7,7 @@ import { serverLogger, execAsync } from '@/app/api/_utils/server-utils';
 import path from 'path';
 import fs from 'fs';
 import { preprocessingService } from './preprocessing-service';
+import { getAverageConfidence, normalizeConfidenceData } from './confidence-utils';
 
 /**
  * Helper function to truncate text for API responses
@@ -251,21 +252,42 @@ export class MultiEngineOCR {
     inputPath: string,
     documentType?: string
   ): Promise<ProcessingResult> {
-    const result = await service.processDocument({
-      imagePath: inputPath,
-      documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
-      confidenceThreshold: 0.5,
-      enhanceResolution: true,
-      preserveLayout: true
-    })
-    
-    return {
-      engine: 'nanovlm',
-      success: result.success,
-      outputPath: result.outputPath || '',
-      confidence: result.confidence || 0,
-      text: truncateTextForResponse(result.text || ''),
-      processingTime: 0 // Will be set by caller
+    try {
+      const result = await service.processDocument({
+        imagePath: inputPath,
+        documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
+        confidenceThreshold: 0.5,
+        enhanceResolution: true,
+        preserveLayout: true
+      })
+      
+      // Safely extract confidence value using normalization
+      let confidenceValue = 0;
+      if (typeof result.confidence === 'number') {
+        confidenceValue = normalizeConfidenceData(result.confidence).averageConfidence;
+      } else if (result.confidence && typeof result.confidence === 'object') {
+        confidenceValue = normalizeConfidenceData(result.confidence).averageConfidence;
+      }
+      
+      return {
+        engine: 'nanovlm',
+        success: result.success,
+        outputPath: result.outputPath || '',
+        confidence: confidenceValue,
+        text: truncateTextForResponse(result.text || ''),
+        processingTime: 0 // Will be set by caller
+      }
+    } catch (error) {
+      serverLogger.error(`NanoVLM processing failed: ${error}`);
+      return {
+        engine: 'nanovlm',
+        success: false,
+        outputPath: '',
+        confidence: 0,
+        text: '',
+        processingTime: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
   }
   

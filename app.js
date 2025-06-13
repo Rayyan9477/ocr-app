@@ -6,13 +6,54 @@ const { cleanupAll } = require('./utils/cleanup');
 
 const app = express();
 
+// Enhanced error handling with structured logging
+const logger = {
+  info: (message, context = {}) => {
+    console.log(`[INFO] ${new Date().toISOString()} - ${message}`, 
+                Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : '');
+  },
+  error: (message, error = null, context = {}) => {
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`);
+    if (error) {
+      console.error('Error details:', error.stack || error.message || error);
+    }
+    if (Object.keys(context).length > 0) {
+      console.error('Context:', JSON.stringify(context, null, 2));
+    }
+  },
+  warn: (message, context = {}) => {
+    console.warn(`[WARN] ${new Date().toISOString()} - ${message}`,
+                 Object.keys(context).length > 0 ? JSON.stringify(context, null, 2) : '');
+  }
+};
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  cleanupAll();
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', null, { promise, reason });
+  cleanupAll();
+  process.exit(1);
+});
+
 // Register cleanup handlers for application shutdown
-process.on('exit', cleanupAll);
+process.on('exit', (code) => {
+  logger.info('Process exiting', { code });
+  cleanupAll();
+});
+
 process.on('SIGINT', () => {
+  logger.info('Received SIGINT, shutting down gracefully');
   cleanupAll();
   process.exit();
 });
+
 process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM, shutting down gracefully');
   cleanupAll();
   process.exit();
 });
@@ -32,21 +73,24 @@ if (app && app.use) {
           const sessionTmpDir = path.join(__dirname, 'tmp', sessionId);
           if (fs.existsSync(sessionTmpDir)) {
             fs.rmSync(sessionTmpDir, { recursive: true, force: true });
+            logger.info('Cleaned up session temp files', { sessionId });
           }
           
           // Clean up any session-specific processed files
           const sessionProcessedDir = path.join(__dirname, 'processed', sessionId);
           if (fs.existsSync(sessionProcessedDir)) {
             fs.rmSync(sessionProcessedDir, { recursive: true, force: true });
+            logger.info('Cleaned up session processed files', { sessionId });
           }
         } catch (err) {
-          console.error('Error cleaning up session files:', err);
+          logger.error('Error cleaning up session files:', err, { sessionId });
         }
       }
     })
   }));
 }
 
-// ...existing code...
+// Export logger for use in other modules
+module.exports = { app, logger };
 
 module.exports = app;

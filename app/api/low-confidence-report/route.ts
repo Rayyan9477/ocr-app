@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { readdir } from "fs/promises"
 import { join } from "path"
 import { loadConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
+import { normalizeConfidenceData } from "@/lib/confidence-utils"
 
 // Helper function to create consistent JSON responses
 const createJsonResponse = (data: any, status: number = 200) => {

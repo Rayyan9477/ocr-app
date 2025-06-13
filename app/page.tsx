@@ -314,9 +314,8 @@ export default function Home() {
             return {
               success: true,
               outputFile: outputFileMatch[1],
-              text: "Text too large to display - see PDF for full content",
               details: "Processed successfully but response was too large to parse as JSON"
-            };
+            } as any;
           }
         } catch (regexError) {
           console.error("Failed extracting data with regex:", regexError);

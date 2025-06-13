@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import logger from './logger';
 import { ConfidenceData } from './types/ocr-types';
+import { normalizeConfidenceData } from './confidence-utils';
 
 export interface NanoVLMOptions {
   documentType?: 'general' | 'handwritten' | 'table' | 'poor_quality';
@@ -115,10 +116,11 @@ export class NanoVLMService {
         throw new Error(outputData.error || 'Processing failed without specific error');
       }
       
-      // Return structured result
+      // Return structured result with normalized confidence
+      const normalizedConfidence = normalizeConfidenceData(outputData.confidence || 0);
       return {
         text: outputData.text || '',
-        confidence: outputData.confidence || 0,
+        confidence: normalizedConfidence,
         structuredData: outputData.structured_data,
         layout: outputData.layout,
         processingTime: Date.now() - startTime,
