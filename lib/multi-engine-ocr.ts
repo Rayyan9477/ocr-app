@@ -39,7 +39,7 @@ export interface OCREngine {
   service: any
   available: boolean
   specialization: string[]
-  confidence: boolean
+  hasConfidence: boolean // Changed from 'confidence: boolean' to 'hasConfidence: boolean'
   preprocessor?: (inputPath: string, documentType?: string) => Promise<string>
 }
 
@@ -102,7 +102,7 @@ export class MultiEngineOCR {
       service: null, // OCRmyPDF uses direct command execution
       available,
       specialization: ['pdf', 'structured_documents'],
-      confidence: false,
+      hasConfidence: false,
       preprocessor: (inputPath, documentType) => {
         serverLogger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`)
         return this.preprocessingService.pdfOptimize(inputPath)
@@ -119,7 +119,7 @@ export class MultiEngineOCR {
       service: null, // Tesseract uses direct command execution
       available,
       specialization: ['general', 'text'],
-      confidence: true,
+      hasConfidence: true,
       preprocessor: (inputPath, documentType) => {
         serverLogger.info(`Preprocessing for Tesseract, document type: ${documentType}`)
         return this.preprocessingService.tesseractOptimize(inputPath)
@@ -145,7 +145,7 @@ export class MultiEngineOCR {
       service: nanoVLMService,
       available,
       specialization: ['handwriting', 'tables', 'poor_quality'],
-      confidence: true,
+      hasConfidence: true,
       preprocessor: (inputPath, documentType) => {
         serverLogger.info(`Preprocessing for NanoVLM, document type: ${documentType}`)
         switch(documentType) {
@@ -302,7 +302,7 @@ export class MultiEngineOCR {
         const txtFile = outputPath.replace('.pdf', '.txt')
         extractedText = await fs.promises.readFile(txtFile, 'utf-8')
         
-        if (engine.confidence) {
+        if (engine.hasConfidence) {
           confidence = await this.extractTesseractConfidence(inputPath)
         }
       } else {

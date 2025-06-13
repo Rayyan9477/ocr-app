@@ -312,19 +312,28 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        return createJsonResponse({
+        // Prepare response data
+        const successData: any = {
           success: true,
           inputFile: fileName,
           outputFile: path.basename(outputPath),
           details: result.stderr || result.stdout,
-          confidence: confidenceData ? {
-            averageConfidence: confidenceData.averageConfidence,
+        };
+        // Normalize confidence
+        if (confidenceData) {
+          successData.confidence = confidenceData.averageConfidence;
+          successData.confidenceData = {
             hasLowConfidencePages: confidenceData.hasLowConfidencePages,
             warningPages: confidenceData.warningPages,
             errorPages: confidenceData.errorPages,
             pageCount: confidenceData.pageConfidences.length
-          } : undefined
-        });
+          };
+        }
+        // Add processingTime if available
+        if (result && result.stdout) {
+          // Unable to extract processing time from stdout for standard OCR
+        }
+        return createJsonResponse(successData);
       } else {
         throw new Error("OCR completed but output file was not created");
       }

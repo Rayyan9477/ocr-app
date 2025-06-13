@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import logger from './logger';
+import { ConfidenceData } from './types/ocr-types';
 
 export interface NanoVLMOptions {
   documentType?: 'general' | 'handwritten' | 'table' | 'poor_quality';
@@ -12,7 +13,7 @@ export interface NanoVLMOptions {
 
 export interface OCRResult {
   text: string;
-  confidence: number;
+  confidence: number | ConfidenceData; // Updated to accept both number and ConfidenceData
   structuredData?: any;
   processingTime: number;
   layout?: any[];

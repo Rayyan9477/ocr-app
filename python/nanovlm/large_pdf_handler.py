@@ -298,14 +298,17 @@ class LargePDFHandler:
                 
                 # Combine confidence data
                 if 'confidence' in result:
+                    # Normalize confidence entry so it's always a dict
                     conf = result['confidence']
-                    chunk_confidence = conf.get('averageConfidence', 0)
+                    conf_dict = normalize_confidence(conf)
+                    
+                    # Now safely extract values using the get_confidence_value helper
+                    chunk_confidence = get_confidence_value(conf_dict, 'averageConfidence', 0.0)
+                    page_conf_list = conf_dict.get('pageConfidences', [])
                     total_confidence += chunk_confidence
                     successful_chunks += 1
-                    
                     # Add page confidences if available
-                    if 'pageConfidences' in conf:
-                        combined['confidence']['pageConfidences'].extend(conf['pageConfidences'])
+                    combined['confidence']['pageConfidences'].extend(page_conf_list)
         
         # Calculate average confidence
         if successful_chunks > 0:
@@ -339,6 +342,62 @@ class LargePDFHandler:
                 logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
             except Exception as e:
                 logger.error(f"Error cleaning up temporary directory: {e}")
+
+def normalize_confidence(confidence_data) -> Dict[str, Any]:
+    """
+    Normalize confidence data to a consistent format
+    
+    Args:
+        confidence_data: Confidence data that could be a float, int, dict, or None
+        
+    Returns:
+        Dict with normalized confidence data
+    """
+    # If confidence is a number, convert to standard format
+    if isinstance(confidence_data, (int, float)):
+        return {
+            'averageConfidence': float(confidence_data),
+            'pageConfidences': []
+        }
+    
+    # If confidence is None, return default
+    if confidence_data is None:
+        return {
+            'averageConfidence': 0.0,
+            'pageConfidences': []
+        }
+    
+    # If confidence is already a dict, ensure it has the required fields
+    if isinstance(confidence_data, dict):
+        result = dict(confidence_data)  # Create a copy to avoid modifying the original
+        
+        # Add averageConfidence if missing
+        if 'averageConfidence' not in result:
+            # Try to extract from other fields
+            if 'overall' in result and isinstance(result['overall'], (int, float)):
+                result['averageConfidence'] = float(result['overall'])
+            elif 'average' in result and isinstance(result['average'], (int, float)):
+                result['averageConfidence'] = float(result['average'])
+            elif 'confidence' in result and isinstance(result['confidence'], (int, float)):
+                result['averageConfidence'] = float(result['confidence'])
+            # Handle nested confidence objects
+            elif 'confidence' in result and isinstance(result['confidence'], dict) and 'averageConfidence' in result['confidence']:
+                result['averageConfidence'] = float(result['confidence']['averageConfidence'])
+            else:
+                result['averageConfidence'] = 0.0
+        
+        # Ensure pageConfidences exists
+        if 'pageConfidences' not in result:
+            result['pageConfidences'] = []
+        
+        return result
+    
+    # Fallback for unexpected types
+    logger.warning(f"Unexpected confidence data type: {type(confidence_data)}")
+    return {
+        'averageConfidence': 0.0,
+        'pageConfidences': []
+    }
 
 def get_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
     """

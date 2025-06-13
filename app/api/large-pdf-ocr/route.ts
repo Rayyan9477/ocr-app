@@ -182,6 +182,25 @@ export async function POST(request: NextRequest) {
         result.outputFile = outputFile;
         result.success = true;
       }
+      // Normalize confidence field for frontend: ensure it's a proper confidence object
+      if (result.confidence) {
+        // Import and use the normalize function from confidence-utils
+        const { normalizeConfidenceData } = require('@/lib/confidence-utils');
+        result.confidence = normalizeConfidenceData(result.confidence);
+      } else {
+        // Provide default confidence structure if missing
+        result.confidence = { averageConfidence: 0 };
+      }
+      
+      // Add metadata if missing
+      if (!result.metadata) {
+        result.metadata = {
+          processedAt: new Date().toISOString(),
+          inputFile: file.name,
+          documentType: documentType || 'general',
+          engine: result.engine || preferredEngine || 'auto'
+        };
+      }
       
       // Check if response is too large
       if (isResponseTooLarge(result)) {

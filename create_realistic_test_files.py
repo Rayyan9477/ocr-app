@@ -7,6 +7,12 @@ import os
 import sys
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
+import logging
+import json
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def create_realistic_medical_bill(output_path):
     """Create a realistic medical bill image"""
@@ -128,7 +134,7 @@ def create_realistic_medical_bill(output_path):
     draw.text((50, y), "Thank you for choosing Citywide Medical Center", fill='black', font=small_font)
     
     img.save(output_path, 'PNG', quality=95)
-    print(f"Created realistic medical bill: {output_path}")
+    logger.info(f"Created realistic medical bill: {output_path}")
 
 def create_research_paper_excerpt(output_path):
     """Create a research paper excerpt"""
@@ -243,7 +249,7 @@ def create_research_paper_excerpt(output_path):
     draw.text((400, 1050), "Page 1", fill='black', font=body_font)
     
     img.save(output_path, 'PNG', quality=95)
-    print(f"Created research paper excerpt: {output_path}")
+    logger.info(f"Created research paper excerpt: {output_path}")
 
 def create_handwritten_note(output_path):
     """Create a simulated handwritten medical note"""
@@ -335,7 +341,7 @@ def create_handwritten_note(output_path):
     # This is simulated - real handwriting would be much more irregular
     
     img.save(output_path, 'PNG', quality=90)
-    print(f"Created handwritten medical note: {output_path}")
+    logger.info(f"Created handwritten medical note: {output_path}")
 
 def create_financial_statement(output_path):
     """Create a financial statement with tables"""
@@ -454,13 +460,13 @@ def create_financial_statement(output_path):
     draw.text((50, y), "• Marketing expenses increased for new product launch", fill='black', font=body_font)
     
     img.save(output_path, 'PNG', quality=95)
-    print(f"Created financial statement: {output_path}")
+    logger.info(f"Created financial statement: {output_path}")
 
 def main():
     output_dir = "test-files/real-content"
     os.makedirs(output_dir, exist_ok=True)
     
-    print("Creating realistic test files with actual content...")
+    logger.info("Creating realistic test files with actual content...")
     
     try:
         # Create various types of realistic documents
@@ -469,15 +475,84 @@ def main():
         create_handwritten_note(os.path.join(output_dir, "handwritten-note.png"))
         create_financial_statement(os.path.join(output_dir, "financial-statement.png"))
         
-        print("\nCreated 4 realistic test files:")
-        print("1. medical-bill-realistic.png - Detailed medical bill with services and costs")
-        print("2. research-paper.png - Academic research paper excerpt")
-        print("3. handwritten-note.png - Medical progress notes")
-        print("4. financial-statement.png - Financial report with tables")
+        # Create a metadata file with information about each test file
+        create_test_files_metadata(output_dir)
+        
+        logger.info("\nCreated 4 realistic test files:")
+        logger.info("1. medical-bill-realistic.png - Detailed medical bill with services and costs")
+        logger.info("2. research-paper.png - Academic research paper excerpt")
+        logger.info("3. handwritten-note.png - Medical progress notes")
+        logger.info("4. financial-statement.png - Financial report with tables")
     except Exception as e:
-        print(f"Error creating files: {e}")
+        logger.error(f"Error creating files: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+
+def create_test_files_metadata(output_dir):
+    """Create JSON metadata for the test files with expected OCR confidence thresholds"""
+    metadata = {
+        "test_files": [
+            {
+                "filename": "medical-bill-realistic.png",
+                "type": "medical_bill",
+                "description": "Detailed medical bill with services and costs",
+                "expected_confidence": {
+                    "averageConfidence": 85.0,
+                    "pageConfidences": [85.0],
+                    "threshold": "high"
+                },
+                "recommended_engine": "tesseract"
+            },
+            {
+                "filename": "research-paper.png",
+                "type": "academic",
+                "description": "Academic research paper excerpt",
+                "expected_confidence": {
+                    "averageConfidence": 90.0,
+                    "pageConfidences": [90.0],
+                    "threshold": "high"
+                },
+                "recommended_engine": "nanovlm"
+            },
+            {
+                "filename": "handwritten-note.png",
+                "type": "handwritten",
+                "description": "Medical progress notes",
+                "expected_confidence": {
+                    "averageConfidence": 65.0,
+                    "pageConfidences": [65.0],
+                    "threshold": "medium"
+                },
+                "recommended_engine": "nanovlm"
+            },
+            {
+                "filename": "financial-statement.png",
+                "type": "financial",
+                "description": "Financial report with tables",
+                "expected_confidence": {
+                    "averageConfidence": 88.0,
+                    "pageConfidences": [88.0],
+                    "threshold": "high"
+                },
+                "recommended_engine": "tesseract"
+            }
+        ],
+        "confidence_thresholds": {
+            "low": 50,
+            "medium": 70,
+            "high": 85,
+            "excellent": 95
+        },
+        "metadata_version": "1.0"
+    }
+    
+    # Save metadata to file
+    metadata_path = os.path.join(output_dir, "test_files_metadata.json")
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    
+    logger.info(f"Created test files metadata: {metadata_path}")
 
 if __name__ == "__main__":
     main()

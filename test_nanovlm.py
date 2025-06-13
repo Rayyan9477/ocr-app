@@ -1,9 +1,12 @@
-import torch
 from PIL import Image, ImageEnhance
 from transformers import VisionEncoderDecoderModel, AutoTokenizer, ViTImageProcessor
+from tqdm import tqdm
 import os
 import requests
-from tqdm import tqdm
+import numpy as np
+import cv2
+import torch
+import transformers
 
 def download_model(model_path):
     """Download the model weights if they don't exist"""
@@ -14,6 +17,12 @@ def download_model(model_path):
         print("Downloading model weights...")
         url = "https://huggingface.co/lusxvr/nanoVLM-222M/resolve/main/model.safetensors"
         response = requests.get(url, stream=True)
+        
+        # Check for successful response
+        if not response.ok:
+            raise Exception(f"Download failed with status code {response.status_code}")
+            
+        # Get content length for proper progress tracking
         total_size = int(response.headers.get('content-length', 0))
         
         with open(model_file, 'wb') as f, tqdm(
@@ -26,6 +35,12 @@ def download_model(model_path):
             for data in response.iter_content(chunk_size=1024):
                 size = f.write(data)
                 pbar.update(size)
+                
+        # Verify file was downloaded correctly
+        if os.path.getsize(model_file) < 1000:
+            raise Exception("Downloaded file is too small, likely corrupted")
+            
+        print(f"Model downloaded successfully to {model_file}")
 
 def load_model(model_path):
     # Download model if needed
@@ -264,77 +279,163 @@ def fix_perspective(image):
     return image
 
 def prepare_image_variations(image):
-    """Create multiple variations of the image for better recognition"""
+    """Prepare multiple variations of the image for OCR to improve accuracy"""
     variations = []
     
-    # Get base preprocessed image
-    preprocessed = preprocess_for_ocr(image)
-    variations.append(preprocessed)
+    # Original image
+    variations.append(("original", image))
     
-    # Try perspective correction
-    perspective_fixed = fix_perspective(preprocessed)
-    variations.append(perspective_fixed)
+    # Apply different enhancement methods
+    enhancement_methods = ["default", "adaptive", "otsu", "canny", "denoise"]
+    for method in enhancement_methods:
+        try:
+            enhanced = enhance_image(image, method)
+            variations.append((method, enhanced))
+        except Exception as e:
+            print(f"Error applying {method} enhancement: {e}")
     
-    # Add various contrast enhancements
-    enhancer = ImageEnhance.Contrast(preprocessed)
-    for factor in [0.8, 1.2]:
-        variations.append(enhancer.enhance(factor))
+    # Add variations with normalization for NanoVLM model
+    try:
+        # Special preprocessing for NanoVLM
+        processed = preprocess_for_ocr(image)
+        variations.append(("nanovlm_optimized", processed))
+    except Exception as e:
+        print(f"Error in NanoVLM preprocessing: {e}")
     
-    # Add sharpness variations
-    enhancer = ImageEnhance.Sharpness(preprocessed)
-    for factor in [0.8, 1.5]:
-        variations.append(enhancer.enhance(factor))
+    # Add perspective correction if appropriate
+    try:
+        corrected = fix_perspective(image)
+        if corrected is not None:
+            variations.append(("perspective_fixed", corrected))
+    except Exception as e:
+        print(f"Error in perspective correction: {e}")
     
-    # Add slight rotations of the preprocessed image
-    for angle in [-1, -0.5, 0, 0.5, 1]:
-        rotated = preprocessed.rotate(angle, expand=True, resample=Image.BICUBIC)
-        variations.append(rotated)
-    
-    # Add resolution variations
-    original_size = preprocessed.size
-    resolutions = [
-        (int(original_size[0] * 1.5), int(original_size[1] * 1.5)),  # Higher res
-        (int(original_size[0] * 0.75), int(original_size[1] * 0.75))  # Lower res
-    ]
-    for size in resolutions:
-        scaled = preprocessed.resize(size, Image.LANCZOS)
-        variations.append(scaled)
-    
-    # Add scale variations
-    for scale in [0.9, 0.95, 1.0, 1.05, 1.1]:
-        new_size = (int(original_size[0] * scale), int(original_size[1] * scale))
-        scaled = preprocessed.resize(new_size, Image.LANCZOS)
-        variations.append(scaled)
-    
-    # Add different preprocessing methods
-    methods = ['adaptive', 'otsu', 'denoise']
-    for method in methods:
-        variations.append(enhance_image(preprocessed, method))
-    
-    # Remove any duplicates
-    unique_variations = []
-    for var in variations:
-        if not any(are_images_similar(var, existing) for existing in unique_variations):
-            unique_variations.append(var)
-    
-    return unique_variations
+    return variations
 
-def are_images_similar(img1, img2, threshold=0.95):
-    """Compare two images for similarity to avoid duplicates"""
-    import numpy as np
+def normalize_confidence_data(confidences):
+    """Normalize confidence data to standard format"""
+    if isinstance(confidences, (int, float)):
+        return {
+            'averageConfidence': float(confidences),
+            'pageConfidences': []
+        }
     
-    # Convert to numpy arrays
-    arr1 = np.array(img1)
-    arr2 = np.array(img2)
+    if not confidences:
+        return {
+            'averageConfidence': 0.0,
+            'pageConfidences': []
+        }
     
-    # Resize to same size if different
-    if arr1.shape != arr2.shape:
-        arr2 = np.array(img2.resize(img1.size, Image.LANCZOS))
+    if isinstance(confidences, dict):
+        result = dict(confidences)
+        
+        if 'averageConfidence' not in result:
+            if 'confidence' in result and isinstance(result['confidence'], (int, float)):
+                result['averageConfidence'] = float(result['confidence'])
+            elif 'average' in result and isinstance(result['average'], (int, float)):
+                result['averageConfidence'] = float(result['average'])
+            else:
+                result['averageConfidence'] = 0.0
+        
+        if 'pageConfidences' not in result:
+            result['pageConfidences'] = []
+            
+        return result
+        
+    return {
+        'averageConfidence': 0.0,
+        'pageConfidences': []
+    }
+
+def process_image_with_nanovlm(image_path, model, tokenizer, feature_extractor, device):
+    """Process an image with the NanoVLM model and return OCR results with confidence"""
+    try:
+        image = Image.open(image_path).convert('RGB')
+        
+        # Create image variations
+        variations = prepare_image_variations(image)
+        
+        best_result = None
+        best_confidence = -1
+        
+        for variation_name, img in variations:
+            # Preprocess image for model
+            pixel_values = feature_extractor(img, return_tensors="pt").pixel_values
+            pixel_values = pixel_values.to(device)
+            
+            # Generate OCR output
+            with torch.no_grad():
+                outputs = model.generate(
+                    pixel_values,
+                    max_length=128,
+                    num_beams=5,
+                    early_stopping=True
+                )
+                
+            # Get predicted text
+            predicted_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+            
+            # Calculate confidence score based on model outputs
+            if hasattr(outputs, "sequences_scores"):
+                confidence = torch.exp(outputs.sequences_scores).item() * 100
+            else:
+                # Estimate confidence based on text characteristics
+                confidence = estimate_confidence(predicted_text)
+            
+            # Format result with standardized confidence object
+            result = {
+                'text': predicted_text,
+                'confidence': {
+                    'averageConfidence': confidence,
+                    'method': variation_name,
+                    'modelName': 'nanovlm'
+                }
+            }
+            
+            # Keep the best result
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_result = result
+        
+        return best_result
+        
+    except Exception as e:
+        print(f"Error processing image: {e}")
+        return {
+            'text': '',
+            'confidence': {
+                'averageConfidence': 0,
+                'error': str(e)
+            }
+        }
+
+def estimate_confidence(text):
+    """Estimate confidence based on text characteristics"""
+    if not text or len(text) < 1:
+        return 0
+        
+    # Base confidence
+    confidence = 70.0
     
-    # Calculate normalized cross-correlation
-    correlation = np.corrcoef(arr1.flat, arr2.flat)[0,1]
+    # Longer text generally indicates better recognition
+    if len(text) > 100:
+        confidence += 10
+    elif len(text) < 10:
+        confidence -= 20
     
-    return correlation > threshold
+    # Check for likely errors
+    error_patterns = ['|', '~', '@', '#', '$', '%', '^', '&', '*']
+    error_count = sum(1 for pattern in error_patterns if pattern in text)
+    confidence -= error_count * 5
+    
+    # Check for reasonable character distribution
+    alpha_ratio = sum(c.isalpha() for c in text) / max(1, len(text))
+    if alpha_ratio > 0.7:
+        confidence += 10
+    elif alpha_ratio < 0.3:
+        confidence -= 10
+        
+    return max(0, min(100, confidence))
 
 def process_batch(images, model, tokenizer, feature_extractor, device):
     """Process a batch of images and return all predictions with improved beam search"""

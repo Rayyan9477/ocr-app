@@ -4,10 +4,12 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import logger from './logger';
 import config from './config';
+import { ConfidenceData, DocumentConfidence as DCType, normalizeConfidenceData } from './types/ocr-types';
 
 const execAsync = promisify(exec);
 
-export interface ConfidenceData {
+// Local interface for internal processing
+export interface PageConfidenceData {
   pageNumber: number;
   averageConfidence: number;
   wordCount: number;
@@ -18,12 +20,12 @@ export interface ConfidenceData {
   }>;
 }
 
-export interface DocumentConfidence {
+// Keep existing interface for backward compatibility but extend from standard type
+export interface DocumentConfidence extends DCType {
   documentId: string;
   inputFile: string;
   outputFile: string;
-  averageConfidence: number;
-  pageConfidences: ConfidenceData[];
+  pageConfidences: PageConfidenceData[];
   processedAt: Date;
   hasLowConfidencePages: boolean;
   warningPages: number[];
@@ -559,4 +561,5 @@ export async function loadConfidenceData(outputPath: string): Promise<DocumentCo
     logger.error('Error loading confidence data:', error);
     return null;
   }
+}
 }

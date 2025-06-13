@@ -85,7 +85,14 @@ def test_large_pdf_handler(pdf_path, metrics_aggregator):
         logger.info(f"Processing result: success={result.get('success', False)}")
         if result.get('success', False):
             logger.info(f"Extracted text length: {len(result.get('text', ''))}")
-            logger.info(f"Average confidence: {result.get('confidence', {}).get('averageConfidence', 0):.2f}")
+            
+            # Handle confidence which may be numeric or dict
+            conf_raw = result.get('confidence', 0)
+            if isinstance(conf_raw, (int, float)):
+                avg_conf = conf_raw
+            else:
+                avg_conf = conf_raw.get('averageConfidence', 0)
+            logger.info(f"Average confidence: {avg_conf:.2f}")
             logger.info(f"Chunks processed: {result.get('chunks_processed', 0)}")
         else:
             logger.error(f"Processing failed: {result.get('error', 'Unknown error')}")

@@ -7,10 +7,11 @@ import { NanoVLMService } from './models/nanovlm-service';
 import { ResultMerger } from './result-merger';
 import { DocumentAnalyzer } from './document-analyzer';
 import { AutoCustomization } from './auto-customization';
+import { ConfidenceData, normalizeConfidenceData } from './types/ocr-types';
 
 interface OCRResult {
   text: string;
-  confidence: number;
+  confidence: number | ConfidenceData; // Updated to use standardized confidence format
   engine: string;
   metadata?: any;
 }

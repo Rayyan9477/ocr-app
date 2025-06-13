@@ -84,3 +84,11 @@ processed/*
 *.swp
 *.swo
 .DS_Store
+
+#python cache files
+__pycache__/
+# Python bytecode files
+*.pyc
+# Python cache files
+*.pyo
+# Python egg files

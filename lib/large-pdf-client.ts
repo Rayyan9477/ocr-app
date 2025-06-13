@@ -3,6 +3,8 @@
  */
 
 import { safeJsonParse } from './safe-response-handler';
+import { ConfidenceData } from './types/ocr-types';
+import { normalizeConfidenceData, getConfidenceValue } from './confidence-utils';
 
 /**
  * Interface for OCR response
@@ -13,10 +15,8 @@ export interface OcrResponse {
   outputFile?: string;
   error?: string;
   details?: string | Array<any>;
-  confidence?: {
-    averageConfidence: number;
-    pageCount: number;
-  };
+  // Confidence can be a complex object or a simple number
+  confidence?: ConfidenceData | number;
   chunksProcessed?: number;
   chunksTotal?: number;
   pagesProcessed?: number;
@@ -107,6 +107,14 @@ export async function processLargePdf(
         // Normal JSON parsing
         const result = await response.json();
         
+        // Normalize confidence data if present
+        if (result.confidence) {
+          result.confidence = normalizeConfidenceData(result.confidence);
+        } else {
+          // Provide default confidence if missing
+          result.confidence = { averageConfidence: 0 };
+        }
+        
         // Update progress to complete
         if (onProgress) {
           onProgress(1.0);
@@ -119,6 +127,14 @@ export async function processLargePdf(
         // Try the safe parsing approach
         try {
           const result = await safeJsonParse(response);
+          
+          // Normalize confidence data if present
+          if (result.confidence) {
+            result.confidence = normalizeConfidenceData(result.confidence);
+          } else {
+            // Provide default confidence if missing
+            result.confidence = { averageConfidence: 0 };
+          }
           
           // Update progress to complete
           if (onProgress) {
@@ -148,7 +164,8 @@ export async function processLargePdf(
                 success: true,
                 outputFile: outputFileMatch[1],
                 text: "Text too large to display - see PDF for full content",
-                details: "Processed successfully but response was too large to parse as JSON"
+                details: "Processed successfully but response was too large to parse as JSON",
+                confidence: { averageConfidence: 0 } // Default confidence when parsing fails
               };
             }
           }

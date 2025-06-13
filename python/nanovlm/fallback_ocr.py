@@ -54,7 +54,11 @@ class FallbackOCR:
             result = {
                 'success': True,
                 'text': ocr_result,
-                'confidence': confidence,
+                # Standardize confidence as dict
+                'confidence': {
+                    'averageConfidence': confidence,
+                    'pageConfidences': [confidence]
+                },
                 'processing_time': round(processing_time * 1000),  # ms
                 'engine': 'fallback_ocr',
                 'document_type': document_type,

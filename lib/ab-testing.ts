@@ -1,11 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger';
+import { normalizeConfidenceData, getAverageConfidence } from './types/ocr-types';
 
 export interface TestResult {
   accuracy: number;
   processingTime: number;
-  confidenceScore: number;
+  confidenceScore: number; // Keep this for backward compatibility
   documentType: string;
 }
 
@@ -28,10 +29,14 @@ export class ABTestingFramework {
     }
     
     const accuracy = this.calculateAccuracy(result.text, groundTruth);
+    
+    // Extract confidence consistently using our utility
+    const confidenceScore = getAverageConfidence(result.confidence);
+    
     this.engineResults.get(engineName).push({
       accuracy,
       processingTime: result.processingTime,
-      confidenceScore: result.confidence,
+      confidenceScore,
       documentType
     });
   }

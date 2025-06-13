@@ -76,12 +76,18 @@ class MetricsAggregator:
         timestamp = datetime.now().isoformat()
         
         # Create time series entry
+        # Normalize confidence for metrics (extract averageConfidence if dict)
+        raw_conf = result.get('confidence', 0)
+        if isinstance(raw_conf, dict):
+            conf_value = raw_conf.get('averageConfidence', 0)
+        else:
+            conf_value = raw_conf
         time_entry = {
             'timestamp': timestamp,
             'document_type': document_type,
             'success': result.get('success', False),
             'processing_time': result.get('total_time', 0),
-            'confidence': result.get('confidence', 0),
+            'confidence': conf_value,
             'strategy': result.get('strategy', 'unknown'),
             'strategies_attempted': result.get('strategies_attempted', 1),
         }

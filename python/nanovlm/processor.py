@@ -11,8 +11,9 @@ import argparse
 import json
 import os
 import time
-from PIL import Image
 import traceback
+import sys
+from PIL import Image
 from typing import Dict, Any, Optional, List, Tuple
 import logging
 import tempfile
@@ -214,8 +215,14 @@ class NanoVLMProcessor:
                     result = {
                         'success': True,
                         'text': processed_text,
-                        'confidence': confidence,
+                        # Standardize confidence as dict
+                        'confidence': {
+                            'averageConfidence': confidence,
+                            'pageConfidences': [confidence]
+                        },
                         'processing_time': round((time.time() - start_time) * 1000),  # ms
+                        # Alias for total processing time
+                        'total_time': round((time.time() - start_time) * 1000),  # ms
                         'layout': layout,
                         'document_type': document_type,
                         'enhancement_used': enhance_resolution,
@@ -282,6 +289,8 @@ class NanoVLMProcessor:
                     if fallback_result['success']:
                         # Add processing information
                         fallback_result['processing_time'] = round((time.time() - start_time) * 1000)
+                        # Alias for metrics compatibility
+                        fallback_result['total_time'] = fallback_result['processing_time']
                         fallback_result['processing_method'] = 'fallback'
                         fallback_result['layout'] = self._extract_layout(Image.open(image_path)) if preserve_layout else None
                         fallback_result['document_type'] = document_type
