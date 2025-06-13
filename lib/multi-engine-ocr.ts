@@ -7,7 +7,9 @@ import { serverLogger, execAsync } from '@/app/api/_utils/server-utils';
 import path from 'path';
 import fs from 'fs';
 import { preprocessingService } from './preprocessing-service';
-import { getAverageConfidence, normalizeConfidenceData } from './confidence-utils';
+import { normalizeConfidenceData } from './confidence-utils';
+import { getAverageConfidence } from './types/ocr-types';
+import { NanoVLMService } from './nano-vlm-service';
 
 /**
  * Helper function to truncate text for API responses
@@ -57,6 +59,8 @@ export interface ProcessingResult {
 export class MultiEngineOCR {
   private engines: Map<string, OCREngine> = new Map()
   private preprocessingService: typeof preprocessingService
+  private initialized: boolean = false
+  private initializationPromise: Promise<void> | null = null
 
   constructor() {
     this.preprocessingService = preprocessingService
@@ -129,14 +133,14 @@ export class MultiEngineOCR {
   }
   
   private async initializeNanoVLM(): Promise<void> {
-    const nanoVLMService = new NanoVLMService()
-    let available = false
+    const nanoVLMService = new NanoVLMService();
+    let available = false;
     
     try {
-      available = await nanoVLMService.isAvailable()
+      available = await nanoVLMService.isAvailable();
     } catch (error) {
-      serverLogger.error(`Error checking nanoVLM availability: ${error}`)
-      available = false
+      serverLogger.error(`Error checking nanoVLM availability: ${error}`);
+      available = false;
     }
     
     serverLogger.info(`NanoVLM availability: ${available}`)
@@ -220,7 +224,7 @@ export class MultiEngineOCR {
     
     try {
       // Preprocess the input if needed
-      const processedInputPath = await engine.preprocessor(inputPath, documentType)
+      const processedInputPath = engine.preprocessor ? await engine.preprocessor(inputPath, documentType) : inputPath
       
       let result: ProcessingResult
       
@@ -253,9 +257,7 @@ export class MultiEngineOCR {
     documentType?: string
   ): Promise<ProcessingResult> {
     try {
-      const result = await service.processDocument({
-        imagePath: inputPath,
-        documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
+      const result = await service.processImage(inputPath, path.dirname(inputPath), { documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
         confidenceThreshold: 0.5,
         enhanceResolution: true,
         preserveLayout: true
@@ -405,6 +407,128 @@ export class MultiEngineOCR {
     }
     
     return results
+  }
+  
+  /**
+   * Process with multiple engines and merge results for improved accuracy
+   */
+  async processWithMultipleEnginesAndMerge(
+    inputPath: string,
+    engineNames: string[],
+    documentType?: string
+  ): Promise<ProcessingResult> {
+    await this.ensureInitialized()
+    
+    const results = await this.processWithMultipleEngines(inputPath, engineNames, documentType)
+    
+    // Merge results intelligently
+    return this.mergeEngineResults(results, documentType)
+  }
+  
+  /**
+   * Merge results from multiple engines to improve accuracy
+   */
+  private mergeEngineResults(results: ProcessingResult[], documentType?: string): ProcessingResult {
+    const successfulResults = results.filter(r => r.success)
+    
+    if (successfulResults.length === 0) {
+      // Return the first result if all failed
+      return results[0] || {
+        engine: 'merged',
+        success: false,
+        outputPath: '',
+        confidence: 0,
+        text: '',
+        error: 'All engines failed'
+      }
+    }
+    
+    if (successfulResults.length === 1) {
+      // Return single successful result
+      return { ...successfulResults[0], engine: `${successfulResults[0].engine}_single` }
+    }
+    
+    // Merge multiple successful results
+    const bestResult = this.selectBestResult(successfulResults, documentType)
+    const mergedText = this.mergeTexts(successfulResults)
+    const averageConfidence = this.calculateAverageConfidence(successfulResults)
+    
+    return {
+      engine: `merged_${successfulResults.map(r => r.engine).join('+')}`,
+      success: true,
+      outputPath: bestResult.outputPath,
+      confidence: averageConfidence,
+      text: mergedText,
+      processingTime: Math.max(...successfulResults.map(r => r.processingTime || 0))
+    }
+  }
+  
+  /**
+   * Select the best result based on confidence and document type
+   */
+  private selectBestResult(results: ProcessingResult[], documentType?: string): ProcessingResult {
+    // For specialized document types, prefer specialized engines
+    if (documentType === 'handwritten' || documentType === 'table' || documentType === 'poor_quality') {
+      const nanoVLMResult = results.find(r => r.engine === 'nanovlm')
+      if (nanoVLMResult && nanoVLMResult.confidence > 0.6) {
+        return nanoVLMResult
+      }
+    }
+    
+    // For general documents, prefer OCRmyPDF or highest confidence
+    if (documentType === 'pdf' || documentType === 'general') {
+      const ocrMyPDFResult = results.find(r => r.engine === 'ocrmypdf')
+      if (ocrMyPDFResult && ocrMyPDFResult.confidence > 0.7) {
+        return ocrMyPDFResult
+      }
+    }
+    
+    // Fall back to highest confidence
+    return results.reduce((best, current) => 
+      current.confidence > best.confidence ? current : best
+    )
+  }
+  
+  /**
+   * Merge texts from multiple engines using intelligent strategies
+   */
+  private mergeTexts(results: ProcessingResult[]): string {
+    if (results.length === 1) {
+      return results[0].text
+    }
+    
+    // For now, use the text from the highest confidence result
+    // In the future, we could implement more sophisticated text merging
+    const bestResult = results.reduce((best, current) => 
+      current.confidence > best.confidence ? current : best
+    )
+    
+    return bestResult.text
+  }
+  
+  /**
+   * Calculate weighted average confidence across engines
+   */
+  private calculateAverageConfidence(results: ProcessingResult[]): number {
+    if (results.length === 0) return 0
+    
+    // Weight by engine reliability
+    const weights = new Map([
+      ['nanovlm', 1.2],    // Higher weight for specialized AI engine
+      ['ocrmypdf', 1.1],   // Good for PDFs
+      ['tesseract', 1.0]   // Standard weight
+    ])
+    
+    let totalWeightedConfidence = 0
+    let totalWeight = 0
+    
+    for (const result of results) {
+      const weight = weights.get(result.engine) || 1.0
+      totalWeightedConfidence += result.confidence * weight
+      totalWeight += weight
+    }
+    
+    return totalWeight > 0 ? totalWeightedConfidence / totalWeight : 0
   }
   
   /**

@@ -695,8 +695,20 @@ export default function Home() {
               }
             });
             
-            // Verify data has the required output file information
-            if (!data || !data.outputFile) {
+            // Verify data has the required information
+            if (!data) {
+              console.error("No response data from large PDF processor");
+              throw new Error("No response from large PDF processor");
+            }
+            
+            // Check if processing was successful
+            if (!data.success) {
+              console.error("Large PDF processing failed:", data);
+              throw new Error(data.error || "Large PDF processing failed");
+            }
+            
+            // Check if output file is available (required for successful processing)
+            if (!data.outputFile) {
               console.error("Missing output file information in large PDF response:", data);
               throw new Error("Server response missing output file information");
             }
@@ -744,8 +756,20 @@ export default function Home() {
             const apiEndpoint = opts.useSmartOCR ? "/api/smart-ocr" : "/api/ocr";
             data = await executeOcrWithRetry(formData, file.name, false, apiEndpoint);
             
-            // Verify data has the required output file information
-            if (!data || !data.outputFile) {
+            // Verify data has the required information
+            if (!data) {
+              console.error("No response data from OCR processor");
+              throw new Error("No response from OCR processor");
+            }
+            
+            // Check if processing was successful
+            if (!data.success) {
+              console.error("OCR processing failed:", data);
+              throw new Error(data.error || "OCR processing failed");
+            }
+            
+            // Check if output file is available (required for successful processing)
+            if (!data.outputFile) {
               console.error("Missing output file information in OCR response:", data);
               throw new Error("Server response missing output file information");
             }

@@ -2,10 +2,10 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import logger from './logger';
-import { MultiEngineOCR } from './multi-engine-ocr';
-import { NanoVLMService } from './nano-vlm-service';
+import { MultiEngineOCR, ProcessingResult } from './multi-engine-ocr';
+import { NanoVLMService, OCRResult as NanoVLMResult } from './nano-vlm-service';
 import { ResultMerger } from './result-merger';
-import { DocumentAnalyzer } from './document-analyzer';
+import { DocumentAnalyzer, DocumentAnalysis } from './document-analyzer';
 import { AutoCustomizationService } from './auto-customization';
 import { ConfidenceData, normalizeConfidenceData, getAverageConfidence } from './types/ocr-types';
 
@@ -15,6 +15,13 @@ interface OCRResult {
   engine: string;
   metadata?: any;
   processingTime?: number;
+}
+
+interface EnhancedOCRResult extends OCRResult {
+  primaryEngine?: string;
+  enhancementEngine?: string;
+  combinedConfidence?: number;
+  processingSteps?: string[];
 }
 
 export class IntegratedOCRService {
@@ -71,7 +78,13 @@ export class IntegratedOCRService {
       }
 
       // Process with NanoVLM for enhancement if available
-      let enhancedResult = primaryResult;
+      let enhancedResult: EnhancedOCRResult = {
+        ...primaryResult,
+        engine: 'primary',
+        confidence: 0,
+        metadata: {}
+      };
+      
       try {
         const vlmResult = await this.nanovlm.processImage(
           inputPath,
@@ -80,20 +93,62 @@ export class IntegratedOCRService {
         );
 
         const normalizedVlmConfidence = normalizeConfidenceData(vlmResult.confidence);
+        const primaryConfidenceValue = typeof normalizedPrimaryConfidence === 'number' 
+          ? normalizedPrimaryConfidence 
+          : getAverageConfidence(normalizedPrimaryConfidence);
+          
+        const vlmConfidenceValue = typeof normalizedVlmConfidence === 'number'
+          ? normalizedVlmConfidence
+          : getAverageConfidence(normalizedVlmConfidence);
 
-        // Merge results intelligently
-        enhancedResult = await this.resultMerger.mergeResults(
-          { ...primaryResult, confidence: normalizedPrimaryConfidence },
-          { ...vlmResult, confidence: normalizedVlmConfidence },
-          docCharacteristics
-        );
+        // Create a results object that matches what mergeResults expects
+        const results = {
+          primary: {
+            ...primaryResult,
+            engine: 'primary',
+            confidence: primaryConfidenceValue,
+            success: true,
+            processingTime: primaryResult.processingTime || 0
+          },
+          nanovlm: {
+            ...vlmResult,
+            engine: 'nanovlm',
+            confidence: vlmConfidenceValue,
+            success: true,
+            processingTime: vlmResult.processingTime || 0
+          }
+        };
 
-        enhancedResult.metadata = {
-          ...enhancedResult.metadata,
-          enhancement: 'nanovlm-assisted',
-          originalConfidence: primaryConfidenceValue,
-          vlmConfidence: getAverageConfidence(normalizedVlmConfidence),
-          processingTime: Date.now() - startTime
+        // Create a default document analysis
+        const documentAnalysis: DocumentAnalysis = {
+          hasHandwriting: false,
+          hasTables: false,
+          poorQuality: false,
+          complexLayout: false,
+          confidence: {
+            handwriting: 0,
+            tables: 0,
+            quality: 0,
+            layout: 0
+          }
+        };
+
+        // Merge results intelligently with document analysis
+        const mergedResult: NanoVLMResult = await this.resultMerger.mergeResults(results, documentAnalysis);
+
+        // Update the enhanced result with merged data
+        enhancedResult = {
+          ...enhancedResult,
+          text: mergedResult.text || enhancedResult.text,
+          engine: enhancedResult.engine, // Keep the engine from enhanced result
+          confidence: mergedResult.confidence || enhancedResult.confidence,
+          metadata: {
+            ...enhancedResult.metadata,
+            enhancement: 'nanovlm-assisted',
+            originalConfidence: primaryConfidenceValue,
+            vlmConfidence: vlmConfidenceValue,
+            processingTime: Date.now() - startTime
+          }
         };
 
       } catch (vlmError) {
@@ -102,7 +157,6 @@ export class IntegratedOCRService {
           ...primaryResult,
           confidence: normalizedPrimaryConfidence,
           metadata: {
-            ...primaryResult.metadata,
             enhancement: 'primary-only',
             enhancementError: vlmError instanceof Error ? vlmError.message : String(vlmError),
             processingTime: Date.now() - startTime

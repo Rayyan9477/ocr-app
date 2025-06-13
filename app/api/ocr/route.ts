@@ -10,6 +10,7 @@ import { multiEngineOCR } from "@/lib/multi-engine-ocr";
 import logger from "@/lib/logger";
 import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper";
 import { normalizeConfidenceData } from "@/lib/confidence-utils";
+import { FileHandler } from "@/lib/file-handler";
 
 export {}; // Ensure file is treated as a module
 
@@ -146,12 +147,70 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
 
 // Handle multi-engine OCR fallback
 async function handleMultiEngineFallback(inputPath: string, fileName: string, primaryError: any) {
-  logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback`);
+  logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback with coordination`);
   
   try {
     const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
     await mkdir(fallbackOutputDir, { recursive: true });
     
+    // Try coordinated multi-engine approach first
+    const mergedResult = await multiEngineOCR.processWithMultipleEnginesAndMerge(
+      inputPath,
+      ['tesseract', 'ocrmypdf'] // Use available engines
+    );
+    
+    if (mergedResult.success) {
+      const fallbackFinalPath = join(
+        process.cwd(),
+        "processed",
+        `${path.basename(fileName, '.pdf')}_${Date.now()}_coordinated_ocr.pdf`
+      );
+      
+      // Copy the merged result file if it exists
+      if (mergedResult.outputPath && existsSync(mergedResult.outputPath)) {
+        await import('fs/promises').then(fs => 
+          fs.copyFile(mergedResult.outputPath!, fallbackFinalPath)
+        );
+      }
+      
+      // Extract confidence scores for merged result if enabled
+      let fallbackConfidenceData: DocumentConfidence | null = null;
+      if (appConfig.confidence.enableConfidenceTracking) {
+        try {
+          fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
+          if (fallbackConfidenceData) {
+            await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
+          }
+        } catch (confidenceError) {
+          logger.warn(`Failed to extract confidence scores for coordinated result: ${confidenceError}`);
+        }
+      }
+      
+      return {
+        success: true,
+        inputFile: fileName,
+        outputFile: path.basename(fallbackFinalPath),
+        engine: mergedResult.engine,
+        warning: "Primary OCR failed, succeeded with coordinated multi-engine approach",
+        details: `Coordinated processing with engines: ${mergedResult.engine}`,
+        confidence: fallbackConfidenceData ? normalizeConfidenceData(fallbackConfidenceData.averageConfidence).averageConfidence : mergedResult.confidence,
+        confidenceData: fallbackConfidenceData ? {
+          hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
+          warningPages: fallbackConfidenceData.warningPages,
+          errorPages: fallbackConfidenceData.errorPages,
+          pageCount: fallbackConfidenceData.pageConfidences.length,
+          normalizedConfidence: normalizeConfidenceData(fallbackConfidenceData.averageConfidence)
+        } : {
+          averageConfidence: mergedResult.confidence,
+          hasLowConfidencePages: mergedResult.confidence < 85,
+          warningPages: mergedResult.confidence < 85 && mergedResult.confidence >= 70 ? [1] : [],
+          errorPages: mergedResult.confidence < 70 ? [1] : [],
+          normalizedConfidence: normalizeConfidenceData(mergedResult.confidence)
+        }
+      };
+    }
+    
+    // If coordinated approach failed, fall back to individual engine approach
     const ensembleResults = await multiEngineOCR.processWithMultipleEngines(
       inputPath,
       ['tesseract', 'ocrmypdf'] // Use available engines
@@ -245,7 +304,7 @@ async function handleMultiEngineFallback(inputPath: string, fileName: string, pr
 
 // Main POST handler
 export async function POST(request: NextRequest) {
-  console.log("OCR API called with POST method");
+  logger.debug("OCR API called with POST method");
   
   let inputPath = "";
   
@@ -253,7 +312,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const formData = await request.formData();
-    const file = formData.get("file") as any as File;
+    const file = formData.get("file") as File;
     
     if (!file) {
       return createJsonResponse({
@@ -262,10 +321,16 @@ export async function POST(request: NextRequest) {
       }, 400);
     }
     
-    // Get file data
+    // Get file data using FileHandler to avoid experimental warnings
     const fileName = file.name;
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const buffer = await FileHandler.toBuffer(file);
+    
+    if (!buffer) {
+      return createJsonResponse({
+        success: false,
+        error: "Failed to process file data"
+      }, 400);
+    }
     
     // Determine upload path
     const uploadDir = join(process.cwd(), "uploads");
@@ -273,7 +338,7 @@ export async function POST(request: NextRequest) {
     
     // Write the file to uploads directory
     await writeFile(inputPath, buffer);
-    console.log(`File saved: ${inputPath}`);
+    logger.debug(`File saved: ${inputPath}`);
     
     // Process OCR options from form data
     const options = {
@@ -294,7 +359,7 @@ export async function POST(request: NextRequest) {
     
     // Build and execute OCR command
     const command = buildOCRCommand(inputPath, outputPath, options);
-    console.log(`Starting OCR process: ${command}`);
+    logger.debug(`Starting OCR process`);
     
     try {
       const result = await execWithTimeout(command, appConfig.ocrTimeout || 600000);
@@ -310,7 +375,7 @@ export async function POST(request: NextRequest) {
               await saveConfidenceData(confidenceData, outputPath);
             }
           } catch (confidenceError) {
-            console.warn("Failed to extract confidence scores:", confidenceError);
+            logger.warn("Failed to extract confidence scores");
           }
         }
 
@@ -344,7 +409,8 @@ export async function POST(request: NextRequest) {
         throw new Error("OCR completed but output file was not created");
       }
     } catch (execError) {
-      console.error("OCR execution failed:", execError);
+      const errorMessage = execError instanceof Error ? execError.message : String(execError);
+      logger.error(`OCR execution failed: ${errorMessage}`);
       
       // Check if output file was created despite error
       if (existsSync(outputPath)) {
@@ -357,7 +423,7 @@ export async function POST(request: NextRequest) {
               await saveConfidenceData(confidenceData, outputPath);
             }
           } catch (confidenceError) {
-            console.warn("Failed to extract confidence scores for partial success:", confidenceError);
+            logger.warn("Failed to extract confidence scores for partial success");
           }
         }
 
@@ -366,7 +432,7 @@ export async function POST(request: NextRequest) {
           inputFile: fileName,
           outputFile: path.basename(outputPath),
           warning: "OCR completed with warnings",
-          details: execError instanceof Error ? execError.message : String(execError),
+          details: errorMessage,
           confidence: confidenceData ? normalizeConfidenceData(confidenceData.averageConfidence).averageConfidence : undefined,
           confidenceData: confidenceData ? {
             hasLowConfidencePages: confidenceData.hasLowConfidencePages,
@@ -378,12 +444,9 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // Handle OCR failure with our error handler
-      const errorMessage = execError instanceof Error ? execError.message : String(execError);
-      
       // Check for specific error about page already having text first
       if ((errorMessage.includes('page already has text') || errorMessage.includes('PriorOcrFoundError')) && !options.force) {
-        console.log("Detected document with existing text. Retrying with --force-ocr option...");
+        logger.debug("Document has existing text, retrying with force-ocr");
         
         // Create a new command with force-ocr enabled and PDF output type to avoid bloat
         const retryOptions = { ...options, force: true };
@@ -394,7 +457,7 @@ export async function POST(request: NextRequest) {
         );
         
         const retryCommand = buildOCRCommand(inputPath, retryOutputPath, retryOptions);
-        console.log(`Retrying OCR with force option: ${retryCommand}`);
+        logger.debug("Retrying OCR with force option");
         
         try {
           // Execute the retry command
@@ -411,7 +474,7 @@ export async function POST(request: NextRequest) {
                   await saveConfidenceData(retryConfidenceData, retryOutputPath);
                 }
               } catch (confidenceError) {
-                console.warn("Failed to extract confidence scores for retry:", confidenceError);
+                logger.warn("Failed to extract confidence scores for retry");
               }
             }
 
