@@ -1,38 +1,113 @@
 #!/usr/bin/env python3
 """
 Fallback OCR Engine for nanoVLM
-Provides alternative OCR methods when the primary method fails
+
+This module provides alternative OCR methods when the primary method fails.
+It includes robust error handling and multiple fallback strategies for
+various document types.
 """
 
 import os
-import cv2
-import numpy as np
-from PIL import Image
-import pytesseract
-from typing import Dict, Any, Optional, Tuple
+import sys
 import logging
 import time
 import json
 import traceback
+from typing import Dict, Any, Optional, Tuple, Union
+from pathlib import Path
 
-logger = logging.getLogger('nanovlm')
+# Try to import optional dependencies with fallbacks
+try:
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageEnhance, ImageFilter
+    HAS_CV2 = True
+    HAS_PIL = True
+except ImportError as e:
+    logging.warning(f"OpenCV or PIL not available: {e}")
+    HAS_CV2 = False
+    HAS_PIL = False
+
+try:
+    import pytesseract
+    HAS_TESSERACT = True
+except ImportError as e:
+    logging.warning(f"pytesseract not available: {e}")
+    HAS_TESSERACT = False
+
+# Configure logging
+logger = logging.getLogger('nanovlm.fallback_ocr')
+
+# Constants
+DEFAULT_TESSERACT_CONFIG = '--oem 3 --psm 6'
+SUPPORTED_IMAGE_FORMATS = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.pnm', '.pbm', '.pgm', '.ppm'}
 
 class FallbackOCR:
-    """Fallback OCR implementation using Tesseract and other simple techniques"""
+    """
+    Fallback OCR implementation using Tesseract with advanced preprocessing and fallback strategies.
     
-    def __init__(self, config=None):
-        """Initialize fallback OCR with optional configuration"""
-        self.config = config or {}
-        self.tesseract_path = self.config.get('tesseract_path')
+    This class provides robust OCR capabilities with multiple fallback mechanisms
+    for different types of documents and quality levels.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the FallbackOCR processor.
         
-        # Configure Tesseract path if provided
-        if self.tesseract_path and os.path.exists(self.tesseract_path):
-            pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+        Args:
+            config: Optional configuration dictionary with the following keys:
+                - tesseract_path: Path to Tesseract executable
+                - timeout: Maximum processing time in seconds (default: 30)
+                - dpi: Target DPI for image processing (default: 300)
+                - lang: Language for OCR (default: 'eng')
+        """
+        self.config = {
+            'timeout': 30,
+            'dpi': 300,
+            'lang': 'eng',
+            'tesseract_config': DEFAULT_TESSERACT_CONFIG,
+            **(config or {})
+        }
+        
+        self.tesseract_path = self.config.get('tesseract_path')
+        self.available = HAS_TESSERACT and HAS_PIL and HAS_CV2
+        
+        if not self.available:
+            logger.warning("FallbackOCR not fully available - missing dependencies")
+            return
+        
+        # Configure Tesseract path if provided and valid
+        if self.tesseract_path:
+            if not os.path.exists(self.tesseract_path):
+                logger.warning(f"Tesseract path not found: {self.tesseract_path}")
+            else:
+                pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+                
+        # Verify Tesseract is accessible only if available
+        if HAS_TESSERACT:
+            try:
+                pytesseract.get_tesseract_version()
+            except pytesseract.TesseractNotFoundError as e:
+                logger.error("Tesseract not found. Please install Tesseract OCR and ensure it's in your PATH")
+                self.available = False
     
     def process(self, image_path: str, document_type: str = 'general', **kwargs) -> Dict[str, Any]:
         """Process document with fallback OCR engine"""
         start_time = time.time()
         logger.info(f"Using fallback OCR engine for {image_path}")
+        
+        if not self.available:
+            return {
+                'success': False,
+                'error': 'Fallback OCR not available - missing dependencies',
+                'text': '',
+                'confidence': {'averageConfidence': 0.0, 'pageConfidences': []},
+                'metadata': {
+                    'engine': 'fallback_ocr',
+                    'processing_time': time.time() - start_time,
+                    'error': 'Missing dependencies (pytesseract, opencv, PIL)'
+                }
+            }
         
         try:
             # Load image

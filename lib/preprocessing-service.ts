@@ -6,12 +6,26 @@ import logger from './logger';
 
 const execAsync = promisify(exec);
 
+export interface PreprocessingResult {
+  success: boolean; // Add success flag to indicate if preprocessing was successful
+  outputPath: string;
+  operations: string[];
+  errors?: string[]; // Made optional to handle cases with no errors
+  metadata: Record<string, any>;
+}
+
 export interface PreprocessingOptions {
   enhanceResolution?: boolean;
   denoise?: boolean;
   deskew?: boolean;
   contrast?: number;
   brightness?: number;
+  enhanceContrast?: boolean;
+  removeNoise?: boolean;
+  correctSkew?: boolean;
+  sharpenText?: boolean;
+  binarize?: boolean;
+  normalizeSize?: boolean;
 }
 
 export class PreprocessingService {
@@ -168,16 +182,28 @@ export class PreprocessingService {
         success: true,
         outputPath: finalOutputPath,
         operations,
-        errors: errors.length > 0 ? errors : undefined
+        errors: errors.length > 0 ? errors : undefined,
+        metadata: {
+          inputPath,
+          processedAt: new Date().toISOString(),
+          options
+        }
       };
 
     } catch (error) {
-      logger.error(`Preprocessing failed: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Preprocessing failed: ${errorMessage}`);
       return {
         success: false,
         outputPath: inputPath, // Return original path on failure
         operations,
-        errors: [...errors, error instanceof Error ? error.message : String(error)]
+        errors: [...errors, errorMessage],
+        metadata: {
+          inputPath,
+          failedAt: new Date().toISOString(),
+          error: errorMessage,
+          options
+        }
       };
     }
   }
@@ -234,7 +260,11 @@ export class PreprocessingService {
   }
 
   /**
-   * Preprocess image using Python-based NanoVLM for document-type specific optimizations
+   * Preprocess image with specific options
+   * @param inputPath Path to the input image file
+   * @param outputPath Path where the preprocessed image will be saved
+   * @param options Preprocessing options
+   * @returns Path to the preprocessed image
    */
   async preprocessImage(
     inputPath: string,
@@ -247,39 +277,51 @@ export class PreprocessingService {
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
-      
-      // Prepare Python script arguments
-      const args = [inputPath, outputPath];
-      if (options.enhanceResolution) {
-        args.push('--enhance-resolution');
-      }
-      if (options.denoise) {
-        args.push('--denoise');
-      }
-      if (options.deskew) {
-        args.push('--deskew');
-      }
-      if (options.contrast) {
-        args.push('--contrast', String(options.contrast));
-      }
-      if (options.brightness) {
-        args.push('--brightness', String(options.brightness));
-      }
 
-      // Execute Python script for preprocessing
-      const pythonCommand = `${this.pythonEnvPath} -m nanovlm.preprocess_image`;
-      logger.info(`Running preprocessing with NanoVLM: ${pythonCommand} ${args.join(' ')}`);
-      const { stdout, stderr } = await execAsync(`${pythonCommand} ${args.join(' ')}`);
-      
-      logger.info(`NanoVLM output: ${stdout}`);
-      if (stderr) {
-        logger.warn(`NanoVLM warnings: ${stderr}`);
+      // Check if we should use Python-based preprocessing
+      const usePythonPreprocessing = options.enhanceResolution || options.denoise || options.deskew || 
+                                   options.contrast || options.brightness;
+
+      if (usePythonPreprocessing) {
+        // Prepare Python script arguments for NanoVLM preprocessing
+        const args = [inputPath, outputPath];
+        if (options.enhanceResolution) {
+          args.push('--enhance-resolution');
+        }
+        if (options.denoise) {
+          args.push('--denoise');
+        }
+        if (options.deskew) {
+          args.push('--deskew');
+        }
+        if (options.contrast) {
+          args.push('--contrast', String(options.contrast));
+        }
+        if (options.brightness) {
+          args.push('--brightness', String(options.brightness));
+        }
+
+        // Execute Python script for preprocessing
+        const pythonCommand = `${this.pythonEnvPath} -m nanovlm.preprocess_image`;
+        logger.info(`Running preprocessing with NanoVLM: ${pythonCommand} ${args.join(' ')}`);
+        const { stdout, stderr } = await execAsync(`${pythonCommand} ${args.join(' ')}`);
+        
+        logger.info(`NanoVLM output: ${stdout}`);
+        if (stderr) {
+          logger.warn(`NanoVLM warnings: ${stderr}`);
+        }
+        
+        return outputPath;
+      } else {
+        // Fall back to basic preprocessing if no Python-specific options are set
+        const command = `convert "${inputPath}" "${outputPath}"`;
+        await execAsync(command);
+        return outputPath;
       }
-      
-      return outputPath;
     } catch (error) {
-      logger.error(`Preprocessing failed: ${error}`);
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during preprocessing';
+      logger.error(`Preprocessing failed: ${errorMessage}`);
+      throw new Error(`Image preprocessing failed: ${errorMessage}`);
     }
   }
   
@@ -329,54 +371,37 @@ export class PreprocessingService {
   }
 
   /**
-   * Preprocess image with specific options
+   * PDF optimization
    */
-  private async preprocessImage(
-    inputPath: string, 
-    outputPath: string, 
-    options: PreprocessingOptions
-  ): Promise<string> {
+  pdfOptimize(inputPath: string): Promise<string> {
+    // For PDF inputs, return original path as OCRmyPDF handles PDF processing directly
+    return Promise.resolve(inputPath);
+  }
+
+  /**
+   * Clean up temporary files
+   */
+  async cleanup(): Promise<void> {
     try {
-      // Simple preprocessing using ImageMagick
-      let command = `convert "${inputPath}"`;
-      
-      if (options.enhanceResolution) {
-        command += ' -density 300 -units PixelsPerInch';
-      }
-      
-      if (options.denoise) {
-        command += ' -despeckle -median 1';
-      }
-      
-      if (options.deskew) {
-        command += ' -deskew 40%';
-      }
-      
-      if (options.contrast) {
-        command += ` -contrast-stretch 0.1%x0.1%`;
-      }
-      
-      if (options.brightness) {
-        command += ` -brightness-contrast 0x${options.brightness}`;
-      }
-      
-      command += ` "${outputPath}"`;
-      
-      await execAsync(command);
-      
-      if (!fs.existsSync(outputPath)) {
-        throw new Error('Preprocessing failed to generate output file');
-      }
-      
-      return outputPath;
+      await execAsync(`rm -rf "${this.tempDir}"`);
+      logger.info(`Cleaned up temporary directory: ${this.tempDir}`);
     } catch (error) {
-      logger.warn(`Image preprocessing failed, using original: ${error}`);
-      return inputPath; // Fallback to original if preprocessing fails
+      logger.warn(`Failed to clean up temporary directory: ${error}`);
     }
   }
 
   /**
+   * Get file extension from path
+   */
+  private getFileExtension(filepath: string): string {
+    const ext = path.extname(filepath).toLowerCase();
+    return ext ? ext.substring(1) : 'png';
+  }
+
+  /**
    * Tesseract optimization 
+   * @param inputPath Path to the input file
+   * @returns Path to the optimized file
    */
   async tesseractOptimize(inputPath: string): Promise<string> {
     const outputPath = this.generateOutputPath(inputPath, 'tesseract');
@@ -386,30 +411,6 @@ export class PreprocessingService {
       deskew: true,
       contrast: 1.1
     });
-  }
-
-  /**
-   * PDF optimization
-   */
-  async pdfOptimize(inputPath: string): Promise<string> {
-    // For PDF inputs, return original path as OCRmyPDF handles PDF processing directly
-    return inputPath;
-  }
-
-  /**
-   * Clean up temporary files
-   */
-  async cleanup(): Promise<void> {
-    try {
-      await execAsync(`rm -rf "${this.tempDir}"`);
-    } catch (error) {
-      logger.warn(`Failed to cleanup preprocessing temp files: ${error}`);
-    }
-  }
-
-  private getFileExtension(filepath: string): string {
-    const ext = filepath.toLowerCase().split('.').pop();
-    return ext ? `.${ext}` : '.png';
   }
 }
 

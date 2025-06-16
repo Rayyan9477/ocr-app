@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Large PDF Handler for nanoVLM OCR
-Special handling for large PDFs to prevent memory issues and improve processing
+
+Specialized handler for processing large PDF documents with optimized memory usage,
+parallel processing, and robust error handling.
 """
 
 import os
@@ -9,27 +11,83 @@ import json
 import tempfile
 import logging
 import time
-from typing import Dict, Any, List, Optional, Tuple
+import shutil
+import traceback
+from typing import Dict, Any, List, Optional, Tuple, Union
 import subprocess
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-logger = logging.getLogger('nanovlm')
+# Try to import optional dependencies
+try:
+    from PyPDF2 import PdfReader, PdfWriter
+    HAS_PYPDF2 = True
+except ImportError as e:
+    logging.warning(f"PyPDF2 not available: {e}")
+    HAS_PYPDF2 = False
+    PdfReader = None
+    PdfWriter = None
+
+# Configure logging
+logger = logging.getLogger('nanovlm.large_pdf_handler')
 
 class LargePDFHandler:
-    """Handles large PDF files with chunking and parallel processing"""
+    """
+    Handles large PDF files with chunking, parallel processing, and robust error recovery.
     
-    def __init__(self, config=None):
-        """Initialize large PDF handler with optional configuration"""
-        self.config = config or {}
-        self.chunk_size = self.config.get('chunk_size', 5)  # Pages per chunk
-        self.max_workers = self.config.get('max_workers', 2)  # Parallel workers
-        self.temp_dir = self.config.get('temp_dir')
+    This class provides methods to process large PDFs in chunks to prevent memory issues,
+    with support for parallel processing and automatic retries.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the LargePDFHandler with configuration.
         
-        # Create temp directory if not provided
-        if not self.temp_dir:
-            self.temp_dir = tempfile.mkdtemp(prefix="ocr_large_pdf_")
-        else:
-            os.makedirs(self.temp_dir, exist_ok=True)
+        Args:
+            config: Optional configuration dictionary with the following keys:
+                - chunk_size: Number of pages per processing chunk (default: 5)
+                - max_workers: Maximum number of parallel workers (default: 2)
+                - temp_dir: Directory for temporary files (default: system temp dir)
+                - max_retries: Maximum number of retries for failed chunks (default: 2)
+                - pdf_timeout: Timeout in seconds for PDF operations (default: 300)
+        """
+        self.config = {
+            'chunk_size': 5,
+            'max_workers': 2,
+            'max_retries': 2,
+            'pdf_timeout': 300,
+            'cleanup_temp': True,
+            **(config or {})
+        }
+        
+        self.chunk_size = max(1, int(self.config['chunk_size']))
+        self.max_workers = max(1, int(self.config['max_workers']))
+        self.max_retries = max(0, int(self.config['max_retries']))
+        self.temp_dir = self.config.get('temp_dir')
+        self.cleanup_temp = bool(self.config['cleanup_temp'])
+        
+        # Validate and create temp directory
+        self._setup_temp_dir()
+    
+    def _setup_temp_dir(self) -> None:
+        """Set up temporary directory for processing."""
+        try:
+            if not self.temp_dir:
+                self.temp_dir = tempfile.mkdtemp(prefix="ocr_large_pdf_")
+                logger.debug(f"Created temporary directory: {self.temp_dir}")
+            else:
+                os.makedirs(self.temp_dir, exist_ok=True)
+                logger.debug(f"Using existing temp directory: {self.temp_dir}")
+                
+            # Verify write access
+            test_file = os.path.join(self.temp_dir, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.unlink(test_file)
+                
+        except (OSError, IOError) as e:
+            logger.error(f"Failed to set up temp directory: {e}")
+            raise RuntimeError(f"Failed to set up temporary directory: {e}") from e
     
     def process(self, pdf_path: str, **kwargs) -> Dict[str, Any]:
         """
@@ -493,7 +551,7 @@ def get_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
         logger.error(f"Error getting PDF metadata: {e}")
         return {'error': str(e)}
 
-def is_large_pdf(pdf_path: str, threshold_pages: int = 10, threshold_size_mb: int = 5) -> bool:
+def is_large_pdf(pdf_path: str, threshold_pages: int = 10, threshold_size_mb: int = 100) -> bool:
     """
     Determine if a PDF should be treated as 'large' based on page count and file size
     

@@ -42,7 +42,7 @@ async function testNanoVLMService() {
     }
     
     // Test different document types
-    const testCases = [
+    const testCases: Array<{documentType: 'general' | 'handwritten' | 'table' | 'poor_quality', description: string}> = [
       { documentType: 'general', description: 'General document' },
       { documentType: 'handwritten', description: 'Handwritten text' },
       { documentType: 'table', description: 'Table data' },

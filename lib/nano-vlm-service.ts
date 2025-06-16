@@ -18,6 +18,10 @@ export interface OCRResult {
   structuredData?: any;
   processingTime: number;
   layout?: any[];
+  metadata?: {
+    outputPath?: string;
+    [key: string]: any;
+  };
 }
 
 export class NanoVLMService {
@@ -124,7 +128,9 @@ export class NanoVLMService {
         structuredData: outputData.structured_data,
         layout: outputData.layout,
         processingTime: Date.now() - startTime,
-        outputPath // Include output file path
+        metadata: {
+          outputPath // Move outputPath to metadata
+        }
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

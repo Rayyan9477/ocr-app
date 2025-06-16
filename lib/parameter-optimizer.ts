@@ -95,10 +95,10 @@ export class ParameterOptimizer {
   }
   
   private generateParameterCombinations() {
-    const combinations = [];
+    const combinations: Array<Record<string, number>> = [];
     const paramNames = Object.keys(this.config.parameters);
     
-    const generateCombination = (index: number, current: any) => {
+    const generateCombination = (index: number, current: Record<string, number>) => {
       if (index === paramNames.length) {
         combinations.push({ ...current });
         return;

@@ -42,27 +42,52 @@ export class NanoVLMService implements ModelService {
     }
   }
 
-  async processDocument(filePath: string, options: ProcessOptions = {}): Promise<OCRResult> {
+  async processImage(imagePath: string): Promise<OCRResult> {
     try {
       if (!this.initialized) {
         await this.initialize();
       }
 
-      const result = await this.runInference(filePath, options);
+      const result = await this.runInference(imagePath, {
+        enhancementMode: 'standard',
+        language: 'en'
+      });
 
       return {
         text: result.text,
         confidence: result.confidence,
-        engine: this.modelId,
         metadata: {
-          enhancementMode: options.enhancementMode || 'standard',
-          processingTime: result.processingTime
+          engine: this.modelId,
+          processingTime: result.processingTime || 0
         }
       };
     } catch (error) {
       logger.error('NanoVLM processing failed:', error);
       throw error;
     }
+  }
+
+  async getCapabilities(): Promise<Record<string, any>> {
+    return {
+      model: this.modelId,
+      capabilities: ['ocr', 'document_analysis'],
+      supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko'],
+      maxImageSize: '10MB',
+      requiresInitialization: true
+    };
+  }
+
+  // Keep the original processDocument method for backward compatibility
+  async processDocument(filePath: string, options: ProcessOptions = {}): Promise<any> {
+    const result = await this.processImage(filePath);
+    return {
+      ...result,
+      engine: this.modelId,
+      metadata: {
+        ...result.metadata,
+        enhancementMode: options.enhancementMode || 'standard'
+      }
+    };
   }
 
   private async runInference(imagePath: string, options: ProcessOptions): Promise<any> {
@@ -97,8 +122,9 @@ export class NanoVLMService implements ModelService {
           try {
             const result = JSON.parse(output);
             resolve(result);
-          } catch (e) {
-            reject(new Error(`Failed to parse NanoVLM output: ${e.message}`));
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            reject(new Error(`Failed to parse NanoVLM output: ${errorMessage}`));
           }
         } else {
           reject(new Error(`NanoVLM process failed: ${error}`));
@@ -124,7 +150,5 @@ export class NanoVLMService implements ModelService {
     });
   }
 
-  async getCapabilities(): Promise<Record<string, any>> {
-    return modelRegistry[this.modelId].capabilities;
-  }
+  // getCapabilities method is already implemented above
 }

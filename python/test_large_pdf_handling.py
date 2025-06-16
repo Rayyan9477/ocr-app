@@ -65,7 +65,7 @@ def test_large_pdf_handler(pdf_path, metrics_aggregator):
         'max_workers': 2
     })
     
-    # Check if the PDF is large
+    # Check if the PDF is large (using test-specific threshold for small test files)
     if not is_large_pdf(pdf_path, threshold_pages=2, threshold_size_mb=1):
         logger.warning(f"PDF {pdf_path} is not considered large, but testing anyway")
     

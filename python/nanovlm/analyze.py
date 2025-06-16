@@ -2,10 +2,26 @@
 Document analysis module for NanoVLM
 """
 import os
-import cv2
-import numpy as np
-from PIL import Image
 import logging
+from typing import Union, Any
+
+# Try to import optional dependencies with fallbacks
+try:
+    import cv2
+    import numpy as np
+    HAS_CV2 = True
+except ImportError as e:
+    logging.warning(f"OpenCV not available: {e}")
+    HAS_CV2 = False
+    cv2 = None
+    np = None
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError as e:
+    logging.warning(f"PIL not available: {e}")
+    HAS_PIL = False
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +29,24 @@ def analyze_document(image_path: str) -> dict:
     """
     Analyze a document to determine its characteristics
     """
+    if not HAS_CV2:
+        # Return basic analysis without OpenCV
+        return {
+            "hasHandwriting": False,
+            "hasTables": False,
+            "poorQuality": False,
+            "complexLayout": False,
+            "confidence": {
+                "handwriting": 0.5,
+                "tables": 0.5,
+                "quality": 0.8,
+                "layout": 0.8
+            },
+            "documentType": "general",
+            "averageConfidence": 0.65,
+            "error": "OpenCV not available for detailed analysis"
+        }
+    
     try:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image file not found: {image_path}")
@@ -68,8 +102,13 @@ def analyze_document(image_path: str) -> dict:
             }
         }
 
-def detect_handwriting(gray_img: np.ndarray) -> bool:
+from typing import Union, Any
+
+def detect_handwriting(gray_img: Union[Any, None]) -> bool:
     """Detect presence of handwriting in an image"""
+    if not HAS_CV2 or gray_img is None:
+        return False
+    
     try:
         edges = cv2.Canny(gray_img, 50, 150)
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -86,8 +125,10 @@ def detect_handwriting(gray_img: np.ndarray) -> bool:
     except:
         return False
 
-def detect_tables(gray_img: np.ndarray) -> bool:
+def detect_tables(gray_img: Union[Any, None]) -> bool:
     """Detect presence of tables in an image"""
+    if not HAS_CV2 or gray_img is None:
+        return False
     try:
         edges = cv2.Canny(gray_img, 50, 150)
         lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=100, maxLineGap=10)
@@ -109,8 +150,11 @@ def detect_tables(gray_img: np.ndarray) -> bool:
     except:
         return False
 
-def check_poor_quality(gray_img: np.ndarray) -> bool:
+def check_poor_quality(gray_img: Union[Any, None]) -> bool:
     """Check if image is of poor quality"""
+    if not HAS_CV2 or gray_img is None:
+        return False
+    
     try:
         blur = cv2.Laplacian(gray_img, cv2.CV_64F).var()
         brightness = np.mean(gray_img)
@@ -122,8 +166,11 @@ def check_poor_quality(gray_img: np.ndarray) -> bool:
     except:
         return False
 
-def analyze_layout_complexity(gray_img: np.ndarray) -> bool:
+def analyze_layout_complexity(gray_img: Union[Any, None]) -> bool:
     """Analyze layout complexity of the document"""
+    if not HAS_CV2 or gray_img is None:
+        return False
+    
     try:
         edges = cv2.Canny(gray_img, 50, 150)
         contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)

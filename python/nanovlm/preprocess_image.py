@@ -4,20 +4,42 @@ Image preprocessing module for nanoVLM OCR optimization
 """
 
 import argparse
-import cv2
-import numpy as np
-from PIL import Image, ImageEnhance
 import sys
 import os
+import logging
+
+# Try to import optional dependencies with fallbacks
+try:
+    import cv2
+    import numpy as np
+    HAS_CV2 = True
+except ImportError as e:
+    logging.warning(f"OpenCV not available: {e}")
+    HAS_CV2 = False
+    cv2 = None
+    np = None
+
+try:
+    from PIL import Image, ImageEnhance
+    HAS_PIL = True
+except ImportError as e:
+    logging.warning(f"PIL not available: {e}")
+    HAS_PIL = False
 
 def enhance_resolution(image, factor=2):
     """Enhance image resolution using super-resolution techniques"""
+    if not HAS_CV2:
+        raise ImportError("OpenCV is required for resolution enhancement")
+    
     height, width = image.shape[:2]
     new_height, new_width = height * factor, width * factor
     return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
 
 def denoise_image(image):
     """Remove noise from image using Non-local Means Denoising"""
+    if not HAS_CV2:
+        raise ImportError("OpenCV is required for image denoising")
+    
     if len(image.shape) == 3:
         return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
     else:
@@ -25,6 +47,9 @@ def denoise_image(image):
 
 def deskew_image(image):
     """Correct skew in document images"""
+    if not HAS_CV2:
+        raise ImportError("OpenCV is required for image deskewing")
+    
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     
     # Use HoughLines to detect text lines
@@ -53,12 +78,18 @@ def deskew_image(image):
 
 def adjust_contrast_brightness(image, contrast=1.0, brightness=0):
     """Adjust image contrast and brightness"""
+    if not HAS_CV2:
+        raise ImportError("OpenCV is required for contrast/brightness adjustment")
+    
     if contrast != 1.0 or brightness != 0:
         image = cv2.convertScaleAbs(image, alpha=contrast, beta=brightness)
     return image
 
 def preprocess_image(input_path, output_path, **options):
     """Main preprocessing function"""
+    if not HAS_CV2:
+        raise ImportError("OpenCV is required for image preprocessing")
+    
     try:
         # Load image
         image = cv2.imread(input_path)

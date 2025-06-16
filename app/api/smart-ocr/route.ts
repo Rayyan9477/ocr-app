@@ -22,9 +22,13 @@ export async function POST(request: NextRequest) {
     // Extract document type and engine preference from the request
     const formData = await request.formData();
     
-    // Log all form data keys for debugging
+    // Log all form data keys for debugging (only in development)
     const formKeys = Array.from(formData.keys());
-    serverLogger.info(`Form data keys received: ${formKeys.join(', ')}`);
+    if (process.env.NODE_ENV === 'development') {
+      serverLogger.info(`Form data keys received: ${formKeys.join(', ')}`);
+    } else {
+      serverLogger.debug(`Form data keys: ${formKeys.length} keys`);
+    }
     
     const file = formData.get('image') as File || formData.get('file') as File;
     const documentType = formData.get('documentType') as string || 'general';

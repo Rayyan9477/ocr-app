@@ -21,6 +21,25 @@ import shutil
 import concurrent.futures
 from PIL import Image, ImageEnhance, ImageFilter
 
+# Try to import optional dependencies with proper error handling
+try:
+    import cv2
+    import numpy as np
+    HAS_CV2 = True
+except ImportError as e:
+    logging.warning(f"OpenCV not available: {e}")
+    HAS_CV2 = False
+    cv2 = None
+    np = None
+
+try:
+    import pytesseract
+    HAS_TESSERACT = True
+except ImportError as e:
+    logging.warning(f"pytesseract not available: {e}")
+    HAS_TESSERACT = False
+    pytesseract = None
+
 # Import nanoVLM modules
 from .preprocess_image import denoise_image, deskew_image, adjust_contrast_brightness, enhance_resolution
 from .analyze import analyze_document
@@ -359,9 +378,8 @@ class NanoVLMProcessor:
 
     def _process_handwritten(self, image: Image.Image) -> str:
         """Process handwritten text with specialized enhancement"""
-        import cv2
-        import numpy as np
-        import pytesseract
+        if not HAS_CV2 or not HAS_TESSERACT:
+            raise ProcessingError("Required dependencies (opencv-python, pytesseract) not available for handwritten text processing")
         
         # Convert PIL Image to numpy array for OpenCV
         img_np = np.array(image)
@@ -383,9 +401,8 @@ class NanoVLMProcessor:
 
     def _process_table(self, image: Image.Image) -> str:
         """Process tabular data with structure preservation"""
-        import cv2
-        import numpy as np
-        import pytesseract
+        if not HAS_CV2 or not HAS_TESSERACT:
+            raise ProcessingError("Required dependencies (opencv-python, pytesseract) not available for table processing")
         
         # Convert PIL Image to numpy array for OpenCV
         img_np = np.array(image)
@@ -407,9 +424,8 @@ class NanoVLMProcessor:
 
     def _process_poor_quality(self, image: Image.Image) -> str:
         """Process poor quality documents with image enhancement"""
-        import cv2
-        import numpy as np
-        import pytesseract
+        if not HAS_CV2 or not HAS_TESSERACT:
+            raise ProcessingError("Required dependencies (opencv-python, pytesseract) not available for poor quality processing")
         
         # Convert PIL Image to numpy array for OpenCV
         img_np = np.array(image)
@@ -439,9 +455,8 @@ class NanoVLMProcessor:
 
     def _process_general(self, image: Image.Image) -> str:
         """Process general documents"""
-        import cv2
-        import numpy as np
-        import pytesseract
+        if not HAS_CV2 or not HAS_TESSERACT:
+            raise ProcessingError("Required dependencies (opencv-python, pytesseract) not available for general processing")
         
         # Convert PIL Image to numpy array for OpenCV
         img_np = np.array(image)
@@ -511,6 +526,11 @@ class NanoVLMProcessor:
             # First attempt with original image (unless enhance_resolution is True)
             return image_path
         
+        if not HAS_CV2:
+            # If OpenCV is not available, return original path
+            self.logger.warning("OpenCV not available for preprocessing, using original image")
+            return image_path
+        
         # For subsequent retries, apply different preprocessing strategies
         try:
             # Create a temporary file for the processed image
@@ -518,7 +538,6 @@ class NanoVLMProcessor:
                 temp_path = temp_file.name
             
             # Load the image with OpenCV for preprocessing
-            import cv2
             img = cv2.imread(image_path)
             
             if img is None:

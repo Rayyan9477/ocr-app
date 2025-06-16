@@ -92,5 +92,3 @@ if (app && app.use) {
 
 // Export logger for use in other modules
 module.exports = { app, logger };
-
-module.exports = app;

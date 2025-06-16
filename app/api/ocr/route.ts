@@ -145,162 +145,7 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
   return command;
 };
 
-// Handle multi-engine OCR fallback
-async function handleMultiEngineFallback(inputPath: string, fileName: string, primaryError: any) {
-  logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback with coordination`);
-  
-  try {
-    const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
-    await mkdir(fallbackOutputDir, { recursive: true });
-    
-    // Try coordinated multi-engine approach first
-    const mergedResult = await multiEngineOCR.processWithMultipleEnginesAndMerge(
-      inputPath,
-      ['tesseract', 'ocrmypdf'] // Use available engines
-    );
-    
-    if (mergedResult.success) {
-      const fallbackFinalPath = join(
-        process.cwd(),
-        "processed",
-        `${path.basename(fileName, '.pdf')}_${Date.now()}_coordinated_ocr.pdf`
-      );
-      
-      // Copy the merged result file if it exists
-      if (mergedResult.outputPath && existsSync(mergedResult.outputPath)) {
-        await import('fs/promises').then(fs => 
-          fs.copyFile(mergedResult.outputPath!, fallbackFinalPath)
-        );
-      }
-      
-      // Extract confidence scores for merged result if enabled
-      let fallbackConfidenceData: DocumentConfidence | null = null;
-      if (appConfig.confidence.enableConfidenceTracking) {
-        try {
-          fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
-          if (fallbackConfidenceData) {
-            await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
-          }
-        } catch (confidenceError) {
-          logger.warn(`Failed to extract confidence scores for coordinated result: ${confidenceError}`);
-        }
-      }
-      
-      return {
-        success: true,
-        inputFile: fileName,
-        outputFile: path.basename(fallbackFinalPath),
-        engine: mergedResult.engine,
-        warning: "Primary OCR failed, succeeded with coordinated multi-engine approach",
-        details: `Coordinated processing with engines: ${mergedResult.engine}`,
-        confidence: fallbackConfidenceData ? normalizeConfidenceData(fallbackConfidenceData.averageConfidence).averageConfidence : mergedResult.confidence,
-        confidenceData: fallbackConfidenceData ? {
-          hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
-          warningPages: fallbackConfidenceData.warningPages,
-          errorPages: fallbackConfidenceData.errorPages,
-          pageCount: fallbackConfidenceData.pageConfidences.length,
-          normalizedConfidence: normalizeConfidenceData(fallbackConfidenceData.averageConfidence)
-        } : {
-          averageConfidence: mergedResult.confidence,
-          hasLowConfidencePages: mergedResult.confidence < 85,
-          warningPages: mergedResult.confidence < 85 && mergedResult.confidence >= 70 ? [1] : [],
-          errorPages: mergedResult.confidence < 70 ? [1] : [],
-          normalizedConfidence: normalizeConfidenceData(mergedResult.confidence)
-        }
-      };
-    }
-    
-    // If coordinated approach failed, fall back to individual engine approach
-    const ensembleResults = await multiEngineOCR.processWithMultipleEngines(
-      inputPath,
-      ['tesseract', 'ocrmypdf'] // Use available engines
-    );
-    
-    // Check if any engine produced successful results
-    const successfulResults = ensembleResults.filter(result => result.success);
-    if (successfulResults.length > 0) {
-      // Find the best result based on confidence
-      const bestResult = successfulResults.reduce((best, current) => 
-        (current.confidence > best.confidence) ? current : best, successfulResults[0]);
-      
-      if (bestResult.outputPath) {
-        // Move the successful result to standard processed directory
-        const fallbackFinalPath = join(
-          process.cwd(),
-          "processed",
-          `${path.basename(fileName, '.pdf')}_${Date.now()}_fallback_ocr.pdf`
-        );
-      
-        // Copy the result file
-        await import('fs/promises').then(fs => 
-          fs.copyFile(bestResult.outputPath!, fallbackFinalPath)
-        );
-        
-        // Extract confidence scores for fallback result if enabled
-        let fallbackConfidenceData: DocumentConfidence | null = null;
-        if (appConfig.confidence.enableConfidenceTracking) {
-          try {
-            fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
-            if (fallbackConfidenceData) {
-              await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
-            }
-          } catch (confidenceError) {
-            logger.warn(`Failed to extract confidence scores for fallback result: ${confidenceError}`);
-          }
-        }
-        
-        return {
-          success: true,
-          inputFile: fileName,
-          outputFile: path.basename(fallbackFinalPath),
-          engine: bestResult.engine,
-          warning: "Primary OCR failed, succeeded with multi-engine fallback",
-          details: `Fallback used ${successfulResults.length}/${ensembleResults.length} engines successfully`,
-          engines: {
-            used: ensembleResults.map(r => r.engine),
-            successful: successfulResults.map(r => r.engine),
-            failed: ensembleResults.filter(r => !r.success).map(r => r.engine)
-          },
-          customizationApplied: false,
-          confidence: fallbackConfidenceData ? normalizeConfidenceData(fallbackConfidenceData.averageConfidence).averageConfidence : undefined,
-          confidenceData: fallbackConfidenceData ? {
-            hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
-            warningPages: fallbackConfidenceData.warningPages,
-            errorPages: fallbackConfidenceData.errorPages,
-            pageCount: fallbackConfidenceData.pageConfidences.length,
-            normalizedConfidence: normalizeConfidenceData(fallbackConfidenceData.averageConfidence)
-          } : undefined
-        };
-      }
-    }
-    
-    // If we reach here, all engines failed
-    logger.error(`Multi-engine fallback also failed for ${fileName}`);
-    return {
-      success: false,
-      error: "Both primary OCR and multi-engine fallback failed",
-      inputFile: fileName,
-      details: {
-        primaryError: primaryError instanceof Error ? primaryError.message : String(primaryError),
-        fallbackEngines: ensembleResults.map(r => ({
-          engine: r.engine,
-          error: r.error
-        }))
-      }
-    };
-  } catch (fallbackError) {
-    logger.error(`Multi-engine fallback failed with exception: ${fallbackError}`);
-    return {
-      success: false,
-      error: "Both primary OCR and multi-engine fallback failed",
-      inputFile: fileName,
-      details: {
-        primaryError: primaryError instanceof Error ? primaryError.message : String(primaryError),
-        fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-      }
-    };
-  }
-}
+// Removed handleMultiEngineFallback function as part of fallback logic removal
 
 // Main POST handler
 export async function POST(request: NextRequest) {
@@ -439,76 +284,18 @@ export async function POST(request: NextRequest) {
             warningPages: confidenceData.warningPages,
             errorPages: confidenceData.errorPages,
             pageCount: confidenceData.pageConfidences.length,
-            normalizedConfidence: normalizeConfidenceData(confidenceData.averageConfidence)
+            normalizedConfidence: confidenceData.averageConfidence
           } : undefined
         });
       }
       
-      // Check for specific error about page already having text first
-      if ((errorMessage.includes('page already has text') || errorMessage.includes('PriorOcrFoundError')) && !options.force) {
-        logger.debug("Document has existing text, retrying with force-ocr");
-        
-        // Create a new command with force-ocr enabled and PDF output type to avoid bloat
-        const retryOptions = { ...options, force: true };
-        const retryOutputPath = join(
-          process.cwd(),
-          "processed",
-          `${path.basename(fileName, '.pdf')}_${Date.now()}_forced_ocr.pdf`
-        );
-        
-        const retryCommand = buildOCRCommand(inputPath, retryOutputPath, retryOptions);
-        logger.debug("Retrying OCR with force option");
-        
-        try {
-          // Execute the retry command
-          const retryResult = await execWithTimeout(retryCommand, appConfig.ocrTimeout || 600000);
-          
-          if (existsSync(retryOutputPath)) {
-            // Extract confidence scores for retry output if enabled
-            let retryConfidenceData: DocumentConfidence | null = null;
-            if (appConfig.confidence.enableConfidenceTracking) {
-              try {
-                // Use the processed file for confidence analysis
-                retryConfidenceData = await extractConfidenceScores(inputPath, retryOutputPath, true);
-                if (retryConfidenceData) {
-                  await saveConfidenceData(retryConfidenceData, retryOutputPath);
-                }
-              } catch (confidenceError) {
-                logger.warn("Failed to extract confidence scores for retry");
-              }
-            }
-
-            // Successful retry with force option
-            return createJsonResponse({
-              success: true,
-              inputFile: fileName,
-              outputFile: path.basename(retryOutputPath),
-              details: "Document had existing text layer. Successfully processed with --force-ocr option.",
-              warnings: retryResult.stderr || undefined,
-              confidence: retryConfidenceData ? normalizeConfidenceData(retryConfidenceData.averageConfidence).averageConfidence : undefined,
-              confidenceData: retryConfidenceData ? {
-                hasLowConfidencePages: retryConfidenceData.hasLowConfidencePages,
-                warningPages: retryConfidenceData.warningPages,
-                errorPages: retryConfidenceData.errorPages,
-                pageCount: retryConfidenceData.pageConfidences.length,
-                normalizedConfidence: normalizeConfidenceData(retryConfidenceData.averageConfidence)
-              } : undefined
-            });
-          }
-        } catch (retryError) {
-          console.error("OCR retry with force option failed:", retryError);
-          return createJsonResponse({
-            success: false,
-            error: "OCR process failed even with force option",
-            inputFile: fileName,
-            details: retryError instanceof Error ? retryError.message : String(retryError)
-          }, 500);
-        }
-      }
-      
-      // Try multi-engine OCR as fallback when primary OCR fails
-      const fallbackResult = await handleMultiEngineFallback(inputPath, fileName, execError);
-      return createJsonResponse(fallbackResult, fallbackResult.success ? 200 : 500);
+      // Return error response for failed OCR
+      return createJsonResponse({
+        success: false,
+        error: "OCR processing failed",
+        details: errorMessage,
+        inputFile: fileName
+      }, 500);
     }
   } catch (error) {
     console.error("Unexpected error during OCR process:", error);

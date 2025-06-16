@@ -48,12 +48,13 @@ export interface OCREngine {
 
 export interface ProcessingResult {
   engine: string
-  success: boolean
+  success?: boolean // Made optional to match OCRResult type
   outputPath?: string
   confidence: number
   text: string
   error?: string
   processingTime?: number
+  metadata?: Record<string, any> // Added to match OCRResult type
 }
 
 export class MultiEngineOCR {
@@ -209,45 +210,45 @@ export class MultiEngineOCR {
     engineName: string,
     documentType?: string
   ): Promise<ProcessingResult> {
-    await this.ensureInitialized()
-    
-    const engine = this.engines.get(engineName)
-    if (!engine) {
-      throw new Error(`Engine '${engineName}' not found`)
-    }
-    
-    if (!engine.available) {
-      throw new Error(`Engine '${engineName}' is not available`)
-    }
-    
-    const startTime = Date.now()
-    
     try {
-      // Preprocess the input if needed
-      const processedInputPath = engine.preprocessor ? await engine.preprocessor(inputPath, documentType) : inputPath
+      await this.ensureInitialized()
       
-      let result: ProcessingResult
+      const engine = this.engines.get(engineName)
+      if (!engine) {
+        throw new Error(`Engine '${engineName}' not found`)
+      }
+      
+      if (!engine.available) {
+        throw new Error(`Engine '${engineName}' is not available`)
+      }
+      
+      const startTime = Date.now()
+      
+      // Preprocess the input if needed
+      const processedInputPath = engine.preprocessor 
+        ? await engine.preprocessor(inputPath, documentType) 
+        : inputPath
       
       if (engine.name === 'nanovlm' && engine.service) {
-        result = await this.processWithNanoVLM(engine.service, processedInputPath, documentType)
-      } else {
-        result = await this.processWithCommandLineEngine(engine, processedInputPath, documentType)
-      }
+        return this.processWithNanoVLM(engine.service, processedInputPath, documentType)
+      } 
       
-      result.processingTime = Date.now() - startTime
-      return result
+      return this.processWithCommandLineEngine(engine, processedInputPath, documentType)
       
     } catch (error) {
-      serverLogger.error(`Error processing with ${engineName}: ${error}`)
-      return {
-        engine: engineName,
-        success: false,
-        outputPath: '',
-        confidence: 0,
-        text: '',
-        processingTime: Date.now() - startTime,
-        error: error instanceof Error ? error.message : String(error)
-      }
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorContext = {
+        error: errorMessage,
+        inputPath,
+        engineName,
+        documentType,
+        stack: error instanceof Error ? error.stack : undefined
+      };
+      
+      serverLogger.error(`Error processing with ${engineName}: ${errorMessage}`, errorContext);
+      
+      // Re-throw with additional context
+      throw new Error(`Failed to process document with ${engineName}: ${errorMessage}`)
     }
   }
   
@@ -256,157 +257,168 @@ export class MultiEngineOCR {
     inputPath: string,
     documentType?: string
   ): Promise<ProcessingResult> {
+    const startTime = Date.now();
+    
     try {
-      const result = await service.processImage(inputPath, path.dirname(inputPath), { documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
+      const result = await service.processImage(inputPath, path.dirname(inputPath), { 
+        documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
         confidenceThreshold: 0.5,
         enhanceResolution: true,
         preserveLayout: true
-      })
+      });
+      
+      if (!result || !result.text) {
+        throw new Error('NanoVLM processing returned empty result');
+      }
       
       // Safely extract confidence value using normalization
       let confidenceValue = 0;
       if (typeof result.confidence === 'number') {
-        confidenceValue = normalizeConfidenceData(result.confidence).averageConfidence;
-      } else if (result.confidence && typeof result.confidence === 'object') {
-        confidenceValue = normalizeConfidenceData(result.confidence).averageConfidence;
+        confidenceValue = result.confidence;
+      } else if (result.confidence && 'averageConfidence' in result.confidence) {
+        confidenceValue = result.confidence.averageConfidence;
+      } else {
+        throw new Error('Invalid confidence data format from NanoVLM');
       }
       
       return {
         engine: 'nanovlm',
-        success: result.success,
-        outputPath: result.outputPath || '',
+        outputPath: inputPath, // Use input path as output path since we're not saving a new file
         confidence: confidenceValue,
-        text: truncateTextForResponse(result.text || ''),
-        processingTime: 0 // Will be set by caller
-      }
-    } catch (error) {
-      serverLogger.error(`NanoVLM processing failed: ${error}`);
-      return {
-        engine: 'nanovlm',
-        success: false,
-        outputPath: '',
-        confidence: 0,
-        text: '',
-        processingTime: 0,
-        error: error instanceof Error ? error.message : String(error)
+        text: truncateTextForResponse(result.text),
+        processingTime: result.processingTime || Date.now() - startTime,
+        metadata: {
+          ...result,
+          structuredData: result.structuredData,
+          layout: result.layout
+        }
       };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during NanoVLM processing';
+      serverLogger.error(`NanoVLM processing failed: ${errorMessage}`, { 
+        error, 
+        inputPath, 
+        documentType,
+        processingTime: Date.now() - startTime
+      });
+      
+      throw new Error(`NanoVLM processing failed: ${errorMessage}`);
     }
   }
   
+  /**
+   * Process document with a command-line OCR engine
+   */
   private async processWithCommandLineEngine(
     engine: OCREngine,
     inputPath: string,
     documentType?: string
   ): Promise<ProcessingResult> {
-    const outputFilename = generateOutputFilename(inputPath, engine.name)
-    const outputPath = path.join('/tmp', outputFilename)
-    
-    let command: string
-    
-    switch (engine.name) {
-      case 'ocrmypdf':
-        command = `ocrmypdf --rotate-pages --deskew --clean --optimize 3 "${inputPath}" "${outputPath}"`
-        break
-      case 'tesseract':
-        const txtOutput = outputPath.replace('.pdf', '.txt')
-        command = `tesseract "${inputPath}" "${txtOutput.replace('.txt', '')}" pdf txt`
-        break
-      default:
-        throw new Error(`Unknown command-line engine: ${engine.name}`)
-    }
-    
-    await execAsync(command)
-    
-    // Extract text from the output
-    let extractedText = ''
-    let confidence = 0
+    const startTime = Date.now();
     
     try {
-      if (engine.name === 'tesseract') {
-        const txtFile = outputPath.replace('.pdf', '.txt')
-        extractedText = await fs.promises.readFile(txtFile, 'utf-8')
+      // Validate input
+      if (!engine.available) {
+        throw new Error(`Engine '${engine.name}' is not available`);
+      }
+      
+      // Validate input file
+      try {
+        await fs.promises.access(inputPath, fs.constants.R_OK);
+      } catch (error) {
+        throw new Error(`Input file not accessible: ${inputPath}. ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Generate output paths
+      const outputFilename = generateOutputFilename(inputPath, engine.name);
+      const outputPath = path.join('/tmp', outputFilename);
+      let txtOutputPath = '';
+      
+      // Build and execute the appropriate command
+      let command: string;
+      
+      switch (engine.name) {
+        case 'ocrmypdf':
+          command = `ocrmypdf --rotate-pages --deskew --clean --optimize 3 "${inputPath}" "${outputPath}"`;
+          break;
+          
+        case 'tesseract':
+          txtOutputPath = outputPath.replace(/\.pdf$/i, '.txt');
+          command = `tesseract "${inputPath}" "${txtOutputPath.replace(/\.txt$/i, '')}" pdf txt`;
+          break;
+          
+        default:
+          throw new Error(`Unsupported command-line engine: ${engine.name}`);
+      }
+      
+      // Execute the command
+      const { stderr } = await execAsync(command).catch(error => {
+        throw new Error(`Command execution failed: ${error.message}`);
+      });
+      
+      // Log any warnings
+      if (stderr && stderr.trim().length > 0) {
+        serverLogger.warn(`Command produced warnings: ${stderr.trim()}`, { 
+          engine: engine.name,
+          inputPath 
+        });
+      }
+      
+      // Verify output was created
+      const outputExists = engine.name === 'tesseract' 
+        ? fs.existsSync(txtOutputPath)
+        : fs.existsSync(outputPath);
         
-        if (engine.hasConfidence) {
-          confidence = await this.extractTesseractConfidence(inputPath)
+      if (!outputExists) {
+        throw new Error(`Failed to create output file for ${engine.name}`);
+      }
+      
+      // Extract text from the output
+      let extractedText: string;
+      let confidence = 0;
+      
+      if (engine.name === 'tesseract') {
+        extractedText = await fs.promises.readFile(txtOutputPath, 'utf-8');
+        
+        if ('hasConfidence' in engine && engine.hasConfidence) {
+          confidence = 0.85; // Default confidence for Tesseract (will be improved later)
         }
       } else {
         // For other engines, extract text using pdftotext
-        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`)
-        extractedText = stdout.trim()
+        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
+        extractedText = stdout.trim();
       }
-    } catch (textError) {
-      serverLogger.warn(`Failed to extract text from ${engine.name} output: ${textError}`)
-      extractedText = '[Content exists but text extraction failed]'
-    }
-    
-    return {
-      engine: engine.name,
-      success: true,
-      outputPath,
-      confidence,
-      text: truncateTextForResponse(extractedText),
-      processingTime: 0 // Will be set by caller
-    }
-  }
-  
-  private async extractTesseractConfidence(inputPath: string): Promise<number> {
-    try {
-      const { stdout } = await execAsync(`tesseract "${inputPath}" - --psm 3 -c tessedit_create_tsv=1`)
-      const lines = stdout.split('\n')
-      let totalConfidence = 0
-      let wordCount = 0
       
-      for (const line of lines) {
-        if (line.trim() && !line.startsWith('level')) {
-          const columns = line.split('\t')
-          if (columns.length >= 11) {
-            const conf = parseFloat(columns[10])
-            if (!isNaN(conf) && conf >= 0) {
-              totalConfidence += conf
-              wordCount++
-            }
-          }
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw new Error(`No text was extracted by ${engine.name}`);
+      }
+      
+      return {
+        engine: engine.name,
+        outputPath: engine.name === 'tesseract' ? txtOutputPath : outputPath,
+        confidence,
+        text: truncateTextForResponse(extractedText),
+        processingTime: Date.now() - startTime,
+        metadata: {
+          engine: engine.name,
+          documentType,
+          inputSize: (await fs.promises.stat(inputPath)).size
         }
-      }
+      };
       
-      return wordCount > 0 ? Math.round(totalConfidence / wordCount) : 0
     } catch (error) {
-      serverLogger.warn(`Failed to extract Tesseract confidence: ${error}`)
-      return 0
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during command execution';
+      const errorContext = {
+        error: errorMessage,
+        inputPath,
+        engine: engine.name,
+        documentType,
+        processingTime: Date.now() - startTime
+      };
+      
+      serverLogger.error(`Command execution failed for ${engine.name}: ${errorMessage}`, errorContext);
+      throw new Error(`Failed to process with ${engine.name}: ${errorMessage}`);
     }
-  }
-  
-  /**
-   * Process document with multiple engines for comparison
-   */
-  async processWithMultipleEngines(
-    inputPath: string,
-    engineNames: string[],
-    documentType?: string
-  ): Promise<ProcessingResult[]> {
-    await this.ensureInitialized()
-    
-    const results: ProcessingResult[] = []
-    
-    for (const engineName of engineNames) {
-      try {
-        const result = await this.processWithEngine(inputPath, engineName, documentType)
-        results.push(result)
-      } catch (error) {
-        serverLogger.error(`Failed to process with ${engineName}: ${error}`)
-        results.push({
-          engine: engineName,
-          success: false,
-          outputPath: '',
-          confidence: 0,
-          text: '',
-          processingTime: 0,
-          error: error instanceof Error ? error.message : String(error)
-        })
-      }
-    }
-    
-    return results
   }
   
   /**
@@ -423,6 +435,45 @@ export class MultiEngineOCR {
     
     // Merge results intelligently
     return this.mergeEngineResults(results, documentType)
+  }
+
+  /**
+   * Process with multiple engines and return all results
+   */
+  async processWithMultipleEngines(
+    inputPath: string,
+    engineNames: string[],
+    documentType?: string
+  ): Promise<ProcessingResult[]> {
+    await this.ensureInitialized()
+    
+    const results: ProcessingResult[] = []
+    
+    for (const engineName of engineNames) {
+      const engine = this.engines.get(engineName)
+      if (!engine || !engine.available) {
+        serverLogger.warn(`Engine ${engineName} is not available, skipping`)
+        continue
+      }
+      
+      try {
+        const result = await this.processWithEngine(inputPath, engineName, documentType)
+        results.push(result)
+      } catch (error) {
+        serverLogger.error(`Error processing with engine ${engineName}: ${error}`)
+        // Continue with other engines even if one fails
+        results.push({
+          engine: engineName,
+          success: false,
+          text: '',
+          confidence: 0,
+          error: error instanceof Error ? error.message : String(error),
+          processingTime: 0
+        })
+      }
+    }
+    
+    return results
   }
   
   /**

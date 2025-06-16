@@ -52,17 +52,10 @@ export class IntegratedOCRService {
       );
 
       // Process with primary OCR engines
-      const primaryResults = await this.multiEngine.processWithMultipleEngines(
+      const primaryResult = await this.multiEngine.processWithEngine(
         inputPath,
-        ['tesseract', 'ocrmypdf'] // Default engines
+        'tesseract' // Use single engine for simplicity
       );
-
-      // Get the best result from primary engines (highest confidence)
-      const primaryResult = primaryResults.reduce((best, current) => {
-        const bestConfidence = getAverageConfidence(best.confidence);
-        const currentConfidence = getAverageConfidence(current.confidence);
-        return currentConfidence > bestConfidence ? current : best;
-      }, primaryResults[0]);
 
       // Normalize confidence data from primary result
       const normalizedPrimaryConfidence = normalizeConfidenceData(primaryResult.confidence);
@@ -188,7 +181,11 @@ export class IntegratedOCRService {
   async validateResults(results: OCRResult[]): Promise<boolean> {
     try {
       for (const result of results) {
-        if (!result.text || result.confidence < 0.6) {
+        // Get average confidence value for comparison
+        const normalizedConfidence = normalizeConfidenceData(result.confidence);
+        const confidenceValue = getAverageConfidence(normalizedConfidence);
+        
+        if (!result.text || confidenceValue < 0.6) {
           return false;
         }
       }

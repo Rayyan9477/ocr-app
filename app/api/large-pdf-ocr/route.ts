@@ -114,9 +114,11 @@ export async function POST(request: NextRequest) {
         args.push('--engine', preferredEngine);
       }
       
-      const cmd = ['python3', pythonScript, ...args];
+      // Use the virtual environment Python
+      const venvPython = join(process.cwd(), 'nanovlm_env', 'bin', 'python3');
+      const cmd = [venvPython, pythonScript, ...args];
       
-      serverLogger.debug(`Executing: python3 ${pythonScript} ${args.join(' ')}`);
+      serverLogger.debug(`Executing: ${venvPython} ${pythonScript} ${args.join(' ')}`);
       
       const { stdout, stderr } = await execAsync(cmd.join(' '));
       

@@ -208,8 +208,8 @@ export function isLargePdf(file: File): boolean {
     return false;
   }
   
-  // Consider PDFs larger than 5MB as large
-  const isLargeSize = file.size > 5 * 1024 * 1024; // 5MB
+  // Consider PDFs larger than 100MB as large
+  const isLargeSize = file.size > 100 * 1024 * 1024; // 100MB
   
   return isLargeSize;
 }

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Smart OCR command-line interface for nanoVLM
-Provides enhanced OCR processing with automatic fallback, error handling, and large PDF support
+
+Provides enhanced OCR processing with automatic fallback, robust error handling,
+and support for large PDFs and various document types.
 """
 
 import argparse
@@ -10,24 +12,70 @@ import sys
 import json
 import logging
 import time
-from pathlib import Path
-from typing import Dict, Any, List
-import time
-import glob
-from typing import Dict, Any, List, Optional
+import signal
 import traceback
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple, Union
+from datetime import datetime
 
 # Add the parent directory to the path so we can import nanovlm
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import after path modification
 from nanovlm import (
     NanoVLMProcessor,
     FallbackOCR,
     FallbackChain,
     create_standard_fallback_chain,
-    analyze_document
+    analyze_document,
+    OCRError,
+    ImageError,
+    ProcessingError
 )
 from nanovlm.large_pdf_handler import LargePDFHandler, is_large_pdf
-from nanovlm.logger import logger
+from nanovlm.logger import setup_logger, get_logger
+
+# Configure logging
+logger = get_logger('smart_ocr')
+
+# Global flag for graceful shutdown
+shutdown_requested = False
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals for graceful shutdown."""
+    global shutdown_requested
+    logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_requested = True
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+def validate_environment() -> None:
+    """Verify that all required dependencies and environment variables are set."""
+    try:
+        # Check for required binaries
+        required_binaries = ['tesseract', 'pdftoppm', 'pdfinfo']
+        for binary in required_binaries:
+            if not shutil.which(binary):
+                raise EnvironmentError(f"Required binary not found in PATH: {binary}")
+                
+        # Check Python version
+        if sys.version_info < (3, 8):
+            raise EnvironmentError("Python 3.8 or higher is required")
+            
+        # Check for required Python packages
+        try:
+            import pytesseract
+            import cv2
+            import numpy as np
+            from PIL import Image
+        except ImportError as e:
+            raise ImportError(f"Missing required Python package: {e.name}") from e
+            
+    except Exception as e:
+        logger.error(f"Environment validation failed: {str(e)}")
+        raise
 
 def process_files(args):
     """Process files according to command-line arguments"""
@@ -78,14 +126,17 @@ def process_files(args):
             
             # Check if this is a PDF file that should use large PDF handling
             is_pdf = file_path.lower().endswith('.pdf')
-            use_large_pdf_handler = (args.handle_large_pdf or args.chunked_processing) and is_pdf
             
-            # For large PDF handling, check if the PDF is actually large
-            if use_large_pdf_handler and not args.chunked_processing:
-                # Only use large PDF handler if the PDF is actually large
+            # Always check if PDF is actually large when using large PDF handler flags
+            if (args.handle_large_pdf or args.chunked_processing) and is_pdf:
+                # Check if the PDF is actually large using the thresholds
                 use_large_pdf_handler = is_large_pdf(file_path)
                 if not use_large_pdf_handler:
-                    logger.info(f"PDF {file_path} is not large, using standard processing")
+                    logger.info(f"PDF {file_path} is not large (threshold: 100MB/10 pages), using standard processing")
+                else:
+                    logger.info(f"PDF {file_path} detected as large, using large PDF handler")
+            else:
+                use_large_pdf_handler = False
             
             # Determine document type if automatic
             doc_type = args.document_type

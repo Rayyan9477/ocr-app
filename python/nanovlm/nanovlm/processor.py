@@ -1,12 +1,24 @@
 """
-NanoVLM processor implementation
+NanoVLM processor implementation - DEPRECATED
+
+WARNING: This nested module structure is deprecated.
+Please use the parent nanovlm.processor module instead.
 """
 import os
+import warnings
 import cv2
 import torch
 import logging
 from PIL import Image
 from transformers import AutoModelForVision2Seq, AutoProcessor, AutoTokenizer
+
+# Issue deprecation warning
+warnings.warn(
+    "The nested nanovlm.nanovlm.processor module is deprecated. "
+    "Please use nanovlm.processor instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 logger = logging.getLogger(__name__)
 

@@ -6,12 +6,27 @@ Collects and analyzes metrics from OCR operations to identify patterns and impro
 
 import os
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import logging
 from datetime import datetime
-import pandas as pd
-import matplotlib.pyplot as plt
 from collections import defaultdict
+
+# Try to import optional dependencies for advanced metrics
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError as e:
+    logging.warning(f"pandas not available: {e}")
+    HAS_PANDAS = False
+    pd = None
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError as e:
+    logging.warning(f"matplotlib not available: {e}")
+    HAS_MATPLOTLIB = False
+    plt = None
 
 logger = logging.getLogger('nanovlm')
 
@@ -265,8 +280,12 @@ class MetricsAggregator:
         logger.info(f"Report generated at {report_path}")
         return report_path
     
-    def _generate_charts(self, df: pd.DataFrame, output_dir: str) -> None:
+    def _generate_charts(self, df: Union[Any, None], output_dir: str) -> None:
         """Generate charts for the report"""
+        if not HAS_MATPLOTLIB or not HAS_PANDAS or df is None:
+            logger.warning("matplotlib or pandas not available, skipping chart generation")
+            return
+            
         charts_dir = os.path.join(output_dir, 'charts')
         os.makedirs(charts_dir, exist_ok=True)
         
