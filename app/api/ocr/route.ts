@@ -11,6 +11,7 @@ import logger from "@/lib/logger";
 import { handleOcrError, inferOutputFilePath } from "@/lib/ocr-output-helper";
 import { normalizeConfidenceData } from "@/lib/confidence-utils";
 import { FileHandler } from "@/lib/file-handler";
+import { createSafeSizedJsonResponse } from "@/app/api/_utils/server-utils";
 
 export {}; // Ensure file is treated as a module
 
@@ -21,21 +22,8 @@ export const maxDuration = 300; // 5 minutes
 // Helper function to create consistent JSON responses
 // Add error handling to validate JSON response structure
 const createJsonResponse = (data: any, status: number = 200) => {
-  try {
-    const jsonString = JSON.stringify(data);
-    return new NextResponse(jsonString, {
-      status,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-  } catch (error) {
-    logger.error(`Failed to create JSON response: ${error}`);
-    return new NextResponse(
-      JSON.stringify({ success: false, error: 'Internal Server Error' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
+  // Use the safe response handler that automatically truncates large text
+  return createSafeSizedJsonResponse(data, status);
 };
 
 // Execute command with timeout

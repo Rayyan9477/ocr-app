@@ -37,13 +37,13 @@ export async function POST(request: NextRequest) {
     
     if (!file) {
       serverLogger.error('No file provided in form data');
-      return createJsonResponse({ success: false, error: 'No file provided' }, 400);
+      return createSafeJsonResponse({ success: false, error: 'No file provided' }, 400);
     }
     
     // Verify this is actually a PDF file
     if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
       serverLogger.error('File is not a PDF');
-      return createJsonResponse({ 
+      return createSafeJsonResponse({ 
         success: false, 
         error: 'This endpoint only processes PDF files',
         details: 'For image files, use the standard OCR endpoint' 
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     
     const fileBuffer = await FileHandler.toBuffer(file);
     if (!fileBuffer) {
-      return createJsonResponse({ success: false, error: 'Failed to process file data' }, 400);
+      return createSafeJsonResponse({ success: false, error: 'Failed to process file data' }, 400);
     }
     
     await writeFile(inputPath, fileBuffer);
@@ -280,7 +280,7 @@ export async function GET(request: NextRequest) {
   const chunkId = searchParams.get('chunk');
   
   if (!chunkId) {
-    return createJsonResponse({ success: false, error: 'No chunk ID provided' }, 400);
+    return createSafeJsonResponse({ success: false, error: 'No chunk ID provided' }, 400);
   }
   
   try {
@@ -288,14 +288,14 @@ export async function GET(request: NextRequest) {
     // This would typically look up the chunk in a cache or database
     
     // For this example, we'll return a simple message
-    return createJsonResponse({ 
+    return createSafeJsonResponse({ 
       success: false, 
       error: 'Text chunk retrieval not yet implemented',
       chunkId
     }, 501);
   } catch (error) {
     serverLogger.error("Error retrieving text chunk:", error);
-    return createJsonResponse({ 
+    return createSafeJsonResponse({ 
       success: false, 
       error: "Failed to retrieve text chunk",
       details: error instanceof Error ? error.message : String(error)

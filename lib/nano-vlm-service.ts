@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import logger from './logger';
 import { ConfidenceData } from './types/ocr-types';
 import { normalizeConfidenceData } from './confidence-utils';
@@ -10,11 +11,13 @@ export interface NanoVLMOptions {
   confidenceThreshold?: number;
   enhanceResolution?: boolean;
   preserveLayout?: boolean;
+  preserveFullText?: boolean;
+  skipTruncation?: boolean;
 }
 
 export interface OCRResult {
   text: string;
-  confidence: number | ConfidenceData; // Updated to accept both number and ConfidenceData
+  confidence: number | ConfidenceData;
   structuredData?: any;
   processingTime: number;
   layout?: any[];
@@ -25,24 +28,29 @@ export interface OCRResult {
 }
 
 export class NanoVLMService {
-  private modelPath: string;
-  private pythonEnvPath: string;
-  private pythonModulePath: string;
-  
-  constructor(
-    modelPath = path.join(process.cwd(), 'models', 'nanovlm'),
-    pythonEnvPath?: string
-  ) {
-    this.modelPath = modelPath;
-    this.pythonModulePath = path.join(process.cwd(), 'python');
-    
-    // Use system Python or specified path
-    if (pythonEnvPath) {
-      this.pythonEnvPath = pythonEnvPath;
-    } else {
-      const isWindows = process.platform === 'win32';
-      this.pythonEnvPath = isWindows ? 'python' : 'python3';
-      logger.info('Using system Python for nanoVLM processing');
+  private pythonPath: string;
+  private processorPath: string;
+  private timeoutMs: number;
+
+  constructor(timeoutMs = 300000) { // 5 minute default timeout
+    this.pythonPath = process.env.PYTHON_PATH || 'python3';
+    this.processorPath = path.join(__dirname, '../python/smart_ocr.py');
+    this.timeoutMs = timeoutMs;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      if (!fs.existsSync(this.processorPath)) {
+        logger.warn('NanoVLM processor script not found:', this.processorPath);
+        return false;
+      }
+
+      // Verify Python and required dependencies
+      await this.executePythonProcess(['-c', 'import sys; print(sys.version)'], {});
+      return true;
+    } catch (error) {
+      logger.warn('NanoVLM service not available:', error);
+      return false;
     }
   }
 
@@ -51,211 +59,136 @@ export class NanoVLMService {
     outputDir: string, 
     options: NanoVLMOptions = {}
   ): Promise<OCRResult> {
+    if (!imagePath) {
+      throw new Error('Image path is required');
+    }
+
+    if (!fs.existsSync(imagePath)) {
+      throw new Error(`Input file does not exist: ${imagePath}`);
+    }
+
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'nanovlm-'));
+    const outputPath = path.join(tempDir, 'output.json');
     const startTime = Date.now();
-    let outputPath: string | undefined;
-    let tempFiles: string[] = [];
 
     try {
-      // Validate input path
-      if (!fs.existsSync(imagePath)) {
-        throw new Error(`Input image not found: ${imagePath}`);
-      }
+      // Verify outputDir exists
+      await fs.promises.access(outputDir).catch(async () => {
+        await fs.promises.mkdir(outputDir, { recursive: true });
+      });
 
-      // Create output directory if it doesn't exist
-      fs.mkdirSync(outputDir, { recursive: true });
-
-      outputPath = path.join(
-        outputDir,
-        `${path.basename(imagePath, path.extname(imagePath))}_result.json`
-      );
-
-      // Track any temporary files created during processing
-      const trackTempFile = (filePath: string) => {
-        tempFiles.push(filePath);
-        return filePath;
-      };
-
-      // Process image with appropriate environment setup
-      const env = {
-        ...process.env,
-        PYTHONPATH: this.pythonModulePath + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '')
-      };
-
-      // Build command arguments
+      // Build command line arguments
       const args = [
-        path.join(this.pythonModulePath, 'nanovlm', 'processor.py'),
-        '--model_path', this.modelPath,
+        this.processorPath,
         '--input', imagePath,
-        '--output', outputPath
+        '--output_file', outputPath,
+        '--document_type', options.documentType || 'general',
+        '--confidence_threshold', String(options.confidenceThreshold || 0.7)
       ];
 
-      // Add optional arguments
-      if (options.documentType) {
-        args.push('--document_type', options.documentType);
-      }
-      if (options.confidenceThreshold) {
-        args.push('--confidence_threshold', options.confidenceThreshold.toString());
-      }
-      if (options.enhanceResolution) {
-        args.push('--enhance_resolution');
-      }
-      if (options.preserveLayout) {
-        args.push('--preserve_layout');
-      }
+      if (options.enhanceResolution) args.push('--enhance_resolution');
+      if (options.preserveLayout) args.push('--preserve_layout');
+      if (options.preserveFullText) args.push('--preserve_full_text');
+      if (options.skipTruncation) args.push('--skip_truncation');
 
-      // Execute Python processor
-      logger.info(`Processing image with nanoVLM: ${imagePath}`);
-      const result = await this.executePythonProcess(args, env);
+      // Setup environment
+      const env = {
+        ...process.env,
+        PYTHONPATH: path.join(__dirname, '../python'),
+        NANOVLM_PRESERVE_FULL_TEXT: options.preserveFullText ? '1' : '0',
+        NANOVLM_DEBUG: process.env.NODE_ENV === 'development' ? '1' : '0',
+        PYTHONUNBUFFERED: '1'
+      };
 
-      // Verify output file exists and is valid JSON
+      // Execute processor with timeout
+      await this.executePythonProcess(args, env, this.timeoutMs);
+
+      // Validate output file exists
       if (!fs.existsSync(outputPath)) {
-        throw new Error(`Output file not created: ${outputPath}`);
+        throw new Error('NanoVLM failed to create output file');
       }
 
       // Parse and validate output
-      const outputContent = fs.readFileSync(outputPath, 'utf8');
-      const outputData = JSON.parse(outputContent);
-      
-      if (!outputData.success) {
-        throw new Error(outputData.error || 'Processing failed without specific error');
+      const outputContent = await fs.promises.readFile(outputPath, 'utf8');
+      let outputData;
+      try {
+        outputData = JSON.parse(outputContent);
+      } catch (error) {
+        throw new Error(`Invalid JSON output from NanoVLM: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
-      
-      // Return structured result with normalized confidence
+
+      if (!outputData.success) {
+        throw new Error(outputData.error || 'NanoVLM processing failed without specific error');
+      }
+
+      // Return result with normalized confidence
       const normalizedConfidence = normalizeConfidenceData(outputData.confidence || 0);
+      const processingTime = Date.now() - startTime;
+
       return {
         text: outputData.text || '',
         confidence: normalizedConfidence,
-        structuredData: outputData.structured_data,
+        structuredData: outputData.structuredData,
+        processingTime,
         layout: outputData.layout,
-        processingTime: Date.now() - startTime,
         metadata: {
-          outputPath // Move outputPath to metadata
+          ...outputData.metadata,
+          outputPath: outputData.outputPath,
+          fullTextAvailable: true,
+          textLength: outputData.text ? outputData.text.length : 0,
+          processingOptions: options,
+          executionTime: processingTime
         }
       };
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`Error processing image with nanoVLM: ${errorMessage}`);
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error in NanoVLM processing';
+      logger.error('NanoVLM processing failed:', { error, imagePath, options });
+      throw new Error(`NanoVLM processing failed: ${errorMessage}`);
+
     } finally {
-      // Clean up any temporary files
-      tempFiles.forEach(filePath => {
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        } catch (cleanupError) {
-          logger.warn(`Failed to clean up temporary file ${filePath}: ${cleanupError}`);
-        }
-      });
+      // Cleanup temp directory
+      try {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      } catch (error) {
+        logger.warn('Failed to clean up temp directory:', { error, tempDir });
+      }
     }
   }
 
-  async isAvailable(): Promise<boolean> {
-    try {
-      logger.info('Checking nanoVLM availability...');
-      
-      // Check if our Python module exists
-      const processorPath = path.join(this.pythonModulePath, 'nanovlm', 'processor.py');
-      if (!fs.existsSync(processorPath)) {
-        logger.error(`nanoVLM processor module not found at: ${processorPath}`);
-        return false;
-      }
-      
-      // Set environment for Python module path
-      const env = {
-        ...process.env,
-        PYTHONPATH: this.pythonModulePath + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '')
-      };
-      
-      // Test basic Python execution and check dependencies
-      await this.executePythonProcess(['-c', 'import sys, os, json; from PIL import Image; print("Dependencies available")'], env);
-      
-      logger.info('nanoVLM is available!');
-      return true;
-    } catch (error) {
-      logger.error(`NanoVLM is not available: ${error}`);
-      // Enhanced debugging information
-      this.logDiagnostics();
-      
-      return false;
-    }
-  }
-  
-  private logDiagnostics(): void {
-    try {
-      logger.debug(`=== NanoVLM Diagnostics ===`);
-      logger.debug(`Python path: ${this.pythonEnvPath}`);
-      logger.debug(`Python executable exists: ${fs.existsSync(this.pythonEnvPath)}`);
-      logger.debug(`Model path: ${this.modelPath}`);
-      logger.debug(`Model path exists: ${fs.existsSync(this.modelPath)}`);
-      logger.debug(`Python module path: ${this.pythonModulePath}`);
-      logger.debug(`Python module exists: ${fs.existsSync(this.pythonModulePath)}`);
-      
-      // Check specific files
-      const processorPath = path.join(this.pythonModulePath, 'nanovlm', 'processor.py');
-      logger.debug(`Processor script exists: ${fs.existsSync(processorPath)}`);
-      
-      const initPath = path.join(this.pythonModulePath, 'nanovlm', '__init__.py');
-      logger.debug(`Init file exists: ${fs.existsSync(initPath)}`);
-      
-      // List directory contents
-      if (fs.existsSync(this.pythonModulePath)) {
-        const moduleContents = fs.readdirSync(this.pythonModulePath);
-        logger.debug(`Python module directory contents: ${moduleContents.join(', ')}`);
-        
-        const nanovlmDir = path.join(this.pythonModulePath, 'nanovlm');
-        if (fs.existsSync(nanovlmDir)) {
-          const nanovlmContents = fs.readdirSync(nanovlmDir);
-          logger.debug(`nanovlm directory contents: ${nanovlmContents.join(', ')}`);
-        }
-      }
-      
-      if (fs.existsSync(this.modelPath)) {
-        const modelContents = fs.readdirSync(this.modelPath);
-        logger.debug(`Model directory contents: ${modelContents.join(', ')}`);
-      }
-      
-      logger.debug(`=== End Diagnostics ===`);
-    } catch (err) {
-      logger.error(`Error during diagnostics: ${err}`);
-    }
-  }
-  
-  private executePythonProcess(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+  private executePythonProcess(args: string[], env: NodeJS.ProcessEnv, timeoutMs?: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const process = spawn(this.pythonEnvPath, args, { env });
+      const process = spawn(this.pythonPath, args, { env });
       
-      let stdout = '';
       let stderr = '';
+      let timeout: NodeJS.Timeout | null = null;
       
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-      
+      if (timeoutMs) {
+        timeout = setTimeout(() => {
+          process.kill();
+          reject(new Error(`Process timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }
+
       process.stderr.on('data', (data) => {
-        stderr += data.toString();
-        logger.debug(`NanoVLM stderr: ${data.toString()}`);
+        stderr += data;
       });
-      
-      process.on('close', (code) => {
+
+      process.on('close', (code, signal) => {
+        if (timeout) clearTimeout(timeout);
+        
         if (code === 0) {
-          resolve(stdout);
+          resolve();
         } else {
-          reject(new Error(`Python process failed with code ${code}: ${stderr}`));
+          const error = new Error(`Python process failed with code ${code}${signal ? ` (signal: ${signal})` : ''}: ${stderr}`);
+          reject(error);
         }
       });
-      
-      process.on('error', (err) => {
-        reject(new Error(`Failed to start Python process: ${err.message}`));
+
+      process.on('error', (error) => {
+        if (timeout) clearTimeout(timeout);
+        reject(error);
       });
-      
-      // Add timeout
-      const timeout = setTimeout(() => {
-        process.kill();
-        reject(new Error('Python process timed out after 30 seconds'));
-      }, 30000);
-      
-      process.on('close', () => clearTimeout(timeout));
     });
   }
 }

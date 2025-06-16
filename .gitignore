@@ -92,3 +92,6 @@ __pycache__/
 # Python cache files
 *.pyo
 # Python egg files
+
+*.bak
+*.fix

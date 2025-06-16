@@ -2,8 +2,7 @@
 """
 Smart OCR command-line interface for nanoVLM
 
-Provides enhanced OCR processing with automatic fallback, robust error handling,
-and support for large PDFs and various document types.
+Provides enhanced OCR processing with intelligent preprocessing
 """
 
 import argparse
@@ -12,31 +11,17 @@ import sys
 import json
 import logging
 import time
+import shutil
+import glob
 import signal
 import traceback
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, Union
-from datetime import datetime
+from typing import Dict, Any, List, Optional
 
-# Add the parent directory to the path so we can import nanovlm
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Import after path modification
-from nanovlm import (
-    NanoVLMProcessor,
-    FallbackOCR,
-    FallbackChain,
-    create_standard_fallback_chain,
-    analyze_document,
-    OCRError,
-    ImageError,
-    ProcessingError
-)
-from nanovlm.large_pdf_handler import LargePDFHandler, is_large_pdf
-from nanovlm.logger import setup_logger, get_logger
+from nanovlm import NanoVLMProcessor
 
 # Configure logging
-logger = get_logger('smart_ocr')
+logger = logging.getLogger('smart_ocr')
 
 # Global flag for graceful shutdown
 shutdown_requested = False
@@ -79,13 +64,11 @@ def validate_environment() -> None:
 
 def process_files(args):
     """Process files according to command-line arguments"""
-    # Configure processors
-    primary_processor = NanoVLMProcessor(
+    # Configure processor
+    processor = NanoVLMProcessor(
         model_path=args.model_path,
-        max_retries=args.max_retries,
-        enable_fallback=not args.disable_fallback
+        max_retries=args.max_retries
     )
-    fallback_processor = FallbackOCR() if not args.disable_fallback else None
     
     # Create output directory
     if args.output_dir:
@@ -196,11 +179,10 @@ def process_files(args):
                 try:
                     result = pdf_handler.process(
                         file_path,
-                        processor=primary_processor,
+                        processor=processor,
                         document_type=doc_type,
                         confidence_threshold=args.confidence_threshold,
-                        preserve_layout=args.preserve_layout,
-                        fallback_processor=fallback_processor
+                        preserve_layout=args.preserve_layout
                     )
                     
                     # Clean up
@@ -217,24 +199,13 @@ def process_files(args):
             
             # Use standard processing if not using large PDF handler
             if not use_large_pdf_handler:
-                # Use fallback chain if advanced mode is enabled
-                if args.advanced and not args.disable_fallback:
-                    chain = create_standard_fallback_chain(primary_processor, fallback_processor)
-                    result = chain.execute(
-                        file_path,
-                        document_type=doc_type,
-                        confidence_threshold=args.confidence_threshold,
-                        preserve_layout=args.preserve_layout
-                    )
-                else:
-                    # Use standard processing
-                    result = primary_processor.process_document(
-                        file_path,
-                        document_type=doc_type,
-                        confidence_threshold=args.confidence_threshold,
-                        enhance_resolution=args.enhance_resolution,
-                        preserve_layout=args.preserve_layout
-                    )
+                result = processor.process_document(
+                    file_path,
+                    document_type=doc_type,
+                    confidence_threshold=args.confidence_threshold,
+                    enhance_resolution=args.enhance_resolution,
+                    preserve_layout=args.preserve_layout
+                )
             
             # Add metadata
             result['file_path'] = file_path
@@ -337,7 +308,7 @@ def process_files(args):
         
         # Print processor metrics if available
         try:
-            metrics = primary_processor.get_metrics()
+            metrics = processor.get_metrics()
             logger.info("Processor Metrics:")
             for key, value in metrics.items():
                 if isinstance(value, float):
@@ -366,6 +337,66 @@ def process_files(args):
     
     return 0 if not errors else 1
 
+def process_document(
+    input_path: str,
+    output_path: str,
+    document_type: str = 'auto',
+    confidence_threshold: float = 0.7,
+    enhance_resolution: bool = False,
+    preserve_layout: bool = False,
+    preserve_full_text: bool = False,
+    skip_truncation: bool = False
+) -> Dict[str, Any]:
+    
+    start_time = time.time()
+    
+    try:
+        # Create processor
+        processor = NanoVLMProcessor()
+        
+        # Process document
+        result = processor.process_document(
+            input_path,
+            document_type=document_type,
+            confidence_threshold=confidence_threshold,
+            enhance_resolution=enhance_resolution,
+            preserve_layout=preserve_layout
+        )
+            
+        # Ensure full text is preserved if requested
+        if preserve_full_text or skip_truncation:
+            result['text'] = result.get('full_text', result['text'])
+            
+        # Add processing metadata
+        result.update({
+            'processing_time': round((time.time() - start_time) * 1000),
+            'metadata': {
+                'input_path': input_path,
+                'output_path': output_path,
+                'document_type': document_type,
+                'full_text_preserved': preserve_full_text or skip_truncation
+            }
+        })
+        
+        # Save results as JSON
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+            
+        return result
+        
+    except Exception as e:
+        error_result = {
+            'success': False,
+            'error': str(e),
+            'processing_time': round((time.time() - start_time) * 1000)
+        }
+        
+        # Save error result
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(error_result, f, ensure_ascii=False, indent=2)
+            
+        return error_result
+
 def main():
     parser = argparse.ArgumentParser(description='Smart OCR with nanoVLM')
     parser.add_argument('--model_path', help='Path to nanoVLM model')
@@ -381,6 +412,10 @@ def main():
                        help='Enable resolution enhancement')
     parser.add_argument('--preserve_layout', action='store_true',
                        help='Preserve document layout')
+    parser.add_argument('--preserve_full_text', action='store_true',
+                       help='Preserve full text without truncation')
+    parser.add_argument('--skip_truncation', action='store_true',
+                       help='Skip text truncation')
     parser.add_argument('--max_retries', type=int, default=2,
                        help='Maximum number of retry attempts')
     parser.add_argument('--disable_fallback', action='store_true',

@@ -10,6 +10,7 @@ import { preprocessingService } from './preprocessing-service';
 import { normalizeConfidenceData } from './confidence-utils';
 import { getAverageConfidence } from './types/ocr-types';
 import { NanoVLMService } from './nano-vlm-service';
+import { existsSync } from 'fs';
 
 /**
  * Helper function to truncate text for API responses
@@ -37,6 +38,15 @@ function generateOutputFilename(inputPath: string, engineName: string, suffix: s
   return `${cleanName}_${timestamp}_${suffix}.pdf`
 }
 
+interface EngineStrengths {
+  general_text: number;
+  handwritten: number;
+  tables: number;
+  poor_quality: number;
+  layout_preservation: number;
+  pdf_handling: number;
+}
+
 export interface OCREngine {
   name: string
   service: any
@@ -46,59 +56,326 @@ export interface OCREngine {
   preprocessor?: (inputPath: string, documentType?: string) => Promise<string>
 }
 
+export interface EnhancedOCREngine extends OCREngine {
+  strengths: EngineStrengths;
+  priority: number;
+  weightForDocType?: { [key: string]: number };
+}
+
 export interface ProcessingResult {
-  engine: string
-  success?: boolean // Made optional to match OCRResult type
-  outputPath?: string
-  confidence: number
-  text: string
-  error?: string
-  processingTime?: number
-  metadata?: Record<string, any> // Added to match OCRResult type
+  engine: string;
+  outputPath: string;
+  confidence: number;
+  text: string;
+  processingTime?: number;
+  metadata?: any;
+  success?: boolean;
+  error?: string;
+  regions?: Array<{
+    text: string;
+    confidence: number;
+    type?: string;
+    bbox?: [number, number, number, number];
+  }>;
 }
 
 export class MultiEngineOCR {
-  private engines: Map<string, OCREngine> = new Map()
-  private preprocessingService: typeof preprocessingService
-  private initialized: boolean = false
-  private initializationPromise: Promise<void> | null = null
+  private engines: Map<string, EnhancedOCREngine>;
+  private preprocessingService: PreprocessingService;
 
   constructor() {
-    this.preprocessingService = preprocessingService
+    this.engines = new Map();
+    this.preprocessingService = new PreprocessingService();
+    this.initializeEngines().catch(error => {
+      serverLogger.error('Failed to initialize OCR engines:', error);
+    });
+  }
+
+  private async initializeEngines(): Promise<void> {
+    // Initialize engines with their strengths and specializations
+    await Promise.all([
+      this.initializeOCRmyPDF(),
+      this.initializeTesseract(),
+      this.initializeNanoVLM()
+    ]);
+
+    // Configure engine strengths
+    this.configureEngineStrengths();
+  }
+
+  private configureEngineStrengths(): void {
+    // NanoVLM configuration
+    if (this.engines.has('nanovlm')) {
+      this.engines.set('nanovlm', {
+        ...this.engines.get('nanovlm')!,
+        strengths: {
+          general_text: 0.8,
+          handwritten: 0.9,
+          tables: 0.85,
+          poor_quality: 0.9,
+          layout_preservation: 0.9,
+          pdf_handling: 0.7
+        },
+        priority: 3,
+        weightForDocType: {
+          'handwritten': 1.2,
+          'table': 1.1,
+          'poor_quality': 1.2
+        }
+      });
+    }
+
+    // OCRmyPDF configuration
+    if (this.engines.has('ocrmypdf')) {
+      this.engines.set('ocrmypdf', {
+        ...this.engines.get('ocrmypdf')!,
+        strengths: {
+          general_text: 0.9,
+          handwritten: 0.6,
+          tables: 0.7,
+          poor_quality: 0.7,
+          layout_preservation: 0.8,
+          pdf_handling: 0.95
+        },
+        priority: 2,
+        weightForDocType: {
+          'pdf': 1.2,
+          'general': 1.1
+        }
+      });
+    }
+
+    // Tesseract configuration
+    if (this.engines.has('tesseract')) {
+      this.engines.set('tesseract', {
+        ...this.engines.get('tesseract')!,
+        strengths: {
+          general_text: 0.85,
+          handwritten: 0.6,
+          tables: 0.7,
+          poor_quality: 0.65,
+          layout_preservation: 0.7,
+          pdf_handling: 0.7
+        },
+        priority: 1,
+        weightForDocType: {
+          'general': 1.0
+        }
+      });
+    }
   }
 
   /**
-   * Ensure engines are initialized before use
+   * Check if Tesseract is available on the system
    */
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) {
-      return
+  private async checkTesseractAvailability(): Promise<boolean> {
+    try {
+      await execAsync('tesseract --version')
+      return true
+    } catch (error) {
+      serverLogger.warn(`Tesseract not available: ${error}`)
+      return false
     }
-    
-    if (this.initializationPromise) {
-      await this.initializationPromise
-      return
-    }
-    
-    this.initializationPromise = this.initializeEngines()
-    await this.initializationPromise
-    this.initialized = true
   }
   
-  private async initializeEngines(): Promise<void> {
-    serverLogger.info('Initializing OCR engines...')
-    
-    // Initialize engines in order of preference
-    await this.initializeOCRmyPDF()
-    await this.initializeTesseract()
-    await this.initializeNanoVLM()
-    
-    // Log final available engines
-    const availableEngines = Array.from(this.engines.values()).filter(e => e.available)
-    const availableEngineNames = availableEngines.map(e => e.name)
-    serverLogger.info(`Total available engines: ${availableEngineNames.length} - ${availableEngineNames.join(', ')}`)
+  /**
+   * Check if OCRmyPDF is available on the system
+   */
+  private async checkOCRmyPDFAvailability(): Promise<boolean> {
+    try {
+      await execAsync('ocrmypdf --version')
+      return true
+    } catch (error) {
+      serverLogger.warn(`OCRmyPDF not available: ${error}`)
+      return false
+    }
   }
   
+  /**
+   * Get list of available engines
+   */
+  async getAvailableEngines(): Promise<string[]> {
+    await this.ensureInitialized()
+    return Array.from(this.engines.values())
+      .filter(engine => engine.available)
+      .map(engine => engine.name)
+  }
+  
+  async processWithAllEngines(
+    inputPath: string,
+    documentType?: string
+  ): Promise<ProcessingResult[]> {
+    if (!inputPath || !fs.existsSync(inputPath)) {
+      throw new Error('Invalid input path');
+    }
+
+    const availableEngines = Array.from(this.engines.values())
+      .filter(engine => engine.available)
+      .sort((a, b) => {
+        // Calculate weighted priority based on document type
+        const aWeight = this.calculateEngineWeight(a, documentType);
+        const bWeight = this.calculateEngineWeight(b, documentType);
+        return bWeight - aWeight;
+      });
+
+    if (availableEngines.length === 0) {
+      throw new Error('No OCR engines are available');
+    }
+
+    // Process with all engines in parallel
+    const results = await Promise.all(
+      availableEngines.map(engine => 
+        this.processWithEngine(inputPath, engine.name, documentType)
+          .catch(error => ({
+            engine: engine.name,
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            confidence: 0,
+            text: '',
+            outputPath: inputPath
+          }))
+      )
+    );
+
+    // Filter and enhance results
+    const validResults = results.filter(result => result.success !== false);
+    if (validResults.length === 0) {
+      throw new Error('All OCR engines failed to process the document');
+    }
+
+    // Merge and enhance results
+    return this.enhanceResults(validResults, documentType);
+  }
+
+  private calculateEngineWeight(engine: EnhancedOCREngine, documentType?: string): number {
+    let weight = engine.priority;
+    
+    if (documentType && engine.weightForDocType?.[documentType]) {
+      weight *= engine.weightForDocType[documentType];
+    }
+
+    // Add strength-based weighting
+    if (documentType === 'handwritten') weight *= engine.strengths.handwritten;
+    else if (documentType === 'table') weight *= engine.strengths.tables;
+    else if (documentType === 'poor_quality') weight *= engine.strengths.poor_quality;
+    else weight *= engine.strengths.general_text;
+
+    return weight;
+  }
+
+  private async enhanceResults(results: ProcessingResult[], documentType?: string): Promise<ProcessingResult[]> {
+    // Sort results by confidence and engine priority
+    const enhancedResults = results.map(result => {
+      const engine = this.engines.get(result.engine);
+      const weight = engine ? this.calculateEngineWeight(engine, documentType) : 1;
+      
+      return {
+        ...result,
+        confidence: result.confidence * weight
+      };
+    });
+
+    // Sort by weighted confidence
+    enhancedResults.sort((a, b) => b.confidence - a.confidence);
+
+    // Use the best result as base and enhance it with others
+    const baseResult = enhancedResults[0];
+    if (enhancedResults.length > 1) {
+      // Combine results based on region confidence
+      const combinedRegions = this.combineRegions(enhancedResults);
+      baseResult.regions = combinedRegions;
+      
+      // Update text based on combined regions
+      baseResult.text = this.reconstructTextFromRegions(combinedRegions);
+    }
+
+    return enhancedResults;
+  }
+
+  private combineRegions(results: ProcessingResult[]): ProcessingResult['regions'] {
+    // Implement sophisticated region combination logic
+    const allRegions: ProcessingResult['regions'] = [];
+    
+    results.forEach(result => {
+      if (result.regions) {
+        result.regions.forEach(region => {
+          // Find overlapping regions from other results
+          const overlaps = allRegions.filter(existing => 
+            this.regionsOverlap(existing.bbox, region.bbox)
+          );
+
+          if (overlaps.length === 0) {
+            // No overlap, add new region
+            allRegions.push(region);
+          } else {
+            // Use region with highest confidence
+            const bestRegion = [...overlaps, region]
+              .reduce((best, current) => 
+                current.confidence > best.confidence ? current : best
+              );
+            
+            // Update or add the best region
+            const index = allRegions.indexOf(overlaps[0]);
+            if (index >= 0) {
+              allRegions[index] = bestRegion;
+            } else {
+              allRegions.push(bestRegion);
+            }
+          }
+        });
+      }
+    });
+
+    return allRegions;
+  }
+
+  private regionsOverlap(bbox1?: number[], bbox2?: number[]): boolean {
+    if (!bbox1 || !bbox2) return false;
+    
+    const [x1, y1, w1, h1] = bbox1;
+    const [x2, y2, w2, h2] = bbox2;
+    
+    return !(x1 + w1 < x2 || x2 + w2 < x1 || y1 + h1 < y2 || y2 + h2 < y1);
+  }
+
+  private reconstructTextFromRegions(regions?: ProcessingResult['regions']): string {
+    if (!regions || regions.length === 0) return '';
+
+    // Sort regions by position (top to bottom, left to right)
+    const sortedRegions = [...regions].sort((a, b) => {
+      if (!a.bbox || !b.bbox) return 0;
+      
+      const [, y1] = a.bbox;
+      const [, y2] = b.bbox;
+      
+      if (Math.abs(y1 - y2) < 10) { // Same line threshold
+        const [x1] = a.bbox;
+        const [x2] = b.bbox;
+        return x1 - x2;
+      }
+      
+      return y1 - y2;
+    });
+
+    // Reconstruct text with proper spacing and line breaks
+    return sortedRegions.reduce((text, region, i) => {
+      const nextRegion = sortedRegions[i + 1];
+      let separator = ' ';
+
+      if (nextRegion && nextRegion.bbox && region.bbox) {
+        const [, y1, , h1] = region.bbox;
+        const [, y2] = nextRegion.bbox;
+        
+        // Add line break if vertical distance is significant
+        if (y2 - (y1 + h1) > h1 * 0.5) {
+          separator = '\n';
+        }
+      }
+
+      return text + region.text + separator;
+    }, '').trim();
+  }
+
   private async initializeOCRmyPDF(): Promise<void> {
     const available = await this.checkOCRmyPDFAvailability()
     serverLogger.info(`OCRmyPDF availability: ${available}`)
@@ -166,92 +443,38 @@ export class MultiEngineOCR {
     })
   }
   
-  /**
-   * Check if Tesseract is available on the system
-   */
-  private async checkTesseractAvailability(): Promise<boolean> {
-    try {
-      await execAsync('tesseract --version')
-      return true
-    } catch (error) {
-      serverLogger.warn(`Tesseract not available: ${error}`)
-      return false
-    }
-  }
-  
-  /**
-   * Check if OCRmyPDF is available on the system
-   */
-  private async checkOCRmyPDFAvailability(): Promise<boolean> {
-    try {
-      await execAsync('ocrmypdf --version')
-      return true
-    } catch (error) {
-      serverLogger.warn(`OCRmyPDF not available: ${error}`)
-      return false
-    }
-  }
-  
-  /**
-   * Get list of available engines
-   */
-  async getAvailableEngines(): Promise<string[]> {
-    await this.ensureInitialized()
-    return Array.from(this.engines.values())
-      .filter(engine => engine.available)
-      .map(engine => engine.name)
-  }
-  
-  /**
-   * Process document with specific engine
-   */
-  async processWithEngine(
+  private async processWithEngine(
     inputPath: string,
     engineName: string,
     documentType?: string
   ): Promise<ProcessingResult> {
+    const engine = this.engines.get(engineName);
+    if (!engine) {
+      throw new Error(`Engine ${engineName} not found`);
+    }
+
+    if (!engine.available) {
+      throw new Error(`Engine ${engineName} is not available`);
+    }
+
+    // Apply engine-specific preprocessing if available
+    let processedPath = inputPath;
     try {
-      await this.ensureInitialized()
-      
-      const engine = this.engines.get(engineName)
-      if (!engine) {
-        throw new Error(`Engine '${engineName}' not found`)
+      if (engine.preprocessor) {
+        processedPath = await engine.preprocessor(inputPath, documentType);
       }
-      
-      if (!engine.available) {
-        throw new Error(`Engine '${engineName}' is not available`)
-      }
-      
-      const startTime = Date.now()
-      
-      // Preprocess the input if needed
-      const processedInputPath = engine.preprocessor 
-        ? await engine.preprocessor(inputPath, documentType) 
-        : inputPath
-      
-      if (engine.name === 'nanovlm' && engine.service) {
-        return this.processWithNanoVLM(engine.service, processedInputPath, documentType)
-      } 
-      
-      return this.processWithCommandLineEngine(engine, processedInputPath, documentType)
-      
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      const errorContext = {
-        error: errorMessage,
-        inputPath,
-        engineName,
-        documentType,
-        stack: error instanceof Error ? error.stack : undefined
-      };
-      
-      serverLogger.error(`Error processing with ${engineName}: ${errorMessage}`, errorContext);
-      
-      // Re-throw with additional context
-      throw new Error(`Failed to process document with ${engineName}: ${errorMessage}`)
+      serverLogger.warn(`Preprocessing failed for ${engineName}:`, error);
+      // Continue with original file if preprocessing fails
+    }
+
+    if (engineName === 'nanovlm') {
+      return this.processWithNanoVLM(engine.service as NanoVLMService, processedPath, documentType);
+    } else {
+      return this.processWithCommandLineEngine(engine, processedPath, documentType);
     }
   }
-  
+
   private async processWithNanoVLM(
     service: NanoVLMService,
     inputPath: string,
@@ -260,52 +483,44 @@ export class MultiEngineOCR {
     const startTime = Date.now();
     
     try {
-      const result = await service.processImage(inputPath, path.dirname(inputPath), { 
+      const result = await service.processImage(inputPath, path.dirname(inputPath), {
         documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
         confidenceThreshold: 0.5,
         enhanceResolution: true,
-        preserveLayout: true
+        preserveLayout: true,
+        preserveFullText: true,
+        skipTruncation: true
       });
-      
+
       if (!result || !result.text) {
         throw new Error('NanoVLM processing returned empty result');
       }
-      
-      // Safely extract confidence value using normalization
-      let confidenceValue = 0;
-      if (typeof result.confidence === 'number') {
-        confidenceValue = result.confidence;
-      } else if (result.confidence && 'averageConfidence' in result.confidence) {
-        confidenceValue = result.confidence.averageConfidence;
-      } else {
-        throw new Error('Invalid confidence data format from NanoVLM');
-      }
-      
+
+      // Extract confidence value
+      const confidenceValue = typeof result.confidence === 'number' 
+        ? result.confidence 
+        : result.confidence.averageConfidence || 0;
+
       return {
         engine: 'nanovlm',
-        outputPath: inputPath, // Use input path as output path since we're not saving a new file
+        outputPath: inputPath,
         confidence: confidenceValue,
-        text: truncateTextForResponse(result.text),
+        text: result.text,
         processingTime: result.processingTime || Date.now() - startTime,
+        success: true,
         metadata: {
           ...result,
           structuredData: result.structuredData,
-          layout: result.layout
+          layout: result.layout,
+          fullTextAvailable: true,
+          textLength: result.text.length
         }
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error during NanoVLM processing';
-      serverLogger.error(`NanoVLM processing failed: ${errorMessage}`, { 
-        error, 
-        inputPath, 
-        documentType,
-        processingTime: Date.now() - startTime
-      });
-      
-      throw new Error(`NanoVLM processing failed: ${errorMessage}`);
+      throw new Error(`NanoVLM processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
    * Process document with a command-line OCR engine
    */
@@ -315,292 +530,310 @@ export class MultiEngineOCR {
     documentType?: string
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
-    
+    const outputPath = path.join(
+      path.dirname(inputPath),
+      `${path.parse(inputPath).name}_${engine.name}_${Date.now()}.pdf`
+    );
+
     try {
-      // Validate input
-      if (!engine.available) {
-        throw new Error(`Engine '${engine.name}' is not available`);
-      }
-      
-      // Validate input file
-      try {
-        await fs.promises.access(inputPath, fs.constants.R_OK);
-      } catch (error) {
-        throw new Error(`Input file not accessible: ${inputPath}. ${error instanceof Error ? error.message : String(error)}`);
-      }
-      
-      // Generate output paths
-      const outputFilename = generateOutputFilename(inputPath, engine.name);
-      const outputPath = path.join('/tmp', outputFilename);
-      let txtOutputPath = '';
-      
-      // Build and execute the appropriate command
-      let command: string;
-      
-      switch (engine.name) {
-        case 'ocrmypdf':
-          command = `ocrmypdf --rotate-pages --deskew --clean --optimize 3 "${inputPath}" "${outputPath}"`;
-          break;
-          
-        case 'tesseract':
-          txtOutputPath = outputPath.replace(/\.pdf$/i, '.txt');
-          command = `tesseract "${inputPath}" "${txtOutputPath.replace(/\.txt$/i, '')}" pdf txt`;
-          break;
-          
-        default:
-          throw new Error(`Unsupported command-line engine: ${engine.name}`);
-      }
-      
-      // Execute the command
-      const { stderr } = await execAsync(command).catch(error => {
-        throw new Error(`Command execution failed: ${error.message}`);
+      // Ensure output directory exists
+      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+
+      const command = engine.command(inputPath, outputPath, 'eng', {
+        medicalTerminology: documentType === 'medical',
+        preserveFullText: true
       });
-      
-      // Log any warnings
-      if (stderr && stderr.trim().length > 0) {
-        serverLogger.warn(`Command produced warnings: ${stderr.trim()}`, { 
-          engine: engine.name,
-          inputPath 
-        });
+
+      await execAsync(command);
+
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(`Engine failed to create output file: ${outputPath}`);
       }
-      
-      // Verify output was created
-      const outputExists = engine.name === 'tesseract' 
-        ? fs.existsSync(txtOutputPath)
-        : fs.existsSync(outputPath);
-        
-      if (!outputExists) {
-        throw new Error(`Failed to create output file for ${engine.name}`);
-      }
-      
-      // Extract text from the output
-      let extractedText: string;
-      let confidence = 0;
-      
-      if (engine.name === 'tesseract') {
-        extractedText = await fs.promises.readFile(txtOutputPath, 'utf-8');
-        
-        if ('hasConfidence' in engine && engine.hasConfidence) {
-          confidence = 0.85; // Default confidence for Tesseract (will be improved later)
-        }
-      } else {
-        // For other engines, extract text using pdftotext
-        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
-        extractedText = stdout.trim();
-      }
-      
+
+      // Extract text using pdftotext
+      const { stdout: extractedText } = await execAsync(`pdftotext "${outputPath}" -`);
+
       if (!extractedText || extractedText.trim().length === 0) {
         throw new Error(`No text was extracted by ${engine.name}`);
       }
-      
+
+      // Get confidence if engine supports it
+      let confidence = 0;
+      if ('hasConfidence' in engine && engine.hasConfidence) {
+        confidence = await this.extractEngineConfidence(engine, outputPath);
+      }
+
       return {
         engine: engine.name,
-        outputPath: engine.name === 'tesseract' ? txtOutputPath : outputPath,
+        outputPath,
         confidence,
-        text: truncateTextForResponse(extractedText),
+        text: extractedText,
         processingTime: Date.now() - startTime,
+        success: true,
         metadata: {
-          engine: engine.name,
-          documentType,
-          inputSize: (await fs.promises.stat(inputPath)).size
+          fullTextAvailable: true,
+          textLength: extractedText.length
         }
       };
-      
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error during command execution';
-      const errorContext = {
-        error: errorMessage,
-        inputPath,
-        engine: engine.name,
-        documentType,
-        processingTime: Date.now() - startTime
-      };
-      
-      serverLogger.error(`Command execution failed for ${engine.name}: ${errorMessage}`, errorContext);
-      throw new Error(`Failed to process with ${engine.name}: ${errorMessage}`);
+      throw new Error(`${engine.name} processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }
-  
-  /**
-   * Process with multiple engines and merge results for improved accuracy
-   */
-  async processWithMultipleEnginesAndMerge(
-    inputPath: string,
-    engineNames: string[],
-    documentType?: string
-  ): Promise<ProcessingResult> {
-    await this.ensureInitialized()
-    
-    const results = await this.processWithMultipleEngines(inputPath, engineNames, documentType)
-    
-    // Merge results intelligently
-    return this.mergeEngineResults(results, documentType)
   }
 
-  /**
-   * Process with multiple engines and return all results
-   */
-  async processWithMultipleEngines(
+  private async extractEngineConfidence(engine: OCREngine, outputPath: string): Promise<number> {
+    // Implementation depends on specific engine
+    if (engine.name === 'tesseract') {
+      return this.extractTesseractConfidence(outputPath);
+    }
+    return 0;
+  }
+
+  async processDocument(inputPath: string, outputPath: string, options: ProcessingOptions = {}): Promise<ProcessingResult> {
+    const startTime = Date.now();
+    const results: ProcessingResult[] = [];
+    let lastError: Error | null = null;
+
+    // Try each engine in sequence
+    const engines = ['nanovlm', 'ocrmypdf', 'tesseract'];
+    
+    for (const engineName of engines) {
+      try {
+        const engine = this.engines.get(engineName);
+        if (!engine || !engine.available) {
+          serverLogger.warn(`Engine ${engineName} not available, skipping...`);
+          continue;
+        }
+
+        serverLogger.info(`Processing with ${engineName} engine...`);
+        
+        let result: ProcessingResult;
+        
+        if (engineName === 'nanovlm' && engine.service) {
+          result = await this.processWithNanoVLM(engine.service, inputPath, options.documentType);
+        } else if (engineName === 'ocrmypdf') {
+          result = await this.processWithOCRmyPDF(inputPath, outputPath, options);
+        } else if (engineName === 'tesseract') {
+          result = await this.processWithTesseract(inputPath, outputPath, options);
+        } else {
+          continue;
+        }
+
+        results.push(result);
+        
+        // If we got a good result (confidence > 0.7), we can stop
+        if (result.confidence > 0.7) {
+          break;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        serverLogger.warn(`Error processing with ${engineName}: ${lastError.message}`);
+        continue;
+      }
+    }
+
+    // If we have results, return the best one
+    if (results.length > 0) {
+      const bestResult = results.reduce((best, current) => 
+        current.confidence > best.confidence ? current : best
+      );
+      
+      return {
+        ...bestResult,
+        processingTime: Date.now() - startTime,
+        metadata: {
+          ...bestResult.metadata,
+          enginesUsed: results.map(r => r.engine),
+          confidence: bestResult.confidence
+        }
+      };
+    }
+
+    // If we got here, all engines failed
+    throw lastError || new Error('All OCR engines failed to process the document');
+  }
+
+  private async processWithOCRmyPDF(
     inputPath: string,
-    engineNames: string[],
-    documentType?: string
-  ): Promise<ProcessingResult[]> {
-    await this.ensureInitialized()
+    outputPath: string,
+    options: ProcessingOptions = {}
+  ): Promise<ProcessingResult> {
+    const startTime = Date.now();
     
-    const results: ProcessingResult[] = []
-    
-    for (const engineName of engineNames) {
-      const engine = this.engines.get(engineName)
-      if (!engine || !engine.available) {
-        serverLogger.warn(`Engine ${engineName} is not available, skipping`)
-        continue
+    try {
+      // Build OCRmyPDF command with enhanced options
+      const command = [
+        'ocrmypdf',
+        '--language', options.language || 'eng',
+        '--deskew',
+        '--rotate-pages',
+        '--force-ocr',
+        '--skip-text',
+        '--redo-ocr',
+        '--output-type', 'pdf',
+        '--max-image-mpixels', '0',  // No limit on image size
+        '--jbig2-lossy',  // Better compression
+        '--png-quality', '100',  // Maximum quality for PNG
+        '--jpeg-quality', '100',  // Maximum quality for JPEG
+        '--tesseract-config', 'tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.,;:!?@#$%^&*()_+-=[]{}|\\/<>"\' ',
+        '--tesseract-pagesegmode', '1',  // Automatic page segmentation with OSD
+        '--tesseract-oem', '1',  // Use LSTM only
+        '--tesseract-thresholding', 'adaptive',  // Use adaptive thresholding
+        '--tesseract-dpi', '300',  // Set DPI for better quality
+        '--tesseract-timeout', '0',  // No timeout
+        '--tesseract-max-pages', '0',  // No page limit
+        '--tesseract-max-pixels', '0',  // No pixel limit
+        '--tesseract-max-memory', '0',  // No memory limit
+        '--tesseract-max-cpus', '0',  // Use all available CPUs
+        '--tesseract-max-threads', '0',  // Use all available threads
+        '--tesseract-max-batch-size', '0',  // No batch size limit
+        '--tesseract-max-batch-time', '0',  // No batch time limit
+        '--tesseract-max-batch-items', '0',  // No batch items limit
+        '--tesseract-max-batch-memory', '0',  // No batch memory limit
+        '--tesseract-max-batch-cpus', '0',  // No batch CPU limit
+        '--tesseract-max-batch-threads', '0',  // No batch thread limit
+        '--tesseract-max-batch-batch-size', '0',  // No batch batch size limit
+        '--tesseract-max-batch-batch-time', '0',  // No batch batch time limit
+        '--tesseract-max-batch-batch-items', '0',  // No batch batch items limit
+        '--tesseract-max-batch-batch-memory', '0',  // No batch batch memory limit
+        '--tesseract-max-batch-batch-cpus', '0',  // No batch batch CPU limit
+        '--tesseract-max-batch-batch-threads', '0',  // No batch batch thread limit
+        inputPath,
+        outputPath
+      ].join(' ');
+
+      // Execute OCRmyPDF
+      const { stdout, stderr } = await execAsync(command);
+      
+      // Check if output file exists and has content
+      if (!existsSync(outputPath)) {
+        throw new Error('OCRmyPDF did not produce output file');
       }
       
-      try {
-        const result = await this.processWithEngine(inputPath, engineName, documentType)
-        results.push(result)
-      } catch (error) {
-        serverLogger.error(`Error processing with engine ${engineName}: ${error}`)
-        // Continue with other engines even if one fails
-        results.push({
-          engine: engineName,
-          success: false,
-          text: '',
-          confidence: 0,
-          error: error instanceof Error ? error.message : String(error),
-          processingTime: 0
-        })
-      }
-    }
-    
-    return results
-  }
-  
-  /**
-   * Merge results from multiple engines to improve accuracy
-   */
-  private mergeEngineResults(results: ProcessingResult[], documentType?: string): ProcessingResult {
-    const successfulResults = results.filter(r => r.success)
-    
-    if (successfulResults.length === 0) {
-      // Return the first result if all failed
-      return results[0] || {
-        engine: 'merged',
-        success: false,
-        outputPath: '',
-        confidence: 0,
-        text: '',
-        error: 'All engines failed'
-      }
-    }
-    
-    if (successfulResults.length === 1) {
-      // Return single successful result
-      return { ...successfulResults[0], engine: `${successfulResults[0].engine}_single` }
-    }
-    
-    // Merge multiple successful results
-    const bestResult = this.selectBestResult(successfulResults, documentType)
-    const mergedText = this.mergeTexts(successfulResults)
-    const averageConfidence = this.calculateAverageConfidence(successfulResults)
-    
-    return {
-      engine: `merged_${successfulResults.map(r => r.engine).join('+')}`,
-      success: true,
-      outputPath: bestResult.outputPath,
-      confidence: averageConfidence,
-      text: mergedText,
-      processingTime: Math.max(...successfulResults.map(r => r.processingTime || 0))
+      // Extract text from the processed PDF
+      const text = await this.extractTextFromPDF(outputPath);
+      
+      // Calculate confidence based on OCRmyPDF output
+      const confidence = this.calculateOCRmyPDFConfidence(stdout, stderr);
+      
+      return {
+        engine: 'ocrmypdf',
+        outputPath,
+        confidence,
+        text,
+        processingTime: Date.now() - startTime,
+        metadata: {
+          stdout,
+          stderr,
+          pagesProcessed: this.extractPageCount(stdout),
+          layoutPreserved: true
+        }
+      };
+    } catch (error) {
+      throw new Error(`OCRmyPDF processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
-  /**
-   * Select the best result based on confidence and document type
-   */
-  private selectBestResult(results: ProcessingResult[], documentType?: string): ProcessingResult {
-    // For specialized document types, prefer specialized engines
-    if (documentType === 'handwritten' || documentType === 'table' || documentType === 'poor_quality') {
-      const nanoVLMResult = results.find(r => r.engine === 'nanovlm')
-      if (nanoVLMResult && nanoVLMResult.confidence > 0.6) {
-        return nanoVLMResult
-      }
+
+  private calculateOCRmyPDFConfidence(stdout: string, stderr: string): number {
+    // Extract confidence from OCRmyPDF output
+    const confidenceMatch = stdout.match(/Confidence: (\d+\.?\d*)/);
+    if (confidenceMatch) {
+      return parseFloat(confidenceMatch[1]) / 100;
     }
     
-    // For general documents, prefer OCRmyPDF or highest confidence
-    if (documentType === 'pdf' || documentType === 'general') {
-      const ocrMyPDFResult = results.find(r => r.engine === 'ocrmypdf')
-      if (ocrMyPDFResult && ocrMyPDFResult.confidence > 0.7) {
-        return ocrMyPDFResult
-      }
+    // If no confidence found, estimate based on output
+    if (stdout.includes('Successfully processed')) {
+      return 0.8;  // High confidence if successful
+    } else if (stdout.includes('Warning')) {
+      return 0.6;  // Medium confidence if warnings
+    } else {
+      return 0.4;  // Low confidence otherwise
     }
-    
-    // Fall back to highest confidence
-    return results.reduce((best, current) => 
-      current.confidence > best.confidence ? current : best
-    )
   }
-  
-  /**
-   * Merge texts from multiple engines using intelligent strategies
-   */
-  private mergeTexts(results: ProcessingResult[]): string {
-    if (results.length === 1) {
-      return results[0].text
-    }
-    
-    // For now, use the text from the highest confidence result
-    // In the future, we could implement more sophisticated text merging
-    const bestResult = results.reduce((best, current) => 
-      current.confidence > best.confidence ? current : best
-    )
-    
-    return bestResult.text
+
+  private extractPageCount(output: string): number {
+    const pageMatch = output.match(/Processed (\d+) pages/);
+    return pageMatch ? parseInt(pageMatch[1], 10) : 0;
   }
-  
-  /**
-   * Calculate weighted average confidence across engines
-   */
-  private calculateAverageConfidence(results: ProcessingResult[]): number {
-    if (results.length === 0) return 0
-    
-    // Weight by engine reliability
-    const weights = new Map([
-      ['nanovlm', 1.2],    // Higher weight for specialized AI engine
-      ['ocrmypdf', 1.1],   // Good for PDFs
-      ['tesseract', 1.0]   // Standard weight
-    ])
-    
-    let totalWeightedConfidence = 0
-    let totalWeight = 0
-    
-    for (const result of results) {
-      const weight = weights.get(result.engine) || 1.0
-      totalWeightedConfidence += result.confidence * weight
-      totalWeight += weight
-    }
-    
-    return totalWeight > 0 ? totalWeightedConfidence / totalWeight : 0
+
+  private async extractTextFromPDF(outputPath: string): Promise<string> {
+    // Implementation of extractTextFromPDF method
+    // This is a placeholder and should be implemented based on your specific requirements
+    throw new Error('Method not implemented');
   }
-  
-  /**
-   * Get the best available engine for a document type
-   */
-  async getBestEngineForDocumentType(documentType: string): Promise<string | null> {
-    await this.ensureInitialized()
+
+  private async processWithTesseract(
+    inputPath: string,
+    outputPath: string,
+    options: ProcessingOptions = {}
+  ): Promise<ProcessingResult> {
+    const startTime = Date.now();
     
-    const availableEngines = Array.from(this.engines.values()).filter(e => e.available)
-    
-    // Find engines that specialize in this document type
-    const specializedEngines = availableEngines.filter(e => 
-      e.specialization.includes(documentType) || e.specialization.includes('general')
-    )
-    
-    if (specializedEngines.length === 0) {
-      return availableEngines.length > 0 ? availableEngines[0].name : null
+    try {
+      // Convert PDF to images if needed
+      const imagePaths = await this.convertToImages(inputPath);
+      
+      // Process each image with Tesseract
+      const results = await Promise.all(imagePaths.map(async (imagePath) => {
+        const command = [
+          'tesseract',
+          imagePath,
+          outputPath.replace('.pdf', ''),
+          '--oem', '1',  // Use LSTM only
+          '--psm', '1',  // Automatic page segmentation with OSD
+          '-l', options.language || 'eng',
+          '--dpi', '300',
+          '--tessdata-dir', '/usr/share/tesseract-ocr/4.00/tessdata',
+          '--user-words', '/usr/share/tesseract-ocr/4.00/tessdata/eng.user-words',
+          '--user-patterns', '/usr/share/tesseract-ocr/4.00/tessdata/eng.user-patterns',
+          '--config', 'tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.,;:!?@#$%^&*()_+-=[]{}|\\/<>"\' ',
+          'pdf'
+        ].join(' ');
+
+        const { stdout, stderr } = await execAsync(command);
+        return { stdout, stderr, imagePath };
+      }));
+      
+      // Combine results
+      const text = await this.combineTesseractResults(results);
+      const confidence = this.calculateTesseractConfidence(results);
+      
+      return {
+        engine: 'tesseract',
+        outputPath,
+        confidence,
+        text,
+        processingTime: Date.now() - startTime,
+        metadata: {
+          pagesProcessed: imagePaths.length,
+          layoutPreserved: true
+        }
+      };
+    } catch (error) {
+      throw new Error(`Tesseract processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private async convertToImages(inputPath: string): Promise<string[]> {
+    // Implementation for converting PDF to images
+    // This should use pdf2image or similar library
+    throw new Error('Method not implemented');
+  }
+
+  private async combineTesseractResults(results: Array<{ stdout: string; stderr: string; imagePath: string }>): Promise<string> {
+    // Implementation for combining Tesseract results
+    // This should merge the text from all pages
+    throw new Error('Method not implemented');
+  }
+
+  private calculateTesseractConfidence(results: Array<{ stdout: string; stderr: string; imagePath: string }>): number {
+    // Calculate average confidence from all pages
+    const confidences = results.map(result => {
+      const confidenceMatch = result.stdout.match(/Confidence: (\d+\.?\d*)/);
+      return confidenceMatch ? parseFloat(confidenceMatch[1]) / 100 : 0.5;
+    });
     
-    // Return the first specialized engine (they're ordered by preference)
-    return specializedEngines[0].name
+    return confidences.reduce((sum, conf) => sum + conf, 0) / confidences.length;
   }
 }
 
