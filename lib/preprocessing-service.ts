@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import logger from './logger';
+import HighlightDetector, { HighlightDetectionResult, HighlightDetectionOptions } from './highlight-detector';
 
 const execAsync = promisify(exec);
 
@@ -12,13 +13,36 @@ export interface PreprocessingOptions {
   deskew?: boolean;
   contrast?: number;
   brightness?: number;
+  // Legacy options for compatibility
+  enhanceContrast?: boolean;
+  removeNoise?: boolean;
+  correctSkew?: boolean;
+  sharpenText?: boolean;
+  binarize?: boolean;
+  normalizeSize?: boolean;
+  // Highlight detection options
+  detectHighlights?: boolean;
+  enhanceHighlights?: boolean;
+  highlightColorThreshold?: number;
+  highlightMinSize?: number;
+  highlightTargetColors?: string[];
+}
+
+export interface PreprocessingResult {
+  success: boolean;
+  outputPath: string;
+  operations: string[];
+  errors?: string[];
+  highlightResults?: HighlightDetectionResult;
 }
 
 export class PreprocessingService {
   private tempDir: string;
+  private highlightDetector: HighlightDetector;
   
   constructor() {
     this.tempDir = path.join(process.cwd(), 'tmp', 'preprocessing');
+    this.highlightDetector = new HighlightDetector();
     
     // Create temp directory if it doesn't exist
     if (!fs.existsSync(this.tempDir)) {
@@ -44,17 +68,18 @@ export class PreprocessingService {
       // Determine preprocessing operations
       const magickOps: string[] = [];
 
-      if (options.enhanceContrast) {
+      // Support both new and legacy option names for compatibility
+      if (options.enhanceContrast || options.contrast) {
         magickOps.push('-normalize', '-contrast-stretch', '0.1%x0.1%');
         operations.push('Enhanced contrast and normalization');
       }
 
-      if (options.removeNoise) {
+      if (options.removeNoise || options.denoise) {
         magickOps.push('-despeckle', '-median', '1');
         operations.push('Noise reduction and despeckling');
       }
 
-      if (options.correctSkew) {
+      if (options.correctSkew || options.deskew) {
         magickOps.push('-deskew', '40%');
         operations.push('Automatic skew correction');
       }
@@ -69,9 +94,14 @@ export class PreprocessingService {
         operations.push('Image binarization');
       }
 
-      if (options.normalizeSize) {
+      if (options.normalizeSize || options.enhanceResolution) {
         magickOps.push('-resize', '200%', '-density', '300');
         operations.push('Size normalization and DPI enhancement');
+      }
+
+      if (options.brightness) {
+        magickOps.push('-brightness-contrast', `0x${options.brightness}`);
+        operations.push(`Brightness adjustment: ${options.brightness}`);
       }
 
       let finalOutputPath: string;
@@ -167,11 +197,57 @@ export class PreprocessingService {
         }
       }
 
+      // Perform highlight detection if requested
+      let highlightResults: HighlightDetectionResult | undefined;
+      
+      if (options.detectHighlights) {
+        try {
+          logger.info('Detecting highlighted regions in document');
+          
+          const highlightOptions: HighlightDetectionOptions = {
+            colorThreshold: options.highlightColorThreshold || 0.3,
+            minRegionSize: options.highlightMinSize || 100,
+            saturationThreshold: 0.5,
+            enableTextExtraction: true,
+            targetColors: options.highlightTargetColors || ['yellow', 'green', 'pink', 'blue', 'orange']
+          };
+          
+          // Use the final processed image for highlight detection
+          const detectionPath = finalOutputPath;
+          highlightResults = await this.highlightDetector.detectHighlights(detectionPath, highlightOptions);
+          
+          if (highlightResults.hasHighlights) {
+            operations.push(`Detected ${highlightResults.highlightRegions.length} highlighted regions`);
+            
+            // Enhance highlighted regions if requested
+            if (options.enhanceHighlights) {
+              const enhancedPath = await this.enhanceHighlightedRegions(
+                finalOutputPath, 
+                highlightResults.highlightRegions,
+                sessionDir
+              );
+              
+              if (enhancedPath && enhancedPath !== finalOutputPath) {
+                finalOutputPath = enhancedPath;
+                operations.push('Enhanced highlighted regions for better OCR');
+              }
+            }
+          } else {
+            operations.push('No highlights detected in document');
+          }
+          
+        } catch (highlightError) {
+          logger.warn(`Highlight detection failed: ${highlightError}`);
+          errors.push(`Highlight detection error: ${highlightError instanceof Error ? highlightError.message : String(highlightError)}`);
+        }
+      }
+
       return {
         success: true,
         outputPath: finalOutputPath,
         operations,
-        errors: errors.length > 0 ? errors : undefined
+        errors: errors.length > 0 ? errors : undefined,
+        highlightResults
       };
 
     } catch (error) {
@@ -182,6 +258,54 @@ export class PreprocessingService {
         operations,
         errors: [...errors, error instanceof Error ? error.message : String(error)]
       };
+    }
+  }
+
+  /**
+   * Enhance highlighted regions for better OCR results
+   */
+  private async enhanceHighlightedRegions(
+    imagePath: string,
+    highlightRegions: HighlightRegion[],
+    sessionDir: string
+  ): Promise<string> {
+    try {
+      const enhancedPath = path.join(sessionDir, 'enhanced_highlights.png');
+      
+      if (highlightRegions.length === 0) {
+        return imagePath;
+      }
+
+      logger.info(`Enhancing ${highlightRegions.length} highlighted regions`);
+      
+      // Create a composite command to enhance all highlighted regions
+      let enhanceCommand = `convert "${imagePath}"`;
+      
+      // For each highlight region, apply localized enhancement
+      for (let i = 0; i < highlightRegions.length; i++) {
+        const region = highlightRegions[i];
+        const regionSpec = `${region.width}x${region.height}+${region.x}+${region.y}`;
+        
+        // Apply region-specific enhancements
+        enhanceCommand += ` \\( -clone 0 -crop ${regionSpec} -contrast-stretch 2%x2% -sharpen 0x1 \\)`;
+        enhanceCommand += ` -geometry +${region.x}+${region.y} -composite`;
+      }
+      
+      enhanceCommand += ` "${enhancedPath}"`;
+      
+      await execAsync(enhanceCommand);
+      
+      if (fs.existsSync(enhancedPath)) {
+        logger.info('Successfully enhanced highlighted regions');
+        return enhancedPath;
+      } else {
+        logger.warn('Highlight enhancement failed, using original image');
+        return imagePath;
+      }
+      
+    } catch (error) {
+      logger.warn(`Highlight enhancement failed: ${error}`);
+      return imagePath;
     }
   }
 
@@ -200,6 +324,26 @@ export class PreprocessingService {
 
     const result = await this.preprocessDocument(inputPath, options);
     return result.outputPath;
+  }
+
+  /**
+   * Quick preprocessing with highlight detection for low-confidence documents
+   */
+  async quickEnhanceWithHighlights(inputPath: string): Promise<PreprocessingResult> {
+    const options: PreprocessingOptions = {
+      enhanceContrast: true,
+      removeNoise: true,
+      correctSkew: true,
+      normalizeSize: false,
+      sharpenText: true,
+      binarize: false,
+      detectHighlights: true,
+      enhanceHighlights: true,
+      highlightColorThreshold: 0.3,
+      highlightMinSize: 100
+    };
+
+    return await this.preprocessDocument(inputPath, options);
   }
 
   /**

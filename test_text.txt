@@ -1,5 +1,0 @@
-This is a test document with good text quality for OCR testing.
-
-This document contains readable text that should produce high confidence scores when processed through the OCR system.
-
-The confidence detection system should be able to analyze this text and provide meaningful confidence metrics.
