@@ -1,7 +1,12 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, statSync } from 'fs';
-import { writeFile, readFile, mkdir } from 'fs/promises';
+import { writeFile      try {
+        // All engines are built-in, so they're always available
+        engine.available = true;
+        
+        logger.info(`OCR engine ${engine.name} is available`);
+      } catch (error) { from 'fs/promises';
 import { join } from 'path';
 import logger from './logger';
 import { preprocessingService } from './preprocessing-service';
@@ -66,7 +71,7 @@ export interface FourEngineEnsembleResult {
 
 /**
  * Four-Engine OCR Service optimized for medical documents
- * Integrates OCRmyPDF, Tesseract, PaddleOCR, and EnhancedTesseract for optimal results
+ * Integrates OCRmyPDF, Tesseract, and EnhancedTesseract for optimal results
  */
 export class FourEngineOCRService {
   private engines: FourEngineOCREngine[] = [
@@ -102,21 +107,6 @@ export class FourEngineOCRService {
       specialization: ['general_text', 'medical_codes', 'structured_data']
     },
     {
-      name: 'paddleocr',
-      command: (input, output, lang, options) => {
-        let enhancement = 'medical_bills'; // Default to medical bills processing
-        if (options?.enhanceHandwriting) enhancement = 'medical_handwritten';
-        if (options?.medicalTerminology) enhancement = 'medical_structured';
-        if (options?.preserveLayout) enhancement = 'medical_layout';
-        return `curl -X POST http://localhost:8000/ocr/medical -F "file=@${input}" -F "enhancement_mode=${enhancement}" -F "extract_dates=true" -F "extract_addresses=true" -F "extract_codes=true" -o "${output}"`;
-      },
-      confidence: true,
-      available: false, // Will be checked
-      medicalOptimized: true,
-      handwritingSupport: true,
-      specialization: ['medical_bills', 'insurance_forms', 'handwriting', 'dates', 'addresses', 'medical_codes', 'poor_scans']
-    },
-    {
       name: 'enhanced-tesseract',
       command: (input, output, lang, options) => {
         let enhancement = 'medical_bills'; // Default to medical bills processing
@@ -147,22 +137,13 @@ export class FourEngineOCRService {
           await execAsync('ocrmypdf --version');
         } else if (engine.name === 'tesseract') {
           await execAsync('tesseract --version');
-        } else if (engine.name === 'paddleocr') {
-          // Check if PaddleOCR service is running
-          const response = await fetch('http://localhost:8000/health');
-          if (response.ok) {
-            engine.available = true;
-          } else {
-            throw new Error('PaddleOCR service not responding');
-          }
         } else if (engine.name === 'enhanced-tesseract') {
           // EnhancedTesseract is built-in, so it's always available
           engine.available = true;
         }
         
-        if (engine.name !== 'paddleocr') {
-          engine.available = true;
-        }
+        // All engines are now built-in, so they're always available
+        engine.available = true;
         
         logger.info(`OCR engine ${engine.name} is available`);
       } catch (error) {
@@ -293,10 +274,7 @@ export class FourEngineOCRService {
     try {
       logger.info(`Running medical OCR with ${engine.name}`);
       
-      if (engine.name === 'paddleocr') {
-        // Handle service-based engines
-        await this.processWithService(engine, inputPath, outputPath, language, options);
-      } else if (engine.name === 'enhanced-tesseract') {
+      if (engine.name === 'enhanced-tesseract') {
         // Handle enhanced-tesseract engine
         await this.processWithEnhancedTesseract(engine, inputPath, outputPath, language, options);
       } else {
@@ -341,7 +319,7 @@ export class FourEngineOCRService {
   }
 
   /**
-   * Process document with service-based engines (PaddleOCR, Kraken)
+   * Process document with service-based engines (Enhanced Tesseract)
    */
   private async processWithService(
     engine: FourEngineOCREngine,
@@ -352,44 +330,24 @@ export class FourEngineOCRService {
   ): Promise<void> {
     const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
     
-    if (engine.name === 'paddleocr') {
-      // PaddleOCR medical service call
-      let enhancement = 'medical_bills'; // Default to medical bills
-      if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
-      if (options.medicalTerminology) enhancement = 'medical_structured';
-      if (options.preserveLayout) enhancement = 'medical_layout';
-      
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', enhancement);
-      formData.append('extract_dates', 'true');
-      formData.append('extract_addresses', 'true');
-      formData.append('extract_codes', 'true');
-      formData.append('medical_context', 'true');
-      
-      const response = await fetch('http://localhost:8000/ocr/medical', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`PaddleOCR medical service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      // Enhanced result structure for medical data
-      const enhancedResult = {
-        ...result,
-        medical_optimization: true,
-        extraction_targets: ['dates', 'addresses', 'codes', 'patient_info'],
-        processing_mode: enhancement
-      };
-      await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
-      
-    } else if (engine.name === 'enhanced-tesseract') {
-      // Enhanced Tesseract processing using internal module
+    // Service-based processing has been replaced with Enhanced Tesseract
+    // Legacy code was removed during Python dependency cleanup
+    throw new Error('This method is deprecated. Use processWithEnhancedTesseract instead.');
+  }
+  
+  /**
+   * Process document with Enhanced Tesseract
+   */
+  private async processWithEnhancedTesseract(
+    engine: FourEngineOCREngine,
+    inputPath: string,
+    outputPath: string,
+    language: string,
+    options: MedicalOCROptions
+  ): Promise<void> {
+    const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
+    
+    // Enhanced Tesseract processing using internal module
       let enhancement = 'medical_bills'; // Default to medical bills
       if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
       if (options.medicalTerminology) enhancement = 'medical_structured';
@@ -442,13 +400,7 @@ export class FourEngineOCRService {
     let confidence = 0;
 
     try {
-      if (engine.name === 'paddleocr') {
-        // PaddleOCR service returns JSON response
-        const jsonContent = await readFile(outputPath, 'utf-8');
-        const serviceResult = JSON.parse(jsonContent);
-        extractedText = serviceResult.text || '';
-        confidence = serviceResult.confidence || 0;
-      } else if (engine.name === 'enhanced-tesseract') {
+      if (engine.name === 'enhanced-tesseract') {
         // Enhanced Tesseract returns a more structured output
         const jsonContent = await readFile(outputPath, 'utf-8');
         const enhancedResult = JSON.parse(jsonContent);
@@ -875,7 +827,7 @@ export class FourEngineOCRService {
     
     // Special considerations for medical documents
     if (options.enhanceHandwriting) {
-      const handwritingEngines = ['paddleocr', 'kraken'];
+      const handwritingEngines = ['enhanced-tesseract'];
       for (const engine of handwritingEngines) {
         const score = performance.get(engine);
         if (score && score > 60) return engine;

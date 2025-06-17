@@ -15,14 +15,10 @@ export interface PreprocessingOptions {
 }
 
 export class PreprocessingService {
-  private pythonEnvPath: string;
   private tempDir: string;
   
-  constructor(
-    pythonEnvPath = path.join(process.cwd(), 'nanovlm_env', 'bin', 'python')
-  ) {
+  constructor() {
     this.tempDir = path.join(process.cwd(), 'tmp', 'preprocessing');
-    this.pythonEnvPath = pythonEnvPath;
     
     // Create temp directory if it doesn't exist
     if (!fs.existsSync(this.tempDir)) {
@@ -241,59 +237,9 @@ export class PreprocessingService {
   }
 
   /**
-   * Preprocess image using Python-based NanoVLM for document-type specific optimizations
+   * Enhanced handwriting document optimization (JS-based replacement for Python dependencies)
    */
-  async preprocessImage(
-    inputPath: string,
-    outputPath: string,
-    options: PreprocessingOptions = {}
-  ): Promise<string> {
-    try {
-      // Create output directory if it doesn't exist
-      const outputDir = path.dirname(outputPath);
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-      
-      // Prepare Python script arguments
-      const args = [inputPath, outputPath];
-      if (options.enhanceResolution) {
-        args.push('--enhance-resolution');
-      }
-      if (options.denoise) {
-        args.push('--denoise');
-      }
-      if (options.deskew) {
-        args.push('--deskew');
-      }
-      if (options.contrast) {
-        args.push('--contrast', String(options.contrast));
-      }
-      if (options.brightness) {
-        args.push('--brightness', String(options.brightness));
-      }
-
-      // Execute Python script for preprocessing
-      const pythonCommand = `${this.pythonEnvPath} -m nanovlm.preprocess_image`;
-      logger.info(`Running preprocessing with NanoVLM: ${pythonCommand} ${args.join(' ')}`);
-      const { stdout, stderr } = await execAsync(`${pythonCommand} ${args.join(' ')}`);
-      
-      logger.info(`NanoVLM output: ${stdout}`);
-      if (stderr) {
-        logger.warn(`NanoVLM warnings: ${stderr}`);
-      }
-      
-      return outputPath;
-    } catch (error) {
-      logger.error(`Preprocessing failed: ${error}`);
-      throw error;
-    }
-  }
-  
-  /**
-   * Handwriting document optimization using NanoVLM
-   */
-  async nanoVLMHandwritingOptimize(inputPath: string): Promise<string> {
+  async enhancedHandwritingOptimize(inputPath: string): Promise<string> {
     const outputPath = this.generateOutputPath(inputPath, 'handwriting');
     return this.preprocessImage(inputPath, outputPath, {
       enhanceResolution: true,
@@ -304,9 +250,9 @@ export class PreprocessingService {
   }
   
   /**
-   * Table document optimization using NanoVLM
+   * Enhanced table document optimization (JS-based replacement for nanoVLM)
    */
-  async nanoVLMTableOptimize(inputPath: string): Promise<string> {
+  async enhancedTableOptimize(inputPath: string): Promise<string> {
     const outputPath = this.generateOutputPath(inputPath, 'table');
     return this.preprocessImage(inputPath, outputPath, {
       enhanceResolution: true,
@@ -316,9 +262,9 @@ export class PreprocessingService {
   }
   
   /**
-   * General document optimization using NanoVLM
+   * Enhanced general document optimization (JS-based replacement for nanoVLM)
    */
-  async nanoVLMGeneralOptimize(inputPath: string): Promise<string> {
+  async enhancedGeneralOptimize(inputPath: string): Promise<string> {
     const outputPath = this.generateOutputPath(inputPath, 'general');
     return this.preprocessImage(inputPath, outputPath, {
       denoise: true,

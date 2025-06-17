@@ -48,7 +48,6 @@ interface AppConfig {
   
   // Model paths
   modelPaths: {
-    nanovlm: string;
     tesseract: string;
   };
 }
@@ -125,7 +124,6 @@ export const config: AppConfig = {
   
   // Model paths
   modelPaths: {
-    nanovlm: '/usr/src/app/models/nanovlm',
     tesseract: '/usr/share/tesseract-ocr/4.00/tessdata',
   },
 };

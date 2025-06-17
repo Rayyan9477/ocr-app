@@ -198,8 +198,8 @@ export class AdaptiveModeService {
     // ACCURACY Mode - Maximum accuracy
     this.modeConfigurations.set(OCRMode.ACCURACY, {
       mode: OCRMode.ACCURACY,
-      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'enhanced-tesseract'],
-      maxEngines: 4,
+      engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
+      maxEngines: 3,
       parallelProcessing: true,
       preprocessing: {
         enabled: true,
@@ -235,8 +235,8 @@ export class AdaptiveModeService {
     // MEDICAL Mode - Specialized for medical documents
     this.modeConfigurations.set(OCRMode.MEDICAL, {
       mode: OCRMode.MEDICAL,
-      engines: ['tesseract', 'ocrmypdf', 'paddleocr'],
-      maxEngines: 3,
+      engines: ['tesseract', 'ocrmypdf'],
+      maxEngines: 2,
       parallelProcessing: true,
       preprocessing: {
         enabled: true,
@@ -347,8 +347,8 @@ export class AdaptiveModeService {
     // ADAPTIVE Mode - Automatically switches between modes
     this.modeConfigurations.set(OCRMode.ADAPTIVE, {
       mode: OCRMode.ADAPTIVE,
-      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'enhanced-tesseract'],
-      maxEngines: 4,
+      engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
+      maxEngines: 3,
       parallelProcessing: true,
       preprocessing: {
         enabled: true,

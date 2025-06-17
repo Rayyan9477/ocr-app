@@ -198,7 +198,7 @@ export class EnhancedConfigManager {
           maxEngines: 2,
           parallelProcessing: true,
           enginePriority: ['tesseract', 'ocrmypdf'],
-          fallbackEngines: ['paddleocr'],
+          fallbackEngines: ['enhanced-tesseract'],
           parameters: {
             psm: 1,
             oem: 3,
@@ -206,10 +206,10 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.ACCURACY]: {
-          engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
-          maxEngines: 4,
+          engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
+          maxEngines: 3,
           parallelProcessing: true,
-          enginePriority: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+          enginePriority: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
           fallbackEngines: [],
           parameters: {
             psm: 1,
@@ -219,11 +219,11 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.MEDICAL]: {
-          engines: ['tesseract', 'ocrmypdf', 'paddleocr'],
+          engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
           maxEngines: 3,
           parallelProcessing: true,
-          enginePriority: ['tesseract', 'ocrmypdf', 'paddleocr'],
-          fallbackEngines: ['kraken'],
+          enginePriority: ['tesseract', 'ocrmypdf', 'enhanced-tesseract'],
+          fallbackEngines: ['tf-vlm'],
           parameters: {
             psm: 1,
             oem: 3,
@@ -232,11 +232,11 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.HANDWRITTEN]: {
-          engines: ['tesseract', 'kraken'],
+          engines: ['tesseract', 'enhanced-tesseract'],
           maxEngines: 2,
           parallelProcessing: true,
-          enginePriority: ['kraken', 'tesseract'],
-          fallbackEngines: ['paddleocr'],
+          enginePriority: ['enhanced-tesseract', 'tesseract'],
+          fallbackEngines: ['tf-vlm'],
           parameters: {
             psm: 13,
             oem: 1,
@@ -248,7 +248,7 @@ export class EnhancedConfigManager {
           maxEngines: 2,
           parallelProcessing: true,
           enginePriority: ['tesseract', 'ocrmypdf'],
-          fallbackEngines: ['paddleocr', 'kraken'],
+          fallbackEngines: ['enhanced-tesseract', 'tf-vlm'],
           parameters: {
             psm: 1,
             oem: 3,
@@ -260,7 +260,7 @@ export class EnhancedConfigManager {
           maxEngines: 2,
           parallelProcessing: true,
           enginePriority: ['tesseract', 'ocrmypdf'],
-          fallbackEngines: ['paddleocr'],
+          fallbackEngines: ['enhanced-tesseract'],
           parameters: {
             psm: 6,
             oem: 3,
@@ -269,10 +269,10 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.MULTILINGUAL]: {
-          engines: ['tesseract', 'paddleocr'],
+          engines: ['tesseract', 'enhanced-tesseract'],
           maxEngines: 2,
           parallelProcessing: true,
-          enginePriority: ['paddleocr', 'tesseract'],
+          enginePriority: ['enhanced-tesseract', 'tesseract'],
           fallbackEngines: ['ocrmypdf'],
           parameters: {
             psm: 1,
@@ -281,10 +281,10 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.ADAPTIVE]: {
-          engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+          engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract', 'tf-vlm'],
           maxEngines: 4,
           parallelProcessing: true,
-          enginePriority: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+          enginePriority: ['tesseract', 'ocrmypdf', 'enhanced-tesseract', 'tf-vlm'],
           fallbackEngines: [],
           parameters: {
             adaptive: true,
@@ -292,10 +292,10 @@ export class EnhancedConfigManager {
           }
         },
         [OCRMode.EXPERIMENTAL]: {
-          engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+          engines: ['tesseract', 'ocrmypdf', 'enhanced-tesseract', 'tf-vlm'],
           maxEngines: 4,
           parallelProcessing: true,
-          enginePriority: ['kraken', 'paddleocr', 'tesseract', 'ocrmypdf'],
+          enginePriority: ['enhanced-tesseract', 'tf-vlm', 'tesseract', 'ocrmypdf'],
           fallbackEngines: [],
           parameters: {
             experimental: true,

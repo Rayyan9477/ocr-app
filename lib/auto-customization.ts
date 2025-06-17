@@ -27,6 +27,7 @@ export interface OptimizedOCRSettings {
   aggressivePreprocessing: boolean;
   tesseractParams: string[];
   ocrmypdfParams: string[];
+  enhancedParams: string[]; // Parameters for enhanced-tesseract engine
   confidenceThreshold: number;
   enginePreference: string[];
 }
@@ -379,8 +380,9 @@ export class AutoCustomizationService {
       aggressivePreprocessing: false,
       tesseractParams: [],
       ocrmypdfParams: [],
+      enhancedParams: [],
       confidenceThreshold: 70,
-      enginePreference: ['tesseract', 'ocrmypdf']
+      enginePreference: ['tesseract', 'ocrmypdf', 'enhanced-tesseract']
     };
   }
 }

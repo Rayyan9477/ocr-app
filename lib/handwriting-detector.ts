@@ -411,7 +411,7 @@ export class HandwritingDetector {
       suggestions.push("Text appears to be handwritten");
       
       if (confidence < 70) {
-        suggestions.push("Use PaddleOCR for better handwriting recognition");
+        suggestions.push("Use Enhanced Tesseract for better handwriting recognition");
       }
       
       if (qualityFactors.clarity < 0.5) {

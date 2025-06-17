@@ -16,7 +16,7 @@ import { preprocessingService } from './preprocessing-service';
 import { extractConfidenceScores } from './confidence-detector';
 import { DocumentAnalysis } from './document-analyzer';
 import { ResultMerger } from './result-merger';
-import { OCRResult } from './nano-vlm-service';
+import { OCRResult } from './multi-engine-ocr';
 
 export interface ProcessingRequest {
   inputPath: string;

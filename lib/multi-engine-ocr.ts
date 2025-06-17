@@ -4,10 +4,20 @@ import { existsSync, statSync } from 'fs';
 import { join } from 'path';
 import path from 'path';
 import logger from './logger';
-import { NanoVLMService, OCRResult } from './nano-vlm-service';
 import { PreprocessingService } from './preprocessing-service';
 import { autoCustomization, OptimizedOCRSettings } from './auto-customization';
-import { preprocessingService } from './preprocessing-service';
+
+/**
+ * OCR Result interface for standard OCR operations
+ */
+export interface OCRResult {
+  text: string;
+  confidence: number;
+  engine: string;
+  processingTime?: number;
+  metadata?: Record<string, any>;
+  warnings?: string[];
+}
 
 const execAsync = promisify(exec);
 
@@ -73,38 +83,9 @@ export class MultiEngineOCR {
   }
   
   private async initializeEngines() {
-    // Initialize preprocessing service
-    this.preprocessingService = new PreprocessingService();
-    
     logger.info('Initializing OCR engines...');
     
-    // Add nanoVLM engine with explicit availability check
-    const nanoVLMService = new NanoVLMService();
-    const nanoVLMAvailable = await nanoVLMService.isAvailable().catch(err => {
-      logger.error(`Error checking nanoVLM availability: ${err}`);
-      return false;
-    });
-    
-    logger.info(`nanoVLM availability: ${nanoVLMAvailable}`);
-    
-    this.engines.push({
-      name: 'nanovlm',
-      service: nanoVLMService,
-      available: nanoVLMAvailable,
-      specialization: ['handwriting', 'tables', 'poor_quality'],
-      confidence: true,
-      preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for nanoVLM, document type: ${documentType}`);
-        switch(documentType) {
-          case 'handwriting':
-            return this.preprocessingService.nanoVLMHandwritingOptimize(inputPath);
-          case 'table':
-            return this.preprocessingService.nanoVLMTableOptimize(inputPath);
-          default:
-            return this.preprocessingService.nanoVLMGeneralOptimize(inputPath);
-        }
-      }
-    });
+    // NanoVLM engine has been removed in favor of the pure JS/TS implementation
     
     // Log the available engines
     logger.info(`Available engines: ${this.engines.filter(e => e.available).map(e => e.name).join(', ')}`);
@@ -210,7 +191,7 @@ export class MultiEngineOCR {
       // Apply preprocessing if requested or recommended by customization
       if (usePreprocessing || optimizedSettings?.aggressivePreprocessing) {
         logger.info('Applying preprocessing for improved OCR quality');
-        processedInputPath = await preprocessingService.quickEnhance(inputPath);
+        processedInputPath = await this.preprocessingService.quickEnhance(inputPath);
       }
 
       // Run each available engine with optimized settings
@@ -252,13 +233,8 @@ export class MultiEngineOCR {
             optimizedSettings
           );
           
-          // Handle service-based engines differently
-          if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
-            await this.processWithServiceEngine(engine, processedInputPath, outputPath, language, 'general');
-          } else {
-            // Traditional command-line engines
-            await execAsync(command);
-          }
+          // All engines are now command-line based after removing Python dependencies
+          await execAsync(command);
           
           const processingTime = Date.now() - startTime;
           
@@ -375,7 +351,7 @@ export class MultiEngineOCR {
       // Cleanup preprocessing files if used
       if ((usePreprocessing || optimizedSettings?.aggressivePreprocessing) && processedInputPath !== inputPath) {
         try {
-          await preprocessingService.cleanup();
+          await this.preprocessingService.cleanup();
         } catch (cleanupError) {
           logger.warn(`Cleanup failed: ${cleanupError}`);
         }
@@ -426,13 +402,9 @@ export class MultiEngineOCR {
       const outputPath = join(outputDir, generateOutputFilename(inputPath, engineName, 'smart_ocr'));
       
       // Handle service-based engines
-      if (engine.name === 'paddleocr' || engine.name === 'kraken' || engine.name === 'nanovlm') {
-        await this.processWithServiceEngine(engine, processedInputPath, outputPath, 'eng', documentType);
-      } else {
-        // Traditional command-line engines
-        const command = this.generateOptimizedCommand(engine, processedInputPath, outputPath, 'eng', null);
-        await execAsync(command);
-      }
+      // All engines are now command-line based after removing Python dependencies
+      const command = this.generateOptimizedCommand(engine, processedInputPath, outputPath, 'eng', null);
+      await execAsync(command);
       
       const processingTime = Date.now() - startTime;
       
@@ -445,34 +417,18 @@ export class MultiEngineOCR {
       let extractedText = '';
       let confidence = 0;
       
-      if (engine.name === 'nanovlm') {
-        // For nanoVLM, the result is already in JSON format in the output file
-        const fs = await import('fs/promises');
-        const resultContent = await fs.readFile(outputPath, 'utf-8');
-        const result = JSON.parse(resultContent);
-        extractedText = result.text || '';
-        confidence = result.confidence || 0;
-      } else if (engine.name === 'paddleocr' || engine.name === 'kraken') {
-        // For other service engines, extract from JSON result
-        const fs = await import('fs/promises');
-        const resultContent = await fs.readFile(outputPath, 'utf-8');
-        const result = JSON.parse(resultContent);
-        extractedText = result.text || '';
-        confidence = result.confidence || 0;
-      } else {
-        // For command-line engines, extract text from PDF
-        try {
-          const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
-          extractedText = stdout.trim();
-          
-          // Get confidence if supported
-          if (engine.confidence && engine.name === 'tesseract') {
-            confidence = await this.extractTesseractConfidence(processedInputPath);
-          }
-        } catch (textError) {
-          logger.warn(`Failed to extract text from ${engineName} output: ${textError}`);
-          extractedText = '[Content exists but text extraction failed]';
+      // For command-line engines, extract text from PDF
+      try {
+        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
+        extractedText = stdout.trim();
+        
+        // Get confidence if supported
+        if (engine.confidence && engine.name === 'tesseract') {
+          confidence = await this.extractTesseractConfidence(processedInputPath);
         }
+      } catch (textError) {
+        logger.warn(`Failed to extract text from ${engineName} output: ${textError}`);
+        extractedText = '[Content exists but text extraction failed]';
       }
       
       return {
@@ -545,15 +501,15 @@ export class MultiEngineOCR {
       
       command += ` "${inputPath}" "${outputPath}"`;
       return command;
-    } else if (engine.name === 'paddleocr') {
-      // Service-based engine - return placeholder command
-      return `echo "PaddleOCR service processing"`;
-    } else if (engine.name === 'kraken') {
-      // Service-based engine - return placeholder command  
-      return `echo "Kraken service processing"`;
-    } else if (engine.name === 'nanovlm') {
-      // NanoVLM service - return placeholder command
-      return `echo "NanoVLM service processing"`;
+    } else if (engine.name === 'enhanced-tesseract') {
+      // Enhanced Tesseract engine
+      let command = `node ./lib/cli/enhanced-tesseract-cli.js --input "${inputPath}" --output "${outputPath}" --language ${language}`;
+      
+      if (settings && settings.enhancedParams.length > 0) {
+        command += ` ${settings.enhancedParams.join(' ')}`;
+      }
+      
+      return command;
     }
     
     // Fallback to original command
@@ -718,83 +674,9 @@ export class MultiEngineOCR {
   }
 
   /**
-   * Process document with service-based engines (PaddleOCR, Kraken, NanoVLM)
+   * This method has been removed as all Python-based services have been replaced
+   * with pure JavaScript/TypeScript implementations
    */
-  private async processWithServiceEngine(
-    engine: OCREngine,
-    inputPath: string,
-    outputPath: string,
-    language: string,
-    documentType?: string
-  ): Promise<void> {
-    const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
-    
-    // Ensure inputPath is a string
-    if (typeof inputPath !== 'string') {
-      throw new Error(`Invalid input path type: ${typeof inputPath}, expected string`);
-    }
-    
-    logger.info(`Processing with service engine: ${engine.name}, input: ${inputPath}, document type: ${documentType}`);
-    
-    if (engine.name === 'paddleocr') {
-      // PaddleOCR service call
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', 'standard');
-      
-      const response = await fetch('http://localhost:8000/ocr/process', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`PaddleOCR service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
-      
-    } else if (engine.name === 'kraken') {
-      // Kraken service call
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', 'standard');
-      formData.append('language', language);
-      
-      const response = await fetch('http://localhost:8001/ocr/process', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Kraken service error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
-    } else if (engine.name === 'nanovlm') {
-      // NanoVLM direct service call (not HTTP)
-      logger.info(`Calling nanoVLM service with input: ${inputPath}`);
-      
-      const options = {
-        documentType: (documentType || 'general') as 'general' | 'handwritten' | 'table' | 'poor_quality',
-        confidenceThreshold: 0.5,
-        enhanceResolution: true,
-        preserveLayout: true
-      };
-      
-      // Extract output directory from outputPath for nanoVLM service
-      const outputDir = path.dirname(outputPath);
-      const result = await engine.service.processImage(inputPath, outputDir, options);
-      await writeFileAsync(outputPath, JSON.stringify(result, null, 2));
-      
-      logger.info(`nanoVLM processing completed, output written to: ${outputPath}`);
-    }
-  }
 }
 
 export const multiEngineOCR = new MultiEngineOCR();

@@ -1,5 +1,5 @@
 import logger from './logger';
-import { OCRResult } from './nano-vlm-service';
+import { OCRResult } from './multi-engine-ocr';
 import { DocumentAnalysis } from './document-analyzer';
 
 export class ResultMerger {
@@ -33,11 +33,12 @@ export class ResultMerger {
   }
   
   private mergeTableResults(results: { [engine: string]: OCRResult }): Promise<OCRResult> {
-    if (results['nanovlm']) {
-      return Promise.resolve(results['nanovlm']);
+    // Use enhanced-tesseract as primary engine for tables after Python dependencies removal
+    if (results['enhanced-tesseract']) {
+      return Promise.resolve(results['enhanced-tesseract']);
     }
     
-    // Add fallback logic when nanoVLM isn't available
+    // Fallback to standard tesseract
     if (results['tesseract']) {
       return Promise.resolve(results['tesseract']);
     }
