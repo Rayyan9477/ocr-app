@@ -9,8 +9,15 @@ export function initializeDirectories(): void {
   const dirs = [
     'uploads',
     'processed',
+    'output',
     'tmp/preprocessing',
-    'models/nanovlm'
+    'tmp/enhanced-tesseract',
+    'tmp/tfvlm',
+    'models/tfjs_model',
+    'models/tfjs_model/document_classifier',
+    'models/tfjs_model/layout_detector',
+    'models/tfjs_model/structured_data',
+    'models/tfjs_model/medical_entities'
   ];
   
   for (const dir of dirs) {
@@ -25,3 +32,5 @@ export function initializeDirectories(): void {
     }
   }
 }
+
+export default initializeDirectories;

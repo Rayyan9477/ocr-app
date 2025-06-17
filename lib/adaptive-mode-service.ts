@@ -198,7 +198,7 @@ export class AdaptiveModeService {
     // ACCURACY Mode - Maximum accuracy
     this.modeConfigurations.set(OCRMode.ACCURACY, {
       mode: OCRMode.ACCURACY,
-      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'enhanced-tesseract'],
       maxEngines: 4,
       parallelProcessing: true,
       preprocessing: {
@@ -273,7 +273,7 @@ export class AdaptiveModeService {
     // HANDWRITTEN Mode - Specialized for handwritten content
     this.modeConfigurations.set(OCRMode.HANDWRITTEN, {
       mode: OCRMode.HANDWRITTEN,
-      engines: ['tesseract', 'kraken'],
+      engines: ['tesseract', 'enhanced-tesseract'],
       maxEngines: 2,
       parallelProcessing: true,
       preprocessing: {
@@ -347,7 +347,7 @@ export class AdaptiveModeService {
     // ADAPTIVE Mode - Automatically switches between modes
     this.modeConfigurations.set(OCRMode.ADAPTIVE, {
       mode: OCRMode.ADAPTIVE,
-      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'kraken'],
+      engines: ['tesseract', 'ocrmypdf', 'paddleocr', 'enhanced-tesseract'],
       maxEngines: 4,
       parallelProcessing: true,
       preprocessing: {

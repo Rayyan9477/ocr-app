@@ -66,7 +66,7 @@ export interface FourEngineEnsembleResult {
 
 /**
  * Four-Engine OCR Service optimized for medical documents
- * Integrates OCRmyPDF, Tesseract, PaddleOCR, and Kraken for optimal results
+ * Integrates OCRmyPDF, Tesseract, PaddleOCR, and EnhancedTesseract for optimal results
  */
 export class FourEngineOCRService {
   private engines: FourEngineOCREngine[] = [
@@ -117,16 +117,16 @@ export class FourEngineOCRService {
       specialization: ['medical_bills', 'insurance_forms', 'handwriting', 'dates', 'addresses', 'medical_codes', 'poor_scans']
     },
     {
-      name: 'kraken',
+      name: 'enhanced-tesseract',
       command: (input, output, lang, options) => {
         let enhancement = 'medical_bills'; // Default to medical bills processing
         if (options?.enhanceHandwriting) enhancement = 'medical_handwritten';
         if (options?.medicalTerminology) enhancement = 'medical_structured';
         if (options?.preserveLayout) enhancement = 'medical_layout';
-        return `curl -X POST http://localhost:8001/ocr/medical -F "file=@${input}" -F "enhancement_mode=${enhancement}" -F "language=${lang}" -F "extract_dates=true" -F "extract_addresses=true" -F "extract_codes=true" -o "${output}"`;
+        return `node ./lib/cli/enhanced-tesseract-cli.js --input "${input}" --output "${output}" --mode ${enhancement} --language ${lang} --extract-fields`;
       },
       confidence: true,
-      available: false, // Will be checked
+      available: true, // Enhanced Tesseract is bundled with the app
       medicalOptimized: true,
       handwritingSupport: true,
       specialization: ['medical_bills', 'insurance_forms', 'handwriting', 'historical_documents', 'degraded_text', 'dates', 'addresses', 'medical_notes']
@@ -155,14 +155,9 @@ export class FourEngineOCRService {
           } else {
             throw new Error('PaddleOCR service not responding');
           }
-        } else if (engine.name === 'kraken') {
-          // Check if Kraken service is running
-          const response = await fetch('http://localhost:8001/health');
-          if (response.ok) {
-            engine.available = true;
-          } else {
-            throw new Error('Kraken service not responding');
-          }
+        } else if (engine.name === 'enhanced-tesseract') {
+          // EnhancedTesseract is built-in, so it's always available
+          engine.available = true;
         }
         
         if (engine.name !== 'paddleocr') {
@@ -298,9 +293,12 @@ export class FourEngineOCRService {
     try {
       logger.info(`Running medical OCR with ${engine.name}`);
       
-      if (engine.name === 'paddleocr' || engine.name === 'kraken') {
+      if (engine.name === 'paddleocr') {
         // Handle service-based engines
         await this.processWithService(engine, inputPath, outputPath, language, options);
+      } else if (engine.name === 'enhanced-tesseract') {
+        // Handle enhanced-tesseract engine
+        await this.processWithEnhancedTesseract(engine, inputPath, outputPath, language, options);
       } else {
         // Handle command-line engines (Tesseract, OCRmyPDF)
         const command = engine.command(inputPath, outputPath, language, options);
@@ -390,36 +388,37 @@ export class FourEngineOCRService {
       };
       await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
       
-    } else if (engine.name === 'kraken') {
-      // Kraken medical service call
+    } else if (engine.name === 'enhanced-tesseract') {
+      // Enhanced Tesseract processing using internal module
       let enhancement = 'medical_bills'; // Default to medical bills
       if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
       if (options.medicalTerminology) enhancement = 'medical_structured';
       if (options.preserveLayout) enhancement = 'medical_layout';
       
-      const formData = new FormData();
-      const fileBuffer = await readFileAsync(inputPath);
-      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
-      formData.append('file', blob, 'document.pdf');
-      formData.append('enhancement_mode', enhancement);
-      formData.append('language', language);
-      formData.append('extract_dates', 'true');
-      formData.append('extract_addresses', 'true');
-      formData.append('extract_codes', 'true');
-      formData.append('medical_context', 'true');
-      formData.append('preserve_layout', options.preserveLayout ? 'true' : 'false');
-      
-      const response = await fetch('http://localhost:8001/ocr/medical', {
-        method: 'POST',
-        body: formData
+      // Import the EnhancedTesseractEngine directly
+      const { EnhancedTesseractEngine } = require('../lib/enhanced-tesseract-engine');
+      const enhancedEngine = new EnhancedTesseractEngine({
+        enableHandwritingOptimization: options.enhanceHandwriting,
+        enhancementMode: enhancement,
+        preserveLayout: options.preserveLayout,
+        extractMedicalFields: true,
+        language
       });
       
-      if (!response.ok) {
-        throw new Error(`Kraken medical service error: ${response.statusText}`);
+      // Process the document
+      const result = await enhancedEngine.processDocument(inputPath, {
+        outputPath,
+        extractDates: true,
+        extractAddresses: true,
+        extractCodes: true,
+        medicalContext: true
+      });
+      
+      if (!result || !result.text) {
+        throw new Error('Enhanced Tesseract processing failed');
       }
       
-      const result = await response.json();
-      // Enhanced result structure for medical data
+      // Extract medical data from the result
       const enhancedResult = {
         ...result,
         medical_optimization: true,
@@ -443,16 +442,25 @@ export class FourEngineOCRService {
     let confidence = 0;
 
     try {
-      if (engine.name === 'paddleocr' || engine.name === 'kraken') {
-        // Both services return JSON response
+      if (engine.name === 'paddleocr') {
+        // PaddleOCR service returns JSON response
         const jsonContent = await readFile(outputPath, 'utf-8');
         const serviceResult = JSON.parse(jsonContent);
         extractedText = serviceResult.text || '';
         confidence = serviceResult.confidence || 0;
+      } else if (engine.name === 'enhanced-tesseract') {
+        // Enhanced Tesseract returns a more structured output
+        const jsonContent = await readFile(outputPath, 'utf-8');
+        const enhancedResult = JSON.parse(jsonContent);
+        extractedText = enhancedResult.text || '';
+        confidence = enhancedResult.confidence || 0;
         
-        // For Kraken, use a default confidence if not provided
-        if (engine.name === 'kraken' && !serviceResult.confidence) {
-          confidence = 85;
+        // Extract additional metadata if available
+        if (enhancedResult.metadata) {
+          this.lastProcessedResult.metadata = {
+            ...this.lastProcessedResult.metadata,
+            ...enhancedResult.metadata
+          };
         }
       } else {
         // OCRmyPDF and Tesseract - extract from PDF
