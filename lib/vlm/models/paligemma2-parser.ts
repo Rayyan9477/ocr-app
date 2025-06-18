@@ -6,7 +6,7 @@
  */
 
 import { DocumentAnalysisResponse, TextExtractionResponse, StructuredDataResponse } from '../core/vlm-response-types';
-import { VLMError, VLMErrorCode } from '../core/vlm-error-types';
+import { VlmError, VlmErrorType } from '../core/vlm-error-types';
 import logger from '../../logger';
 
 /**
@@ -42,8 +42,8 @@ export class PaliGemma2Parser {
       }
       
       // Fallback for unexpected response type
-      throw new VLMError(
-        VLMErrorCode.PROCESSING_FAILED,
+      throw new VlmError(
+        VlmErrorType.PROCESSING_FAILED,
         `Unexpected response type: ${typeof rawResponse}`,
         { responseType: typeof rawResponse },
         false
@@ -110,8 +110,8 @@ export class PaliGemma2Parser {
       }
       
       // Fallback for unexpected response type
-      throw new VLMError(
-        VLMErrorCode.PROCESSING_FAILED,
+      throw new VlmError(
+        VlmErrorType.PROCESSING_FAILED,
         `Unexpected response type: ${typeof rawResponse}`,
         { responseType: typeof rawResponse },
         false
@@ -160,8 +160,8 @@ export class PaliGemma2Parser {
       }
       
       // Fallback for unexpected response type
-      throw new VLMError(
-        VLMErrorCode.PROCESSING_FAILED,
+      throw new VlmError(
+        VlmErrorType.PROCESSING_FAILED,
         `Unexpected response type: ${typeof rawResponse}`,
         { responseType: typeof rawResponse },
         false

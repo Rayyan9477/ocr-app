@@ -6,7 +6,7 @@
  */
 
 import { VLMInterface, VLMOptions } from './vlm-interface';
-import { VLMError, VLMErrorCode } from './vlm-error-types';
+import { VlmError, VlmErrorType } from './vlm-error-types';
 import { VLMRegistry } from './vlm-registry';
 
 /**
@@ -54,8 +54,8 @@ export class VLMFactory {
     const implementation = this.registry.getImplementation(modelId, deploymentStrategy);
     
     if (!implementation) {
-      throw new VLMError(
-        VLMErrorCode.MODEL_NOT_FOUND,
+      throw new VlmError(
+        VlmErrorType.MODEL_NOT_FOUND,
         `VLM implementation not found for model ID "${modelId}" with deployment strategy "${deploymentStrategy}"`,
         { modelId, deploymentStrategy },
         true,
@@ -72,8 +72,8 @@ export class VLMFactory {
         const success = await vlm.initialize(options);
         
         if (!success) {
-          throw new VLMError(
-            VLMErrorCode.INIT_FAILED,
+          throw new VlmError(
+            VlmErrorType.INIT_FAILED,
             `Failed to initialize VLM model "${modelId}"`,
             { modelId },
             true,
@@ -81,12 +81,12 @@ export class VLMFactory {
           );
         }
       } catch (error) {
-        if (error instanceof VLMError) {
+        if (error instanceof VlmError) {
           throw error;
         }
         
-        throw new VLMError(
-          VLMErrorCode.INIT_FAILED,
+        throw new VlmError(
+          VlmErrorType.INIT_FAILED,
           `Error initializing VLM model "${modelId}": ${error instanceof Error ? error.message : String(error)}`,
           { modelId, originalError: error },
           true,
@@ -124,8 +124,8 @@ export class VLMFactory {
       }
       
       // If we get here, all fallbacks failed
-      throw new VLMError(
-        VLMErrorCode.INIT_FAILED,
+      throw new VlmError(
+        VlmErrorType.INIT_FAILED,
         `Failed to create VLM with primary model "${primaryOptions.modelId}" and all fallbacks`,
         { primaryOptions, fallbackOptions },
         false

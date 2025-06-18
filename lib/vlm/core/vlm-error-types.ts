@@ -6,9 +6,9 @@
  */
 
 /**
- * Error codes for VLM operations
+ * Error types for VLM operations
  */
-export enum VLMErrorCode {
+export enum VlmErrorType {
   // Initialization Errors
   INIT_FAILED = 'init_failed',
   MODEL_NOT_FOUND = 'model_not_found',
@@ -20,6 +20,7 @@ export enum VLMErrorCode {
   PROCESSING_FAILED = 'processing_failed',
   TIMEOUT = 'timeout',
   OUT_OF_MEMORY = 'out_of_memory',
+  NOT_IMPLEMENTED = 'not_implemented',
   
   // Input Errors
   INVALID_INPUT = 'invalid_input',
@@ -37,6 +38,13 @@ export enum VLMErrorCode {
   CAPABILITY_NOT_SUPPORTED = 'capability_not_supported',
   UNSUPPORTED_OPERATION = 'unsupported_operation',
   
+  // Preprocessing Errors
+  PREPROCESSING_ERROR = 'preprocessing_error',
+  
+  // Model Errors
+  MODEL_LOADING_ERROR = 'model_loading_error',
+  INFERENCE_ERROR = 'inference_error',
+  
   // Deployment Errors
   DEPLOYMENT_ERROR = 'deployment_error',
   NETWORK_ERROR = 'network_error',
@@ -46,13 +54,18 @@ export enum VLMErrorCode {
 }
 
 /**
+ * For backward compatibility with existing code
+ */
+export const VLMErrorCode = VlmErrorType;
+
+/**
  * Base VLM Error class
  */
-export class VLMError extends Error {
+export class VlmError extends Error {
   /**
    * Error code identifying the error type
    */
-  code: VLMErrorCode;
+  code: VlmErrorType;
   
   /**
    * Additional details about the error
@@ -70,14 +83,14 @@ export class VLMError extends Error {
   recoveryActions?: string[];
   
   constructor(
-    code: VLMErrorCode,
+    code: VlmErrorType,
     message: string,
     details?: any,
     recoverable = false,
     recoveryActions?: string[]
   ) {
     super(message);
-    this.name = 'VLMError';
+    this.name = 'VlmError';
     this.code = code;
     this.details = details;
     this.recoverable = recoverable;
@@ -100,15 +113,34 @@ export class VLMError extends Error {
 }
 
 /**
+ * For backward compatibility with existing code
+ */
+export class VLMErrorCompatibility extends VlmError {
+  constructor(
+    code: VlmErrorType,
+    message: string,
+    details?: any,
+    recoverable = false,
+    recoveryActions?: string[]
+  ) {
+    super(code, message, details, recoverable, recoveryActions);
+    this.name = 'VLMError';
+  }
+}
+
+// For backward compatibility alias
+export const VLMError = VLMErrorCompatibility;
+
+/**
  * Create a VLM error from an unknown error
  */
-export function createVLMError(error: unknown, defaultCode = VLMErrorCode.UNKNOWN_ERROR): VLMError {
-  if (error instanceof VLMError) {
+export function createVlmError(error: unknown, defaultCode = VlmErrorType.UNKNOWN_ERROR): VlmError {
+  if (error instanceof VlmError) {
     return error;
   }
   
   if (error instanceof Error) {
-    return new VLMError(
+    return new VlmError(
       defaultCode,
       error.message,
       { originalError: error.name, stack: error.stack },
@@ -116,7 +148,7 @@ export function createVLMError(error: unknown, defaultCode = VLMErrorCode.UNKNOW
     );
   }
   
-  return new VLMError(
+  return new VlmError(
     defaultCode,
     typeof error === 'string' ? error : 'Unknown error occurred',
     { originalError: error },
@@ -127,6 +159,12 @@ export function createVLMError(error: unknown, defaultCode = VLMErrorCode.UNKNOW
 /**
  * Check if an error is a specific VLM error type
  */
-export function isVLMErrorCode(error: unknown, code: VLMErrorCode): boolean {
-  return error instanceof VLMError && error.code === code;
+export function isVlmErrorType(error: unknown, type: VlmErrorType): boolean {
+  return error instanceof VlmError && error.code === type;
 }
+
+/**
+ * For backward compatibility with existing code
+ */
+export const createVLMError = createVlmError;
+export const isVLMErrorCode = isVlmErrorType;

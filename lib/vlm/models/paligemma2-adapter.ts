@@ -14,7 +14,7 @@ import {
   TextExtractionResponse,
   StructuredDataResponse
 } from '../core/vlm-response-types';
-import { VLMError, VLMErrorCode, createVLMError } from '../core/vlm-error-types';
+import { VlmError, VlmErrorType, createVlmError } from '../core/vlm-error-types';
 import { paliGemma2Config } from '../config/model-configs';
 import { getDeploymentConfig } from '../config/deployment-configs';
 import { PaliGemma2Client } from './paligemma2-client';
@@ -75,7 +75,7 @@ export class PaliGemma2Adapter implements VLMInterface {
   private parser: PaliGemma2Parser | null = null;
   private options: PaliGemma2Options = {};
   private _isReady: boolean = false;
-  private lastError?: VLMError;
+  private lastError?: VlmError;
   private deploymentConfig: any;
   
   get isReady(): boolean {
@@ -110,7 +110,7 @@ export class PaliGemma2Adapter implements VLMInterface {
       logger.info(`PaliGemma2 model initialized with deployment strategy: ${deploymentStrategy}`);
       return true;
     } catch (error) {
-      this.lastError = createVLMError(error, VLMErrorCode.INIT_FAILED);
+      this.lastError = createVlmError(error, VlmErrorType.INIT_FAILED);
       logger.error(`Failed to initialize PaliGemma2 model: ${this.lastError.message}`);
       this._isReady = false;
       return false;
@@ -125,7 +125,7 @@ export class PaliGemma2Adapter implements VLMInterface {
       const mergedOptions = { ...this.options, ...options };
       
       // Preprocess image
-      const processedImagePath = await processImage(imagePath, {
+      const processedImage = await processImage(imagePath, {
         width: 224,
         height: 224,
         ...mergedOptions.resolution
@@ -136,8 +136,28 @@ export class PaliGemma2Adapter implements VLMInterface {
         taskDescription: 'Analyze this document and provide detailed information about its type, quality, content, and layout.'
       });
       
-      // Process with VLM
-      const rawResponse = await this.client!.process(processedImagePath, prompt, mergedOptions);
+      // Process with VLM - handle both file path and buffer
+      let rawResponse;
+      if (typeof processedImage === 'string') {
+        // processedImage is a file path
+        rawResponse = await this.client!.process(processedImage, prompt, mergedOptions);
+      } else {
+        // processedImage is a buffer, need to save it temporarily
+        const fs = require('fs');
+        const path = require('path');
+        const tempPath = path.join(process.cwd(), 'uploads', `temp_${Date.now()}.jpg`);
+        fs.writeFileSync(tempPath, processedImage);
+        try {
+          rawResponse = await this.client!.process(tempPath, prompt, mergedOptions);
+        } finally {
+          // Clean up temp file
+          try {
+            fs.unlinkSync(tempPath);
+          } catch (cleanupError) {
+            logger.warn(`Failed to cleanup temp file: ${cleanupError}`);
+          }
+        }
+      }
       
       // Parse response
       const result = this.parser!.parseDocumentAnalysis(rawResponse);
@@ -165,7 +185,7 @@ export class PaliGemma2Adapter implements VLMInterface {
         }
       };
     } catch (error) {
-      const vlmError = createVLMError(error, VLMErrorCode.PROCESSING_FAILED);
+      const vlmError = createVlmError(error, VlmErrorType.PROCESSING_FAILED);
       logger.error(`Document analysis error: ${vlmError.message}`);
       
       return {
@@ -209,7 +229,7 @@ export class PaliGemma2Adapter implements VLMInterface {
       const mergedOptions = { ...this.options, ...options };
       
       // Preprocess image
-      const processedImagePath = await processImage(imagePath, {
+      const processedImage = await processImage(imagePath, {
         width: 224,
         height: 224,
         ...mergedOptions.resolution
@@ -220,8 +240,28 @@ export class PaliGemma2Adapter implements VLMInterface {
         taskDescription: 'Extract all text from this document, preserving layout where possible.'
       });
       
-      // Process with VLM
-      const rawResponse = await this.client!.process(processedImagePath, prompt, mergedOptions);
+      // Process with VLM - handle both file path and buffer
+      let rawResponse;
+      if (typeof processedImage === 'string') {
+        // processedImage is a file path
+        rawResponse = await this.client!.process(processedImage, prompt, mergedOptions);
+      } else {
+        // processedImage is a buffer, need to save it temporarily
+        const fs = require('fs');
+        const path = require('path');
+        const tempPath = path.join(process.cwd(), 'uploads', `temp_${Date.now()}.jpg`);
+        fs.writeFileSync(tempPath, processedImage);
+        try {
+          rawResponse = await this.client!.process(tempPath, prompt, mergedOptions);
+        } finally {
+          // Clean up temp file
+          try {
+            fs.unlinkSync(tempPath);
+          } catch (cleanupError) {
+            logger.warn(`Failed to cleanup temp file: ${cleanupError}`);
+          }
+        }
+      }
       
       // Parse response
       const result = this.parser!.parseTextExtraction(rawResponse);
@@ -248,7 +288,7 @@ export class PaliGemma2Adapter implements VLMInterface {
         }
       };
     } catch (error) {
-      const vlmError = createVLMError(error, VLMErrorCode.PROCESSING_FAILED);
+      const vlmError = createVlmError(error, VlmErrorType.PROCESSING_FAILED);
       logger.error(`Text extraction error: ${vlmError.message}`);
       
       return {
@@ -319,7 +359,7 @@ export class PaliGemma2Adapter implements VLMInterface {
         }
       };
     } catch (error) {
-      const vlmError = createVLMError(error, VLMErrorCode.PROCESSING_FAILED);
+      const vlmError = createVlmError(error, VlmErrorType.PROCESSING_FAILED);
       logger.error(`Structured data extraction error: ${vlmError.message}`);
       
       return {
@@ -377,7 +417,7 @@ export class PaliGemma2Adapter implements VLMInterface {
         }
       };
     } catch (error) {
-      const vlmError = createVLMError(error, VLMErrorCode.PROCESSING_FAILED);
+      const vlmError = createVlmError(error, VlmErrorType.PROCESSING_FAILED);
       logger.error(`Custom prompt processing error: ${vlmError.message}`);
       
       return {
@@ -411,7 +451,7 @@ export class PaliGemma2Adapter implements VLMInterface {
   async getHealthStatus(): Promise<{
     isHealthy: boolean;
     details: Record<string, any>;
-    lastError?: VLMError;
+    lastError?: VlmError;
   }> {
     if (!this.isReady) {
       return {
@@ -420,8 +460,8 @@ export class PaliGemma2Adapter implements VLMInterface {
           status: 'not_initialized',
           message: 'Model is not initialized'
         },
-        lastError: this.lastError || new VLMError(
-          VLMErrorCode.MODEL_NOT_INITIALIZED,
+        lastError: this.lastError || new VlmError(
+          VlmErrorType.MODEL_NOT_INITIALIZED,
           'Model is not initialized',
           undefined,
           true,
@@ -451,15 +491,15 @@ export class PaliGemma2Adapter implements VLMInterface {
           },
           ...clientHealth.details
         },
-        lastError: clientHealth.isHealthy ? undefined : new VLMError(
-          VLMErrorCode.PROCESSING_FAILED,
+        lastError: clientHealth.isHealthy ? undefined : new VlmError(
+          VlmErrorType.PROCESSING_FAILED,
           clientHealth.message || 'Unknown health check failure',
           clientHealth.details,
           true
         )
       };
     } catch (error) {
-      const vlmError = createVLMError(error, VLMErrorCode.UNKNOWN_ERROR);
+      const vlmError = createVlmError(error, VlmErrorType.UNKNOWN_ERROR);
       
       return {
         isHealthy: false,
@@ -478,8 +518,8 @@ export class PaliGemma2Adapter implements VLMInterface {
    */
   private checkReady(): void {
     if (!this.isReady) {
-      throw new VLMError(
-        VLMErrorCode.MODEL_NOT_INITIALIZED,
+      throw new VlmError(
+        VlmErrorType.MODEL_NOT_INITIALIZED,
         'PaliGemma2 model is not initialized',
         undefined,
         true,

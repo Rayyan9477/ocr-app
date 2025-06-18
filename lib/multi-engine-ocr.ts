@@ -6,6 +6,8 @@ import path from 'path';
 import logger from './logger';
 import { PreprocessingService } from './preprocessing-service';
 import { autoCustomization, OptimizedOCRSettings } from './auto-customization';
+import { vlmOcrEnhancer } from './vlm-ocr-enhancer';
+import { paligemma2Integration, Paligemma2IntegrationMode } from './paligemma2-ocr-integration';
 
 /**
  * OCR Result interface for standard OCR operations
@@ -17,6 +19,61 @@ export interface OCRResult {
   processingTime?: number;
   metadata?: Record<string, any>;
   warnings?: string[];
+  success?: boolean;
+  outputPath?: string;
+  error?: string;
+  vlmEnhanced?: boolean;
+  vlmProcessingTimeMs?: number;
+}
+
+/**
+ * Result of an ensemble OCR operation
+ */
+export interface EnsembleResult {
+  /**
+   * The best OCR result selected from all engines
+   */
+  bestResult: OCRResult;
+  
+  /**
+   * Results from all engines that were tried
+   */
+  allResults: OCRResult[];
+  
+  /**
+   * Number of successful OCR operations
+   */
+  successCount: number;
+  
+  /**
+   * Whether the ensemble has at least one successful result
+   */
+  hasSuccessfulResults: boolean;
+  
+  /**
+   * Whether auto-customization was applied
+   */
+  customizationApplied: boolean;
+  
+  /**
+   * Whether VLM enhancement was applied
+   */
+  vlmEnhanced?: boolean;
+  
+  /**
+   * Consensus text generated from all successful results
+   */
+  consensusText?: string;
+  
+  /**
+   * Average confidence across all successful results
+   */
+  averageConfidence?: number;
+  
+  /**
+   * Paligemma 2 integration mode used
+   */
+  paligemma2Mode?: Paligemma2IntegrationMode;
 }
 
 const execAsync = promisify(exec);
@@ -161,13 +218,16 @@ export class MultiEngineOCR {
     outputDir: string,
     language: string = 'eng',
     usePreprocessing: boolean = false,
-    useAutoCustomization: boolean = true
+    useAutoCustomization: boolean = true,
+    useVlmEnhancement: boolean = true,
+    paligemma2Mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.ASSIST
   ): Promise<EnsembleResult> {
     await this.ensureInitialized(); // Ensure engines are initialized
     
     const results: OCRResult[] = [];
     let processedInputPath = inputPath;
     let customizationApplied = false;
+    let vlmEnhanced = false;
     let optimizedSettings: OptimizedOCRSettings | null = null;
 
     try {
@@ -188,7 +248,39 @@ export class MultiEngineOCR {
         }
       }
 
-      // Apply preprocessing if requested or recommended by customization
+      // Get VLM preprocessing recommendations if enabled
+      if (useVlmEnhancement) {
+        try {
+          // First try using Paligemma 2 integration for preprocessing recommendations
+          let preprocessingRecommendations = null;
+          
+          try {
+            preprocessingRecommendations = await paligemma2Integration.getPreprocessingRecommendations(inputPath);
+            logger.info('Paligemma 2 preprocessing recommendations obtained');
+          } catch (paligemmaError) {
+            logger.warn(`Paligemma 2 preprocessing recommendations failed, falling back to legacy VLM: ${paligemmaError}`);
+            preprocessingRecommendations = await vlmOcrEnhancer.getPreprocessingRecommendation(inputPath);
+          }
+          
+          if (preprocessingRecommendations) {
+            logger.info('VLM preprocessing recommendations available');
+            
+            // Apply preprocessing if high priority techniques are recommended by VLM
+            const highPriorityTechniques = preprocessingRecommendations.recommendations
+              .filter(r => r.priority === 'high')
+              .map(r => r.technique);
+              
+            if (highPriorityTechniques.length > 0) {
+              logger.info(`Applying VLM-recommended preprocessing: ${highPriorityTechniques.join(', ')}`);
+              usePreprocessing = true;
+            }
+          }
+        } catch (error) {
+          logger.warn(`VLM preprocessing recommendation failed: ${error}`);
+        }
+      }
+
+      // Apply preprocessing if requested or recommended by customization or VLM
       if (usePreprocessing || optimizedSettings?.aggressivePreprocessing) {
         logger.info('Applying preprocessing for improved OCR quality');
         processedInputPath = await this.preprocessingService.quickEnhance(inputPath);
@@ -208,8 +300,49 @@ export class MultiEngineOCR {
         return true;
       });
       
-      // Reorder engines based on customization preferences
-      if (optimizedSettings?.enginePreference) {
+      // Try to get VLM engine recommendation if enabled
+      if (useVlmEnhancement) {
+        try {
+          // First try using Paligemma 2 integration for engine recommendations
+          let engineRecommendation = null;
+          
+          try {
+            engineRecommendation = await paligemma2Integration.getEngineRecommendations(inputPath);
+            logger.info('Paligemma 2 engine recommendations obtained');
+          } catch (paligemmaError) {
+            logger.warn(`Paligemma 2 engine recommendations failed, falling back to legacy VLM: ${paligemmaError}`);
+            engineRecommendation = await vlmOcrEnhancer.getEngineRecommendation(inputPath);
+          }
+          
+          if (engineRecommendation && engineRecommendation.confidence > 0.7) {
+            logger.info(`VLM engine recommendation: ${engineRecommendation.recommendedEngine} (confidence: ${engineRecommendation.confidence})`);
+            
+            // Reorder engines based on VLM recommendation
+            compatibleEngines.sort((a, b) => {
+              // Primary recommendation
+              const aIsPrimary = a.name.toLowerCase().includes(engineRecommendation.recommendedEngine.toLowerCase());
+              const bIsPrimary = b.name.toLowerCase().includes(engineRecommendation.recommendedEngine.toLowerCase());
+              
+              if (aIsPrimary && !bIsPrimary) return -1;
+              if (!aIsPrimary && bIsPrimary) return 1;
+              
+              // Alternative recommendation
+              const aIsAlt = a.name.toLowerCase().includes(engineRecommendation.alternativeEngine.toLowerCase());
+              const bIsAlt = b.name.toLowerCase().includes(engineRecommendation.alternativeEngine.toLowerCase());
+              
+              if (aIsAlt && !bIsAlt) return -1;
+              if (!aIsAlt && bIsAlt) return 1;
+              
+              return 0;
+            });
+          }
+        } catch (error) {
+          logger.warn(`VLM engine recommendation failed: ${error}`);
+        }
+      }
+      
+      // Reorder engines based on customization preferences (if not already reordered by VLM)
+      if (optimizedSettings?.enginePreference && !useVlmEnhancement) {
         compatibleEngines.sort((a, b) => {
           const aIndex = optimizedSettings!.enginePreference.indexOf(a.name);
           const bIndex = optimizedSettings!.enginePreference.indexOf(b.name);
@@ -318,6 +451,68 @@ export class MultiEngineOCR {
       const averageConfidence = confidenceResults.length > 0 
         ? confidenceResults.reduce((sum, r) => sum + (r.confidence || 0), 0) / confidenceResults.length
         : undefined;
+      
+      // Apply VLM enhancement to best result if it was successful
+      if (useVlmEnhancement && bestResult.success && bestResult.outputPath) {
+        try {
+          logger.info(`Enhancing best OCR result with Paligemma 2 (${paligemma2Mode} mode)`);
+          
+          // First try using the new Paligemma 2 integration
+          try {
+            const paligemmaResult = await paligemma2Integration.assistOCR(
+              inputPath, 
+              bestResult,
+              paligemma2Mode
+            );
+            
+            if (paligemmaResult.improved) {
+              logger.info(`Paligemma 2 enhancement applied in ${paligemma2Mode} mode`);
+              logger.info(`Improvement metrics: ${JSON.stringify(paligemmaResult.improvementMetrics)}`);
+              
+              // Update the best result with enhanced text and confidence
+              bestResult.text = paligemmaResult.enhancedText;
+              bestResult.confidence = paligemmaResult.confidenceAssessment.overall * 100;
+              bestResult.vlmEnhanced = true;
+              bestResult.vlmProcessingTimeMs = paligemmaResult.processingTimeMs;
+              bestResult.metadata = {
+                ...bestResult.metadata,
+                paligemma2Enhanced: true,
+                paligemma2Mode,
+                paligemma2ProcessingTimeMs: paligemmaResult.processingTimeMs,
+                improvementMetrics: paligemmaResult.improvementMetrics
+              };
+              
+              vlmEnhanced = true;
+            } else {
+              // Fall back to legacy VLM enhancer if Paligemma 2 didn't improve the result
+              logger.info('Paligemma 2 did not improve the result, falling back to legacy VLM enhancer');
+              const enhancedResult = await vlmOcrEnhancer.enhanceOCRResult(inputPath, bestResult);
+              
+              if (enhancedResult.vlmEnhanced) {
+                logger.info(`Legacy VLM enhancement applied, new confidence: ${enhancedResult.confidence}`);
+                vlmEnhanced = true;
+                
+                // Replace best result with enhanced version
+                Object.assign(bestResult, enhancedResult);
+              }
+            }
+          } catch (paligemmaError) {
+            // Fall back to legacy VLM enhancer
+            logger.warn(`Paligemma 2 enhancement failed, falling back to legacy VLM enhancer: ${paligemmaError}`);
+            const enhancedResult = await vlmOcrEnhancer.enhanceOCRResult(inputPath, bestResult);
+            
+            if (enhancedResult.vlmEnhanced) {
+              logger.info(`Legacy VLM enhancement applied, new confidence: ${enhancedResult.confidence}`);
+              vlmEnhanced = true;
+              
+              // Replace best result with enhanced version
+              Object.assign(bestResult, enhancedResult);
+            }
+          }
+        } catch (error) {
+          logger.warn(`VLM enhancement failed: ${error}`);
+        }
+      }
 
       const ensembleResult: EnsembleResult = {
         bestResult,
@@ -326,7 +521,9 @@ export class MultiEngineOCR {
         averageConfidence,
         hasSuccessfulResults,
         successCount,
-        customizationApplied
+        customizationApplied,
+        vlmEnhanced,
+        paligemma2Mode
       };
 
       logger.info(`Multi-engine OCR completed: ${successCount}/${results.length} engines successful`);
@@ -345,7 +542,8 @@ export class MultiEngineOCR {
         allResults: [],
         hasSuccessfulResults: false,
         successCount: 0,
-        customizationApplied
+        customizationApplied,
+        paligemma2Mode
       };
     } finally {
       // Cleanup preprocessing files if used

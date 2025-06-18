@@ -7,8 +7,11 @@
 
 import { VLMInterface, VLMOptions } from './vlm-interface';
 import { VLMFactory, VLMFactoryOptions } from './vlm-factory';
-import { VLMRegistry } from './vlm-registry';
-import { VLMError, VLMErrorCode } from './vlm-error-types';
+import { VLMRegistry, vlmRegistry } from './vlm-registry';
+import { VlmError, VlmErrorType } from './vlm-error-types';
+
+// Import bootstrap to ensure VLM models are registered
+import '../../vlm-bootstrap';
 
 /**
  * Options for the VLM Manager
@@ -76,8 +79,8 @@ export class VLMManager {
     const modelId = options.modelId || this.defaultModelId;
     
     if (!modelId) {
-      throw new VLMError(
-        VLMErrorCode.INVALID_INPUT,
+      throw new VlmError(
+        VlmErrorType.INVALID_INPUT,
         'No model ID specified and no default model ID configured',
         { options },
         true,
@@ -210,6 +213,6 @@ export class VLMManager {
   }
 }
 
-// Create and export singleton instance
-export const vlmManager = new VLMManager();
+// Create and export singleton instance using the global registry
+export const vlmManager = new VLMManager({ registry: vlmRegistry });
 export default vlmManager;

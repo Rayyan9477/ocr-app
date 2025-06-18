@@ -13,7 +13,7 @@ import {
   TextExtractionResponse,
   StructuredDataResponse
 } from './vlm-response-types';
-import { VLMError } from './vlm-error-types';
+import { VlmError } from './vlm-error-types';
 
 export interface VLMOptions {
   /**
@@ -121,6 +121,6 @@ export interface VLMInterface {
   getHealthStatus(): Promise<{
     isHealthy: boolean;
     details: Record<string, any>;
-    lastError?: VLMError;
+    lastError?: VlmError;
   }>;
 }

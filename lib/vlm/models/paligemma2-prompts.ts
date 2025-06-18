@@ -18,7 +18,13 @@ export enum PromptCategory {
   OCR_CORRECTION = 'ocr_correction',
   DOCUMENT_CLASSIFICATION = 'document_classification',
   LAYOUT_ANALYSIS = 'layout_analysis',
-  QUALITY_ASSESSMENT = 'quality_assessment'
+  QUALITY_ASSESSMENT = 'quality_assessment',
+  // New integration categories
+  ENGINE_RECOMMENDATION = 'engine_recommendation',
+  PREPROCESSING_RECOMMENDATION = 'preprocessing_recommendation',
+  CONFIDENCE_ASSESSMENT = 'confidence_assessment',
+  RESULT_ENHANCEMENT = 'result_enhancement',
+  SEMANTIC_VALIDATION = 'semantic_validation'
 }
 
 /**
@@ -278,6 +284,227 @@ Respond with:
 };
 
 /**
+ * Engine recommendation prompt
+ */
+export const engineRecommendationPrompt: PromptTemplate = {
+  category: PromptCategory.ENGINE_RECOMMENDATION,
+  template: `Analyze this document image and recommend the optimal OCR engine based on document characteristics.
+
+Available engines:
+- tesseract: General purpose OCR, good for printed text with clear formatting
+- ocrmypdf: PDF-optimized engine with good layout preservation
+- paddleocr: Strong on complex layouts and multilingual content
+- kraken: Specialized for handwriting recognition
+
+{taskDescription}
+
+Consider these document properties:
+1. Content type (printed vs. handwritten)
+2. Layout complexity
+3. Image quality
+4. Text density and size
+5. Special elements (tables, forms, etc.)
+
+Respond in JSON format:
+{
+  "recommendedEngine": "string",
+  "confidence": float,
+  "reasoning": "string",
+  "documentProperties": {
+    "contentType": "string",
+    "layoutComplexity": float,
+    "imageQuality": float,
+    "hasHandwriting": boolean,
+    "hasTables": boolean,
+    "hasComplexLayout": boolean,
+    "isPoorQuality": boolean
+  },
+  "alternativeEngine": "string"
+}`,
+  description: 'Recommends the optimal OCR engine based on document characteristics',
+  responseFormat: 'JSON',
+  requiredPlaceholders: [],
+  optionalPlaceholders: {
+    'taskDescription': 'Determine the best OCR engine to process this document for maximum accuracy.'
+  }
+};
+
+/**
+ * Preprocessing recommendation prompt
+ */
+export const preprocessingRecommendationPrompt: PromptTemplate = {
+  category: PromptCategory.PREPROCESSING_RECOMMENDATION,
+  template: `Analyze this document image and recommend preprocessing techniques to improve OCR results.
+
+Available preprocessing techniques:
+- deskew: Corrects document rotation/alignment
+- denoise: Removes noise artifacts
+- contrast: Enhances text-background contrast
+- binarization: Converts to pure black and white
+- resolution: Increases effective resolution
+- crop: Removes irrelevant margins
+- shadow-removal: Removes shadow artifacts
+
+{taskDescription}
+
+For each recommended technique, explain why it's needed and its expected impact.
+
+Respond in JSON format:
+{
+  "recommendations": [
+    {
+      "technique": "string",
+      "priority": "high|medium|low",
+      "reason": "string",
+      "expectedImprovement": float
+    }
+  ],
+  "documentIssues": {
+    "skew": float,
+    "noise": float,
+    "poorContrast": float,
+    "shadows": boolean,
+    "lowResolution": boolean
+  },
+  "overallQuality": float
+}`,
+  description: 'Recommends preprocessing techniques to optimize OCR quality',
+  responseFormat: 'JSON',
+  requiredPlaceholders: [],
+  optionalPlaceholders: {
+    'taskDescription': 'Identify preprocessing steps that would improve OCR accuracy for this document.'
+  }
+};
+
+/**
+ * Confidence assessment prompt
+ */
+export const confidenceAssessmentPrompt: PromptTemplate = {
+  category: PromptCategory.CONFIDENCE_ASSESSMENT,
+  template: `Evaluate the confidence level of this OCR result by comparing it with the source document image.
+
+OCR Text:
+{ocrText}
+
+{taskDescription}
+
+Consider:
+1. Character recognition accuracy
+2. Word recognition completeness
+3. Layout preservation
+4. Special character handling
+5. Numeric data accuracy
+6. Domain-specific terminology
+
+Respond in JSON format:
+{
+  "overallConfidence": float,
+  "regionConfidences": [
+    {
+      "region": "string",
+      "confidence": float,
+      "issues": ["string"]
+    }
+  ],
+  "potentialErrors": [
+    {
+      "detected": "string",
+      "probable": "string",
+      "confidence": float
+    }
+  ],
+  "recommendations": {
+    "needsReprocessing": boolean,
+    "suggestedEngine": "string"
+  }
+}`,
+  description: 'Assesses OCR confidence by comparing results with the source image',
+  responseFormat: 'JSON',
+  requiredPlaceholders: ['ocrText'],
+  optionalPlaceholders: {
+    'taskDescription': 'Provide a detailed confidence assessment for different regions of the OCR result.'
+  }
+};
+
+/**
+ * Result enhancement prompt
+ */
+export const resultEnhancementPrompt: PromptTemplate = {
+  category: PromptCategory.RESULT_ENHANCEMENT,
+  template: `Enhance this OCR result by comparing it with the source document image and fixing errors.
+
+Original OCR Text:
+{ocrText}
+
+{taskDescription}
+
+Enhance the OCR result by:
+1. Fixing character recognition errors
+2. Restoring missing text
+3. Correcting layout issues
+4. Fixing formatting problems
+5. Standardizing inconsistencies
+
+Respond with:
+1. The enhanced text (preserving original format)
+2. Confidence score for each enhancement
+3. Summary of improvements made`,
+  description: 'Enhances OCR results by correcting errors using visual context',
+  requiredPlaceholders: ['ocrText'],
+  optionalPlaceholders: {
+    'taskDescription': 'Focus on enhancing the OCR result without changing the original format significantly.'
+  }
+};
+
+/**
+ * Semantic validation prompt
+ */
+export const semanticValidationPrompt: PromptTemplate = {
+  category: PromptCategory.SEMANTIC_VALIDATION,
+  template: `Validate the semantic consistency of this OCR result against the source document image.
+
+OCR Text:
+{ocrText}
+
+{taskDescription}
+
+Validate for semantic consistency:
+1. Dates (chronological order, valid formats)
+2. Amounts and calculations
+3. Identifiers and reference numbers
+4. Names and addresses
+5. Domain-specific terminology
+
+Respond in JSON format:
+{
+  "isConsistent": boolean,
+  "inconsistencies": [
+    {
+      "type": "string",
+      "detected": "string",
+      "expected": "string",
+      "confidence": float,
+      "impact": "string"
+    }
+  ],
+  "suggestions": [
+    {
+      "original": "string",
+      "suggested": "string",
+      "reason": "string"
+    }
+  ],
+  "semanticConfidence": float
+}`,
+  description: 'Validates OCR results for semantic consistency and logical coherence',
+  responseFormat: 'JSON',
+  requiredPlaceholders: ['ocrText'],
+  optionalPlaceholders: {
+    'taskDescription': 'Check for logical inconsistencies in dates, amounts, calculations, and references.'
+  }
+};
+
+/**
  * All prompt templates
  */
 export const promptTemplates: Record<PromptCategory, PromptTemplate> = {
@@ -313,7 +540,14 @@ export const promptTemplates: Record<PromptCategory, PromptTemplate> = {
     category: PromptCategory.QUALITY_ASSESSMENT,
     template: `Assess the quality of this document image.`,
     description: 'Assesses document image quality'
-  }
+  },
+  
+  // Integration templates
+  [PromptCategory.ENGINE_RECOMMENDATION]: engineRecommendationPrompt,
+  [PromptCategory.PREPROCESSING_RECOMMENDATION]: preprocessingRecommendationPrompt,
+  [PromptCategory.CONFIDENCE_ASSESSMENT]: confidenceAssessmentPrompt,
+  [PromptCategory.RESULT_ENHANCEMENT]: resultEnhancementPrompt,
+  [PromptCategory.SEMANTIC_VALIDATION]: semanticValidationPrompt
 };
 
 /**
@@ -321,6 +555,54 @@ export const promptTemplates: Record<PromptCategory, PromptTemplate> = {
  */
 export function getPromptTemplate(category: PromptCategory): PromptTemplate {
   return promptTemplates[category];
+}
+
+/**
+ * Apply values to a prompt template
+ * 
+ * @param template The prompt template
+ * @param values Values to apply to template placeholders
+ * @returns Filled prompt template
+ */
+export function applyPromptTemplate(template: PromptTemplate, values: Record<string, string> = {}): string {
+  let result = template.template;
+  
+  // Apply required placeholders
+  if (template.requiredPlaceholders) {
+    for (const placeholder of template.requiredPlaceholders) {
+      if (!values[placeholder]) {
+        throw new Error(`Required placeholder "${placeholder}" is missing`);
+      }
+      result = result.replace(new RegExp(`{${placeholder}}`, 'g'), values[placeholder]);
+    }
+  }
+  
+  // Apply optional placeholders or use defaults
+  if (template.optionalPlaceholders) {
+    for (const [placeholder, defaultValue] of Object.entries(template.optionalPlaceholders)) {
+      const value = values[placeholder] || defaultValue;
+      result = result.replace(new RegExp(`{${placeholder}}`, 'g'), value);
+    }
+  }
+  
+  // Apply any other values provided
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replace(new RegExp(`{${key}}`, 'g'), value);
+  }
+  
+  return result;
+}
+
+/**
+ * Get a filled prompt for a specific category
+ * 
+ * @param category Prompt category
+ * @param values Values to apply to template
+ * @returns Filled prompt string
+ */
+export function getPrompt(category: PromptCategory, values: Record<string, string> = {}): string {
+  const template = getPromptTemplate(category);
+  return applyPromptTemplate(template, values);
 }
 
 export default promptTemplates;

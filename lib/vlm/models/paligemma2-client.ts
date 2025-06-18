@@ -5,14 +5,23 @@
  * through different deployment strategies
  */
 
-import fs from 'fs/promises';
-import path from 'path';
-import { VLMError, VLMErrorCode } from '../core/vlm-error-types';
+import { VlmError, VlmErrorType } from '../core/vlm-error-types';
 import { HuggingFaceClient } from '../integrations/huggingface-client';
 import { TransformersClient } from '../integrations/transformers-client';
 import { ONNXClient } from '../integrations/onnx-client';
 import { getDeploymentConfig } from '../config/deployment-configs';
 import logger from '../../logger';
+
+// Use dynamic imports for Node.js modules to ensure they're only loaded on the server
+let fs: any = null;
+let pathModule: any = null;
+
+// This will only be executed on the server side
+if (typeof window === 'undefined') {
+  // Import fs synchronously for immediate use
+  fs = require('fs');
+  pathModule = require('path');
+}
 
 /**
  * PaliGemma2 client options
@@ -117,8 +126,8 @@ export class PaliGemma2Client {
           await this.initializeHybridClient();
           break;
         default:
-          throw new VLMError(
-            VLMErrorCode.INVALID_INPUT,
+          throw new VlmError(
+            VlmErrorType.INVALID_INPUT,
             `Unsupported deployment strategy: ${this.options.deploymentStrategy}`,
             { deploymentStrategy: this.options.deploymentStrategy },
             false
@@ -128,12 +137,12 @@ export class PaliGemma2Client {
       this.initialized = true;
       logger.info(`PaliGemma2 client initialized with strategy: ${this.options.deploymentStrategy}`);
     } catch (error) {
-      if (error instanceof VLMError) {
+      if (error instanceof VlmError) {
         throw error;
       }
       
-      throw new VLMError(
-        VLMErrorCode.INIT_FAILED,
+      throw new VlmError(
+        VlmErrorType.INIT_FAILED,
         `Failed to initialize PaliGemma2 client: ${error instanceof Error ? error.message : String(error)}`,
         { originalError: error },
         true,
@@ -147,8 +156,8 @@ export class PaliGemma2Client {
    */
   async process(imagePath: string, prompt: string, options: any = {}): Promise<any> {
     if (!this.initialized || !this.client) {
-      throw new VLMError(
-        VLMErrorCode.MODEL_NOT_INITIALIZED,
+      throw new VlmError(
+        VlmErrorType.MODEL_NOT_INITIALIZED,
         'PaliGemma2 client is not initialized',
         undefined,
         true,
@@ -159,10 +168,12 @@ export class PaliGemma2Client {
     try {
       // Check if image exists
       try {
-        await fs.access(imagePath);
+        if (fs) {
+          fs.accessSync(imagePath);
+        }
       } catch (error) {
-        throw new VLMError(
-          VLMErrorCode.FILE_NOT_FOUND,
+        throw new VlmError(
+          VlmErrorType.FILE_NOT_FOUND,
           `Image file not found: ${imagePath}`,
           { path: imagePath },
           false
@@ -170,7 +181,7 @@ export class PaliGemma2Client {
       }
       
       // Read image
-      const imageBuffer = await fs.readFile(imagePath);
+      const imageBuffer = fs ? fs.readFileSync(imagePath) : Buffer.from([]);
       
       // Format prompt using template
       const formattedPrompt = this.formatPrompt(prompt);
@@ -187,12 +198,12 @@ export class PaliGemma2Client {
       
       return result;
     } catch (error) {
-      if (error instanceof VLMError) {
+      if (error instanceof VlmError) {
         throw error;
       }
       
-      throw new VLMError(
-        VLMErrorCode.PROCESSING_FAILED,
+      throw new VlmError(
+        VlmErrorType.PROCESSING_FAILED,
         `Failed to process image with PaliGemma2: ${error instanceof Error ? error.message : String(error)}`,
         { originalError: error },
         false
@@ -286,8 +297,8 @@ export class PaliGemma2Client {
     const apiKey = this.options.apiKey || process.env.HUGGINGFACE_API_KEY;
     
     if (!apiKey) {
-      throw new VLMError(
-        VLMErrorCode.AUTHENTICATION_FAILED,
+      throw new VlmError(
+        VlmErrorType.AUTHENTICATION_FAILED,
         'HuggingFace API key is required for cloud deployment',
         undefined,
         true,

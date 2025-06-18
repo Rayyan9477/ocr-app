@@ -8,7 +8,7 @@
 import { VLMInterface } from './vlm-interface';
 import { VLMManager } from './vlm-manager';
 import { VLMRegistry } from './vlm-registry';
-import { VLMError, VLMErrorCode } from './vlm-error-types';
+import { VlmError, VlmErrorType } from './vlm-error-types';
 import { EventEmitter } from 'events';
 
 /**
@@ -38,7 +38,7 @@ export interface VLMHealthStatus {
   /**
    * Last error (if any)
    */
-  lastError?: VLMError;
+  lastError?: VlmError;
   
   /**
    * Memory usage in MB (if available)
@@ -103,6 +103,24 @@ export class VLMHealthMonitor extends EventEmitter {
   }
   
   /**
+   * Get overall system health status
+   */
+  get isHealthy(): boolean {
+    if (this.healthStatuses.size === 0) {
+      return false; // No models checked yet
+    }
+    
+    // System is healthy if at least one model is healthy
+    for (const status of this.healthStatuses.values()) {
+      if (status.isHealthy) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
    * Start health monitoring
    */
   startMonitoring(): void {
@@ -161,8 +179,8 @@ export class VLMHealthMonitor extends EventEmitter {
                 ...currentStatus,
                 isHealthy: false,
                 lastCheckTime: new Date(),
-                lastError: error instanceof VLMError ? error : new VLMError(
-                  VLMErrorCode.UNKNOWN_ERROR,
+                lastError: error instanceof VlmError ? error : new VlmError(
+                  VlmErrorType.UNKNOWN_ERROR,
                   `Unknown error checking health: ${error instanceof Error ? error.message : String(error)}`,
                   { originalError: error },
                   false
@@ -212,8 +230,8 @@ export class VLMHealthMonitor extends EventEmitter {
       const checkPromise = this.performHealthCheck(modelId, deploymentStrategy, detailed);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          reject(new VLMError(
-            VLMErrorCode.TIMEOUT,
+          reject(new VlmError(
+            VlmErrorType.TIMEOUT,
             `Health check timed out after ${timeoutMs}ms`,
             { modelId, deploymentStrategy, timeoutMs },
             true
@@ -240,8 +258,8 @@ export class VLMHealthMonitor extends EventEmitter {
         deploymentStrategy,
         isHealthy: false,
         lastCheckTime: new Date(),
-        lastError: error instanceof VLMError ? error : new VLMError(
-          VLMErrorCode.UNKNOWN_ERROR,
+        lastError: error instanceof VlmError ? error : new VlmError(
+          VlmErrorType.UNKNOWN_ERROR,
           `Unknown error checking health: ${error instanceof Error ? error.message : String(error)}`,
           { originalError: error },
           false
@@ -313,8 +331,8 @@ export class VLMHealthMonitor extends EventEmitter {
         deploymentStrategy,
         isHealthy: false,
         lastCheckTime: new Date(),
-        lastError: error instanceof VLMError ? error : new VLMError(
-          VLMErrorCode.UNKNOWN_ERROR,
+        lastError: error instanceof VlmError ? error : new VlmError(
+          VlmErrorType.UNKNOWN_ERROR,
           `Unknown error checking health: ${error instanceof Error ? error.message : String(error)}`,
           { originalError: error },
           false

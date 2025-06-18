@@ -1,9 +1,31 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import path from 'path';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * Check if a file exists using promise-based API
+ * 
+ * @param filePath Path to the file to check
+ * @returns Promise<boolean> Whether the file exists
+ */
+export async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    // Ensure this only runs on the server
+    if (typeof window !== 'undefined') {
+      console.warn('fileExists called in browser context');
+      return false;
+    }
+    
+    // Use Node.js fs module with dynamic import for Next.js compatibility
+    const fs = await import('fs/promises');
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 /**
@@ -26,8 +48,18 @@ export function createJsonResponse(data: any, status: number = 200) {
  * @returns Formatted output filename
  */
 export function generateOutputFilename(inputPath: string, engineName: string, suffix: string = 'ocr'): string {
-  const baseName = path.basename(inputPath, path.extname(inputPath));
-  return `${baseName}_${engineName}_${suffix}${path.extname(inputPath) === '.pdf' ? '.pdf' : '.txt'}`;
+  // Ensure this only runs on the server
+  if (typeof window !== 'undefined') {
+    console.warn('generateOutputFilename called in browser context');
+  }
+  
+  // Simple implementation to avoid fs dependency
+  const lastSlash = inputPath.lastIndexOf('/');
+  const fileName = lastSlash >= 0 ? inputPath.substring(lastSlash + 1) : inputPath;
+  const lastDot = fileName.lastIndexOf('.');
+  const baseName = lastDot >= 0 ? fileName.substring(0, lastDot) : fileName;
+  const ext = lastDot >= 0 ? fileName.substring(lastDot) : '';
+  return `${baseName}_${engineName}_${suffix}${ext === '.pdf' ? '.pdf' : '.txt'}`;
 }
 
 /**
@@ -102,5 +134,9 @@ export function calculateSimilarity(a: string, b: string): number {
  * @returns Base64 data URL
  */
 export function bufferToDataURL(buffer: Buffer, mimeType: string = 'image/jpeg'): string {
+  if (typeof buffer?.toString !== 'function') {
+    console.error('Invalid buffer provided to bufferToDataURL');
+    return '';
+  }
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }

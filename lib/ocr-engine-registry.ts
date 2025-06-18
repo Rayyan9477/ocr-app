@@ -2,10 +2,13 @@ import logger from './logger';
 import { OCREngine } from './multi-engine-ocr';
 import { EnhancedTesseractEngine } from './enhanced-tesseract-engine';
 import { TFVLMService } from './tf-vlm-service';
+import { paligemma2Integration, Paligemma2IntegrationMode } from './paligemma2-ocr-integration';
 
 export interface EngineRegistryOptions {
   defaultEngine?: string;
   enableAllEngines?: boolean;
+  enablePaligemma2?: boolean;
+  paligemma2Mode?: Paligemma2IntegrationMode;
 }
 
 /**
@@ -15,12 +18,21 @@ export interface EngineRegistryOptions {
 export class OCREngineRegistry {
   private engines: Map<string, OCREngine> = new Map();
   private defaultEngineName: string;
+  private paligemma2Enabled: boolean;
+  private paligemma2Mode: Paligemma2IntegrationMode;
   
   constructor(options: EngineRegistryOptions = {}) {
     this.defaultEngineName = options.defaultEngine || 'enhanced-tesseract';
+    this.paligemma2Enabled = options.enablePaligemma2 !== false; // Enable by default
+    this.paligemma2Mode = options.paligemma2Mode || Paligemma2IntegrationMode.ASSIST;
     
     // Register available engines
     this.registerBuiltInEngines(options.enableAllEngines || false);
+    
+    // Initialize Paligemma 2 if enabled
+    if (this.paligemma2Enabled) {
+      this.initializePaligemma2();
+    }
   }
 
   /**
@@ -93,6 +105,11 @@ export class OCREngineRegistry {
         logger.error(`Failed to initialize engine ${name}: ${error}`);
       }
     }
+    
+    // Initialize Paligemma 2 if enabled
+    if (this.paligemma2Enabled) {
+      await this.initializePaligemma2();
+    }
   }
 
   /**
@@ -108,6 +125,29 @@ export class OCREngineRegistry {
       } catch (error) {
         logger.error(`Error terminating engine ${name}: ${error}`);
       }
+    }
+    
+    // Clean up Paligemma 2 if enabled
+    if (this.paligemma2Enabled) {
+      try {
+        logger.info('Terminating Paligemma 2 integration...');
+        await paligemma2Integration.dispose();
+      } catch (error) {
+        logger.error(`Error terminating Paligemma 2 integration: ${error}`);
+      }
+    }
+  }
+
+  /**
+   * Initialize Paligemma 2 integration
+   */
+  private async initializePaligemma2(): Promise<void> {
+    try {
+      logger.info(`Initializing Paligemma 2 integration in ${this.paligemma2Mode} mode...`);
+      await paligemma2Integration.initialize();
+      logger.info('Paligemma 2 integration initialized successfully');
+    } catch (error) {
+      logger.error(`Failed to initialize Paligemma 2 integration: ${error}`);
     }
   }
 }
