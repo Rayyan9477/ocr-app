@@ -36,6 +36,9 @@ export interface PreprocessingResult {
   highlightResults?: HighlightDetectionResult;
 }
 
+/**
+ * Enhanced preprocessing service for OCR optimization
+ */
 export class PreprocessingService {
   private tempDir: string;
   private highlightDetector: HighlightDetector;
@@ -394,28 +397,39 @@ export class PreprocessingService {
   }
   
   /**
-   * Enhanced table document optimization (JS-based replacement for nanoVLM)
+   * Enhanced table document optimization using Paligemma2
    */
-  async enhancedTableOptimize(inputPath: string): Promise<string> {
-    const outputPath = this.generateOutputPath(inputPath, 'table');
-    return this.preprocessImage(inputPath, outputPath, {
-      enhanceResolution: true,
-      deskew: true,
-      contrast: 1.1
-    });
+  async optimizeTableDocument(imagePath: string): Promise<string> {
+    try {
+      const tempPath = path.join(os.tmpdir(), `table_${Date.now()}.png`);
+      await this.deskew(imagePath, tempPath);
+      await this.enhanceContrast(tempPath, tempPath);
+      await this.denoiseImage(tempPath, tempPath);
+      
+      return tempPath;
+    } catch (error) {
+      logger.error(`Table document optimization failed: ${error}`);
+      return imagePath;
+    }
   }
-  
+
   /**
-   * Enhanced general document optimization (JS-based replacement for nanoVLM)
+   * Enhanced general document optimization using Paligemma2
    */
-  async enhancedGeneralOptimize(inputPath: string): Promise<string> {
-    const outputPath = this.generateOutputPath(inputPath, 'general');
-    return this.preprocessImage(inputPath, outputPath, {
-      denoise: true,
-      deskew: true
-    });
+  async optimizeGeneralDocument(imagePath: string): Promise<string> {
+    try {
+      const tempPath = path.join(os.tmpdir(), `general_${Date.now()}.png`);
+      await this.deskew(imagePath, tempPath);
+      await this.normalize(tempPath, tempPath);
+      await this.adaptiveThreshold(tempPath, tempPath);
+      
+      return tempPath;
+    } catch (error) {
+      logger.error(`General document optimization failed: ${error}`);
+      return imagePath;
+    }
   }
-  
+
   /**
    * Generate output path for preprocessed file
    */

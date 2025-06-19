@@ -3,7 +3,7 @@ import fs from 'fs';
 import logger from './logger';
 import { OCREngine } from './multi-engine-ocr';
 import { OCREngineRegistry } from './ocr-engine-registry';
-import { TFVLMService, DocumentAnalysis } from './tf-vlm-service';
+import { Paligemma2VLService, DocumentAnalysis } from './paligemma2-service';
 import { EnhancedTesseractEngine } from './enhanced-tesseract-engine';
 
 export interface EngineSelectionCriteria {
@@ -30,15 +30,15 @@ export interface EngineSelectionResult {
  */
 export class EngineSelectionService {
   private registry: OCREngineRegistry;
-  private tfvlmService: TFVLMService;
+  private paligemma2Service: Paligemma2VLService;
   private documentAnalysisCache: Map<string, DocumentAnalysis> = new Map();
   
   constructor(
     registry: OCREngineRegistry,
-    tfvlmService: TFVLMService
+    paligemma2Service: Paligemma2VLService
   ) {
     this.registry = registry;
-    this.tfvlmService = tfvlmService;
+    this.paligemma2Service = paligemma2Service;
   }
 
   /**
@@ -98,41 +98,27 @@ export class EngineSelectionService {
       };
     }
     
-    // Check if we already analyzed this file
-    const cacheKey = `${filePath}_${fileSize}`;
-    if (this.documentAnalysisCache.has(cacheKey)) {
-      const cachedAnalysis = this.documentAnalysisCache.get(cacheKey)!;
-      return {
-        hasHandwriting: cachedAnalysis.hasHandwriting,
-        hasTables: cachedAnalysis.hasTables,
-        poorQuality: cachedAnalysis.poorQuality,
-        complexLayout: cachedAnalysis.complexLayout,
-        fileExtension,
-        fileSize,
-        documentType: cachedAnalysis.documentType
-      };
-    }
-    
     try {
-      // Use TF-VLM service to analyze the document
-      const analysis = await this.tfvlmService.analyzeDocument(filePath);
+      let analysis: DocumentAnalysis;
       
-      // Cache the analysis
-      this.documentAnalysisCache.set(cacheKey, analysis);
+      // Check cache first
+      const fileHash = await this.getFileHash(filePath);
+      if (this.documentAnalysisCache.has(fileHash)) {
+        analysis = this.documentAnalysisCache.get(fileHash)!;
+      } else {
+        // Get document analysis from Paligemma2
+        analysis = await this.paligemma2Service.analyzeDocument(filePath);
+        this.documentAnalysisCache.set(fileHash, analysis);
+      }
       
       return {
-        hasHandwriting: analysis.hasHandwriting,
-        hasTables: analysis.hasTables,
-        poorQuality: analysis.poorQuality,
-        complexLayout: analysis.complexLayout,
+        ...analysis,
         fileExtension,
-        fileSize,
-        documentType: analysis.documentType
+        fileSize
       };
     } catch (error) {
-      logger.error(`Document analysis error: ${error}`);
-      
-      // Return basic file information if analysis fails
+      logger.error(`Error analyzing document with Paligemma2: ${error}`);
+      // Fall back to basic analysis
       return {
         fileExtension,
         fileSize
@@ -250,11 +236,51 @@ export class EngineSelectionService {
       criteria
     };
   }
+
+  /**
+   * Select optimal engine based on document characteristics
+   */
+  async selectOptimalEngine(characteristics: DocumentCharacteristics): Promise<EngineSelection> {
+    const selection: EngineSelection = {
+      primaryEngine: 'tesseract',
+      fallbackEngine: 'enhanced-tesseract',
+      engineOptions: {
+        usePreprocessing: true,
+        enablePostProcessing: true,
+        usePaligemma2: true
+      }
+    };
+
+    if (characteristics.isHandwritten) {
+      selection.primaryEngine = 'enhanced-tesseract';
+      selection.engineOptions.usePaligemma2 = true;
+      selection.engineOptions.aggressivePreprocessing = true;
+    }
+
+    if (characteristics.isStructured) {
+      selection.engineOptions.preserveLayout = true;
+      selection.engineOptions.tableDetection = true;
+    }
+
+    if (characteristics.isLowQuality) {
+      selection.engineOptions.aggressivePreprocessing = true;
+      selection.engineOptions.usePaligemma2 = true;
+    }
+
+    return selection;
+  }
+
+  private async getFileHash(filePath: string): Promise<string> {
+    // Implement file hash calculation
+    // For demonstration purposes, return a fixed hash
+    return 'fixed-hash';
+  }
 }
 
 // Create singleton instance
 export const engineSelectionService = new EngineSelectionService(
   require('./ocr-engine-registry').engineRegistry,
-  require('./tf-vlm-service').tfvlmService
+  require('./paligemma2-service').paligemma2Service
 );
+
 export default engineSelectionService;

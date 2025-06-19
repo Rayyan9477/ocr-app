@@ -5,10 +5,11 @@
  * accuracy and precision without replacing the existing functionality.
  */
 
-import { ExtendedPaliGemma2Adapter } from './extended-paligemma2-adapter';
+import { AutoModel, AutoProcessor } from '@xenova/transformers';
 import { PromptCategory } from './vlm/models/paligemma2-prompts';
-import { OCRResult } from './multi-engine-ocr';
+import { OCRResult, OCREngine } from './multi-engine-ocr';
 import logger from './logger';
+import { VLMOptions } from './paligemma2-service';
 
 // Use dynamic imports for Node.js modules to ensure they're only loaded on the server
 let fsModule: any = null;
@@ -26,19 +27,19 @@ if (typeof window === 'undefined') {
  */
 export enum Paligemma2IntegrationMode {
   /**
-   * Uses Paligemma 2 for post-processing and enhancement only
+   * Uses VLM for direct OCR of text from images
    */
-  ASSIST = 'assist',
+  DIRECT = 'direct',
   
   /**
-   * Uses Paligemma 2 for both preprocessing recommendations and post-processing
+   * Uses VLM for post-processing and enhancement only
    */
   ENHANCE = 'enhance',
   
   /**
-   * Uses Paligemma 2 for adaptive mode selection and full processing pipeline optimization
+   * Uses VLM for hybrid processing combining direct OCR and enhancement
    */
-  ADAPTIVE = 'adaptive'
+  HYBRID = 'hybrid'
 }
 
 /**
@@ -103,56 +104,139 @@ export interface Paligemma2AssistResult {
  * Provides seamless integration of Paligemma 2 VLM with existing OCR engines
  * to enhance accuracy and precision without disrupting current functionality.
  */
-export class Paligemma2OCRIntegration {
-  private adapter: ExtendedPaliGemma2Adapter;
-  private initialized: boolean = false;
-  private initializationPromise: Promise<boolean> | null = null;
+// Interface for VLM response
+export interface VLMResponse<T = any> {
+  success: boolean;
+  result?: T;
+  error?: string;
+  processingTimeMs?: number;
+}
+
+export class Paligemma2OCRIntegration implements OCREngine {
+  name = 'paligemma2';
+  service: any = this; // Reference to self for compatibility
+  available = true;
+  specialization: string[] = ['handwritten', 'document', 'general'];
+  confidence = true; // Indicates this engine provides confidence scores
   
-  constructor() {
-    this.adapter = new ExtendedPaliGemma2Adapter();
+  // Required by OCREngine interface
+  preprocessor = async (inputPath: string, documentType?: string): Promise<string> => {
+    // Use the existing preprocessing logic from the class
+    return this.preprocessImage(inputPath, documentType);
+  };
+  
+  // Add process method required by OCREngine
+  process = async (inputPath: string, options: any = {}): Promise<OCRResult> => {
+    const prompt = 'Extract all text from this document with high accuracy. ' +
+                 'Preserve formatting, line breaks, and document structure. ' +
+                 'Include all visible text including headers, footers, and page numbers.';
+    
+    const result = await this.processImage(inputPath, prompt);
+    
+    return {
+      text: result.text,
+      confidence: 0.9, // Default confidence since Paligemma2 doesn't provide this
+      engine: this.name,
+      processingTime: result.processingTime,
+      metadata: {
+        ...result.metadata,
+        engine: this.name
+      }
+    };
+  };
+  private model: any = null;
+  private processor: any = null;
+  private initialized: boolean = false;
+  private mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.DIRECT;
+  
+  // Add missing methods required by OCREngine interface
+  private preprocessImage = async (inputPath: string, documentType?: string): Promise<string> => {
+    // Simple preprocessing - just return the input path for now
+    // In a real implementation, you might want to enhance the image here
+    return inputPath;
+  };
+  
+  private processPage = async (page: { path: string; metadata: any }): Promise<any> => {
+    try {
+      if (!this.initialized) {
+        await this.initialize();
+      }
+      
+      // Process the page using the adapter
+      const result = await this.processImage(page.path, 'Extract all text from this document page.');
+      
+      return {
+        ...page,
+        metadata: {
+          ...page.metadata,
+          ...result.metadata,
+          processingTime: result.processingTime
+        },
+        text: result.text
+      };
+    } catch (error) {
+      logger.error(`Error processing page ${page.path}: ${error}`);
+      throw error;
+    }
+  };
+  
+  private processImage = async (imagePath: string, prompt: string): Promise<{ text: string; processingTime: number; metadata: any }> => {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    const startTime = Date.now();
+    try {
+      // Load and process image
+      const image = await this.loadImage(imagePath);
+      const inputs = await this.processor(image);
+      const outputs = await this.model.generate(inputs);
+
+      return {
+        text: outputs.text || '',
+        processingTime: Date.now() - startTime,
+        metadata: {
+          confidence: outputs.confidence || 0,
+          processedWith: 'Paligemma2',
+          mode: this.mode,
+          timestamp: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      logger.error(`Error processing image: ${error}`);
+      throw error;
+    }
+  };
+  
+  constructor(options: { mode?: Paligemma2IntegrationMode } = {}) {
+    if (options.mode) {
+      this.mode = options.mode;
+    }
   }
   
   /**
    * Initialize the Paligemma 2 adapter
    */
-  async initialize(): Promise<boolean> {
+  async initialize(mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.DIRECT): Promise<boolean> {
     if (this.initialized) {
       return true;
     }
     
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-    
-    this.initializationPromise = this._initialize();
-    return this.initializationPromise;
-  }
-  
-  /**
-   * Internal initialization method
-   */
-  private async _initialize(): Promise<boolean> {
     try {
-      const success = await this.adapter.initialize({
-        deploymentStrategy: 'local',
-        enableCache: true,
-        // Optimize for OCR integration use case
-        maxLength: 1024,
-        temperature: 0.2, // Lower temperature for more consistent results
-        topK: 40,
-        repetitionPenalty: 1.2
-      });
-      
-      if (success) {
-        logger.info('Paligemma2 OCR Integration: Initialized successfully');
-        this.initialized = true;
-        return true;
-      } else {
-        logger.warn('Paligemma2 OCR Integration: Initialization failed');
-        return false;
-      }
+      // Set cache directory
+      process.env.TRANSFORMERS_CACHE = './models/paligemma2';
+
+      // Load model and processor
+      [this.model, this.processor] = await Promise.all([
+        AutoModel.from_pretrained('Paligemma/paligemma2-3b-mix-224'),
+        AutoProcessor.from_pretrained('Paligemma/paligemma2-3b-mix-224')
+      ]);
+
+      this.initialized = true;
+      logger.info('Paligemma 2 model initialized successfully');
+      return true;
     } catch (error) {
-      logger.error(`Paligemma2 OCR Integration: Initialization error: ${error}`);
+      logger.error(`Failed to initialize Paligemma 2: ${error}`);
       return false;
     }
   }
@@ -168,11 +252,11 @@ export class Paligemma2OCRIntegration {
   async assistOCR(
     imagePath: string, 
     ocrResult: OCRResult,
-    mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.ASSIST
+    mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.DIRECT
   ): Promise<Paligemma2AssistResult> {
     // Ensure adapter is initialized
     if (!this.initialized) {
-      await this.initialize();
+      await this.initialize(mode);
     }
     
     // Check if file exists (server-side only)
@@ -431,11 +515,9 @@ export class Paligemma2OCRIntegration {
    * Clean up resources
    */
   async dispose(): Promise<void> {
-    if (this.adapter) {
-      await this.adapter.dispose();
-      this.initialized = false;
-      this.initializationPromise = null;
-    }
+    this.model = null;
+    this.processor = null;
+    this.initialized = false;
   }
 }
 

@@ -14,9 +14,6 @@ import { DocumentConfidence } from './confidence-detector';
 import { ExtendedPaliGemma2Adapter } from './extended-paligemma2-adapter';
 import { paligemma2Integration, Paligemma2IntegrationMode } from './paligemma2-ocr-integration';
 
-// Ensure VLM models are registered
-import './vlm-bootstrap';
-
 // Use dynamic imports for Node.js modules to ensure they're only loaded on the server
 let fs: any = null;
 let path: any = null;

@@ -118,7 +118,6 @@ export class MultiEngineOCR {
   
   constructor() {
     this.preprocessingService = new PreprocessingService();
-    // Don't call initializeEngines() here to avoid async constructor issues
   }
   
   /**
@@ -142,10 +141,13 @@ export class MultiEngineOCR {
   private async initializeEngines() {
     logger.info('Initializing OCR engines...');
     
-    // NanoVLM engine has been removed in favor of the pure JS/TS implementation
-    
-    // Log the available engines
-    logger.info(`Available engines: ${this.engines.filter(e => e.available).map(e => e.name).join(', ')}`);
+    // Initialize Paligemma2 VLM engine
+    try {
+      await paligemma2Integration.initialize(Paligemma2IntegrationMode.HYBRID);
+      logger.info('Paligemma2 VLM initialized successfully');
+    } catch (error) {
+      logger.error(`Failed to initialize Paligemma2: ${error}`);
+    }
     
     // Add Tesseract engine
     const tesseractAvailable = await this.checkTesseractAvailability();
@@ -163,25 +165,7 @@ export class MultiEngineOCR {
       }
     });
     
-    // Add OCRmyPDF engine
-    const ocrmypdfAvailable = await this.checkOCRmyPDFAvailability();
-    logger.info(`OCRmyPDF availability: ${ocrmypdfAvailable}`);
-    
-    this.engines.push({
-      name: 'ocrmypdf',
-      service: null, // OCRmyPDF uses direct command execution
-      available: ocrmypdfAvailable,
-      specialization: ['pdf'],
-      confidence: false,
-      preprocessor: (inputPath, documentType) => {
-        logger.info(`Preprocessing for OCRmyPDF, document type: ${documentType}`);
-        return this.preprocessingService.pdfOptimize(inputPath);
-      }
-    });
-    
-    // Log final available engines
-    const availableEngines = this.engines.filter(e => e.available);
-    logger.info(`Total available engines: ${availableEngines.length} - ${availableEngines.map(e => e.name).join(', ')}`);
+    logger.info(`Available engines: ${this.engines.filter(e => e.available).map(e => e.name).join(', ')}`);
   }
   
   /**
@@ -193,19 +177,6 @@ export class MultiEngineOCR {
       return true;
     } catch (error) {
       logger.warn(`Tesseract not available: ${error}`);
-      return false;
-    }
-  }
-  
-  /**
-   * Check if OCRmyPDF is available on the system
-   */
-  private async checkOCRmyPDFAvailability(): Promise<boolean> {
-    try {
-      await execAsync('ocrmypdf --version');
-      return true;
-    } catch (error) {
-      logger.warn(`OCRmyPDF not available: ${error}`);
       return false;
     }
   }

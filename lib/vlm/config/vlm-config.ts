@@ -16,19 +16,14 @@ export interface VLMConfig {
   enabled: boolean;
   
   /**
-   * Primary model to use
+   * Primary model to use - Microsoft's TrOCR for enhanced OCR
    */
-  primaryModel: string;
+  primaryModel: 'microsoft/trocr-base-handwritten';
   
   /**
-   * Fallback models to use if primary fails
+   * Deployment strategy set to local for better performance
    */
-  fallbackModels?: string[];
-  
-  /**
-   * Deployment strategy to use
-   */
-  deploymentStrategy: 'local' | 'cloud' | 'hybrid';
+  deploymentStrategy: 'local';
   
   /**
    * Health check interval in milliseconds
@@ -36,7 +31,7 @@ export interface VLMConfig {
   healthCheckIntervalMs: number;
   
   /**
-   * Global options for all models
+   * Global options for Paligemma model
    */
   globalOptions: {
     /**
@@ -53,12 +48,12 @@ export interface VLMConfig {
     timeoutMs: number;
     
     /**
-     * Default confidence threshold
+     * Default confidence threshold for OCR
      */
     confidenceThreshold: number;
     
     /**
-     * Whether to enable caching
+     * Whether to enable caching of model outputs
      */
     enableCache: boolean;
     
@@ -84,73 +79,22 @@ export interface VLMConfig {
   };
   
   /**
-   * Model-specific configurations (overrides global options)
+   * Model-specific configurations for Paligemma
    */
-  modelConfigs: Record<string, {
-    /**
-     * Model-specific options
-     */
-    options?: Record<string, any>;
-    
-    /**
-     * Whether to preload this model
-     */
-    preload?: boolean;
-    
-    /**
-     * Priority (lower = higher priority)
-     */
-    priority?: number;
-    
-    /**
-     * Capabilities to enable for this model
-     */
-    enabledCapabilities?: VLMCapability[];
-  }>;
-  
-  /**
-   * Cache configuration
-   */
-  cache: {
-    /**
-     * Maximum number of items to cache
-     */
-    maxItems: number;
-    
-    /**
-     * Time-to-live in milliseconds
-     */
-    ttlMs: number;
-    
-    /**
-     * Maximum memory usage in MB
-     */
-    maxMemoryMB?: number;
-  };
-  
-  /**
-   * Integration options
-   */
-  integration: {
-    /**
-     * Whether to enhance OCR results with VLM
-     */
-    enhanceOCR: boolean;
-    
-    /**
-     * Whether to use VLM for document analysis
-     */
-    enhanceDocumentAnalysis: boolean;
-    
-    /**
-     * Whether to use VLM for preprocessing guidance
-     */
-    enhancePreprocessing: boolean;
-    
-    /**
-     * Whether to use VLM for engine selection
-     */
-    enhanceEngineSelection: boolean;
+  modelConfigs: {
+    'paligemma2-3b-mix-224': {
+      options: {
+        modelPath: string;
+        quantized: boolean;
+        device: 'cpu' | 'cuda';
+        batchSize: number;
+        maxLength: number;
+        temperature: number;
+      };
+      preload: boolean;
+      priority: number;
+      enabledCapabilities: VLMCapability[];
+    };
   };
 }
 
@@ -160,7 +104,6 @@ export interface VLMConfig {
 export const defaultVLMConfig: VLMConfig = {
   enabled: true,
   primaryModel: 'paligemma2-3b-mix-224',
-  fallbackModels: ['enhanced-tesseract'],
   deploymentStrategy: 'local',
   healthCheckIntervalMs: 60000,
   globalOptions: {
@@ -185,17 +128,6 @@ export const defaultVLMConfig: VLMConfig = {
         batchSize: 1
       }
     }
-  },
-  cache: {
-    maxItems: 1000,
-    ttlMs: 3600000, // 1 hour
-    maxMemoryMB: 1000
-  },
-  integration: {
-    enhanceOCR: true,
-    enhanceDocumentAnalysis: true,
-    enhancePreprocessing: true,
-    enhanceEngineSelection: true
   }
 };
 
@@ -241,14 +173,6 @@ export function updateVLMConfig(config: Partial<VLMConfig>): VLMConfig {
     modelConfigs: {
       ...vlmConfig.modelConfigs,
       ...config.modelConfigs
-    },
-    cache: {
-      ...vlmConfig.cache,
-      ...config.cache
-    },
-    integration: {
-      ...vlmConfig.integration,
-      ...config.integration
     }
   };
   

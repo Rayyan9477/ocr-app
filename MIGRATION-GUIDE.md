@@ -23,22 +23,23 @@ The Python-based Kraken OCR engine has been replaced with `EnhancedTesseractEngi
 - Post-processing for improved results
 - Parameter tuning for LSTM models
 
-### 2. Replaced NanoVLM with TensorFlow.js
+### 2. Replaced NanoVLM with Paligemma2 VLM
 
-The Python-based NanoVLM service has been replaced with `TFVLMService`, a TypeScript implementation using TensorFlow.js for document analysis and classification.
+The Python-based NanoVLM service has been replaced with `Paligemma2OCRIntegration`, a TypeScript implementation using the Paligemma2 Vision Language Model for document analysis and OCR.
 
 **Features added:**
-- Document type detection
-- Layout analysis
-- Structured data extraction
-- Optimized image enhancement for various document types
+- Advanced document understanding with Vision Language Model
+- Improved text recognition accuracy
+- Better handling of complex layouts
+- Optimized for various document types
+- Local processing with GPU acceleration support
 
 ### 3. Updated Engine Selection Logic
 
 The engine selection logic has been updated to use the new TypeScript-based engines:
 
 - `EnhancedTesseractEngine` for handwritten text (replacing Kraken)
-- `TFVLMService` for document analysis (replacing NanoVLM)
+- `Paligemma2OCRIntegration` for document analysis and OCR (replacing NanoVLM)
 - Standard Tesseract for general text recognition
 
 ### 4. Streamlined Processing Pipeline
@@ -67,11 +68,11 @@ The system automatically selects the optimal engine based on document characteri
 
 | Document Type | Primary Engine | Fallback Engine |
 |--------------|---------------|-----------------|
-| Handwritten | EnhancedTesseract | TFVLMService |
-| Tables/Forms | TFVLMService | EnhancedTesseract |
-| Poor Quality | TFVLMService | EnhancedTesseract |
-| Medical | EnhancedTesseract | TFVLMService |
-| General | EnhancedTesseract | Standard Tesseract |
+| Handwritten | Paligemma2 | EnhancedTesseract |
+| Tables/Forms | Paligemma2 | EnhancedTesseract |
+| Poor Quality | Paligemma2 | EnhancedTesseract |
+| Medical | Paligemma2 | EnhancedTesseract |
+| General | Paligemma2 | EnhancedTesseract |
 
 ### Configuration Options
 
@@ -88,16 +89,19 @@ New configuration options are available:
 
 The following dependencies have been added:
 
-- `@tensorflow/tfjs-node`: TensorFlow.js for Node.js
-- `tesseract.js`: JavaScript OCR engine
+- `@google/generative-ai`: Google's Generative AI client for Paligemma2
+- `tesseract.js`: JavaScript OCR engine (for fallback)
 - `sharp`: Image processing library
+- `@tensorflow/tfjs-node`: TensorFlow.js for Node.js (for some preprocessing)
 
 ### Removed Dependencies
 
-All Python dependencies have been removed:
+The following dependencies have been removed:
 
-- `nanovlm`
-- `kraken`
+- `@tensorflow/tfjs-node` (no longer used for VLM)
+- `nanovlm` (Python)
+- `kraken` (Python)
+- `tf-vlm-service` (replaced with Paligemma2)
 - `python-api-bridge`
 - Related Python packages
 

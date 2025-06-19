@@ -49,6 +49,21 @@ export interface VLMOptions {
    * Whether to enable fallback mechanisms if model fails
    */
   enableFallback?: boolean;
+  
+  /**
+   * Maximum number of tokens to generate
+   */
+  maxTokens?: number;
+  
+  /**
+   * Sampling temperature (0-1)
+   */
+  temperature?: number;
+  
+  /**
+   * Top-p sampling parameter (0-1)
+   */
+  topP?: number;
 }
 
 export interface VLMInterface {
