@@ -70,3 +70,64 @@ preserveLayout: true
 - Higher accuracy text extraction, especially for complex documents
 - Preservation of visual appearance with high-quality text layers
 - Simplified architecture with a single model approach
+
+## Rigorous Testing
+
+A comprehensive testing suite (`rigorous-testing.sh`) has been implemented to verify that:
+
+1. All OCR operations use only PaliGemma2
+2. No fallback engines are called under any circumstances
+3. All PDF processing maintains visual fidelity while providing extractable text
+4. The system correctly handles various document types (printed text, handwritten, forms, etc.)
+
+### Running the Tests
+
+To verify the PaliGemma2-only implementation:
+
+```bash
+# Make the script executable
+chmod +x rigorous-testing.sh
+
+# Run the tests
+./rigorous-testing.sh
+```
+
+The test suite will perform multiple checks and report any instances where non-PaliGemma2 engines might be used.
+
+## Restarting the Application
+
+A dedicated script has been created to restart the application in PaliGemma2-only mode:
+
+```bash
+# Make the script executable
+chmod +x restart-paligemma2-only.sh
+
+# Restart the app
+./restart-paligemma2-only.sh
+```
+
+## Implementation Changes
+
+The following key changes were made to enforce PaliGemma2-only processing:
+
+1. **VLM Model Manager**: Removed all fallback options and fallback models
+2. **OLMOCR Integration**: Configured to use only PaliGemma2 for text extraction
+3. **Extractable PDF Processor**: Removed fallbacks to alternative OCR engines
+4. **API Routes**: Updated to explicitly use PaliGemma2-only configurations
+5. **Frontend Components**: Updated to reflect PaliGemma2-only functionality
+
+## Troubleshooting
+
+If you encounter issues with the PaliGemma2-only mode:
+
+1. Run the health check: `node ./lib/vlm-model-manager.js health`
+2. Check logs for any references to fallback engines
+3. Run the rigorous testing script to verify all components are using PaliGemma2
+4. Restart the application using the provided script
+
+## Future Improvements
+
+- Further optimization of PaliGemma2 performance for large documents
+- Enhanced UI feedback when processing with PaliGemma2
+- Additional pre-processing options specific to PaliGemma2 capabilities
+- Expanded support for additional document types and languages
