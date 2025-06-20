@@ -2,14 +2,15 @@
 
 import { useState, useRef, useEffect } from "react"
 import Image from "next/image"
+import Link from "next/link"
 import { Terminal } from "@/components/ui/terminal"
 import { FileUploader } from "@/components/file-uploader"
 import { CommandBuilder } from "@/components/command-builder"
 import { ProcessStatus } from "@/components/process-status"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info, Search } from "lucide-react"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info, Search, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ProgressTracker } from "@/components/progress-tracker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -17,6 +18,7 @@ import { LoadingScreen } from "@/components/loading-screen"
 import { BrandedNotification } from "@/components/branded-notification"
 import { DependencyStatus } from "@/components/dependency-status"
 import { SmartSearch } from "@/components/smart-search"
+import { ExtractablePdfQuickAccess } from "@/components/extractable-pdf-quick-access"
 import { cn } from "@/lib/utils"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
@@ -1023,6 +1025,50 @@ export default function Home() {
               </TabsContent>
             </Tabs>
           </div>
+        </div>
+
+        <div className="mt-8">
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle>Recent Activity</CardTitle>
+              <CardDescription>Your recent OCR processing activity</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {processedFiles.length === 0 ? (
+                <div className="flex items-center justify-center p-4 text-muted-foreground text-sm">
+                  No recent activity
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {processedFiles.slice(0, 5).map((file, index) => (
+                    <li key={index} className="flex items-center justify-between rounded-md border p-3">
+                      <div className="flex items-center">
+                        <FileIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">{file.name}</span>
+                      </div>
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={file.path} download target="_blank" rel="noopener noreferrer">
+                          <Download className="mr-2 h-4 w-4" />
+                          Download
+                        </a>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+            <CardFooter className="flex justify-between border-t px-6 py-4">
+              <Button variant="ghost" disabled={processedFiles.length === 0}>
+                View All
+              </Button>
+              <Button variant="ghost" disabled={processedFiles.length === 0}>
+                Clear History
+              </Button>
+            </CardFooter>
+          </Card>
+          
+          {/* Extractable PDF Quick Access */}
+          <ExtractablePdfQuickAccess />
         </div>
       </div>
     </main>

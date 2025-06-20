@@ -90,30 +90,16 @@ export const POST = async (request: NextRequest) => {
     console.log('Loading PaliGemma2 model...');
     await modelManager.loadModel('paligemma2');
     
-    // Get options
-    const options = {
-      language: formData.get("language")?.toString() || "eng",
-      deskew: formData.get("deskew") === "true",
-      force: formData.get("force") === "true",
-      redoOcr: formData.get("redoOcr") === "true",
-      removeBackground: formData.get("removeBackground") === "true",
-      clean: formData.get("clean") === "true",
-      optimize: formData.get("optimize") === "true",
-      enableConfidenceAnalysis: formData.get("enableConfidenceAnalysis") === "true"
-    };
-    
-    // Process with PaliGemma2
+    // Process PDF with PaliGemma2
     const prompt = "<image>extract all text from this document accurately, preserving formatting and structure";
     const result = await modelManager.processImage(inputPath, prompt);
     
     return createJsonResponse({
       success: true,
-      outputFile: path.basename(inputPath),
       text: result.text || "",
       engine: "paligemma2",
       modelUsed: result.modelUsed || "PaliGemma2",
-      confidence: result.confidence || 0.8,
-      ...(options.enableConfidenceAnalysis ? { confidenceDetails: result.confidenceDetails } : {})
+      confidence: result.confidence || 0.8
     });
     
   } catch (error) {
@@ -133,21 +119,6 @@ export const GET = async () => {
   );
 }
 
-export const PUT = async () => {
-  return new NextResponse(
-    JSON.stringify({ success: false, error: "Method Not Allowed" }),
-    { status: 405, headers: { 'Content-Type': 'application/json' } }
-  );
-}
-
-export const DELETE = async () => {
-  return new NextResponse(
-    JSON.stringify({ success: false, error: "Method Not Allowed" }),
-    { status: 405, headers: { 'Content-Type': 'application/json' } }
-  );
-}
-
-// Support OPTIONS for CORS requests
 export const OPTIONS = async () => {
   return new NextResponse(null, {
     status: 200,

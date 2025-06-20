@@ -10,10 +10,11 @@
     "start": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh ./setup-worker-script.sh && ./ensure-permissions.sh && ./setup-worker-script.sh && next start",
     "lint": "next lint",
     "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh",
-    "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true",
+    "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk tesseract-ocr poppler-utils ghostscript && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true",
     "test": "jest",
     "test:watch": "jest --watch",
     "setup-vlm": "echo 'VLM setup is now handled automatically through @huggingface/transformers'",
+    "make-extractable": "node make-extractable-pdf.js",
     "clean": "rm -rf .next node_modules"
   },
   "dependencies": {
@@ -49,6 +50,8 @@
     "node-fetch": "^3.3.2",
     "pdf-lib": "^1.17.1",
     "pdf-poppler": "^0.2.1",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.3.136",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.58.1",

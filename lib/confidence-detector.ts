@@ -473,7 +473,7 @@ function categorizePages(pages: ConfidenceData[]): { warningPages: number[]; err
  * Estimate confidence from extracted text characteristics
  * This is used for PDFs that already have text layers
  */
-function estimateConfidenceFromText(text: string): number {
+export function estimateConfidenceFromText(text: string): number {
   if (!text || text.length === 0) return 0;
   
   let confidenceScore = 85; // Start with a reasonable baseline for extracted text
@@ -560,3 +560,5 @@ export async function loadConfidenceData(outputPath: string): Promise<DocumentCo
     return null;
   }
 }
+
+export { estimateConfidenceFromText };

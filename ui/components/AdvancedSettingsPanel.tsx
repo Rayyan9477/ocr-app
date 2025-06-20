@@ -4,6 +4,7 @@ interface AdvancedSettings {
   enhanceResolution: boolean;
   confidenceThreshold: number;
   preserveLayout: boolean;
+  enableConfidenceAnalysis: boolean;
 }
 
 interface AdvancedSettingsPanelProps {
@@ -54,6 +55,20 @@ export const AdvancedSettingsPanel: React.FC<AdvancedSettingsPanelProps> = ({
         </label>
         <p className="setting-description">
           Maintains original document structure including columns and tables
+        </p>
+      </div>
+      
+      <div className="setting-group">
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.enableConfidenceAnalysis}
+            onChange={e => handleChangeSetting('enableConfidenceAnalysis', e.target.checked)}
+          />
+          Enable Confidence Analysis
+        </label>
+        <p className="setting-description">
+          Analyze and report OCR confidence for each document. May increase processing time.
         </p>
       </div>
       

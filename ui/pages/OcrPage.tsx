@@ -17,6 +17,7 @@ export const OcrPage: React.FC = () => {
     enhanceResolution: false,
     confidenceThreshold: 0.5,
     preserveLayout: true,
+    enableConfidenceAnalysis: false,
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);

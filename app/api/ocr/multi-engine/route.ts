@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
-import { multiEngineOCR } from '@/lib/multi-engine-ocr';
+import VLMModelManager from '@/lib/vlm-model-manager.js';
+import logger from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   let inputPath = '';
   try {
+    logger.info('PaliGemma2-only OCR API called');
+    
     const formData = await request.formData();
     const fileField = formData.get('image') || formData.get('file');
     if (!fileField) {
@@ -31,28 +34,38 @@ export async function POST(request: NextRequest) {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
-    // Run multi-engine ensemble OCR
-    let result;
-    try {
-      result = await multiEngineOCR.processDocument(inputPath, outputDir, {
-        useVlmEnhancement: true,
-        confidenceThreshold: 0.75,
-        useAllEngines: true
-      });
-    } catch (error) {
-      return NextResponse.json({ error: `Multi-engine OCR failed: ${error.message || error}` }, { status: 500 });
-    }
+    
+    // Initialize VLM Model Manager with no fallbacks
+    const modelManager = new VLMModelManager({
+      enableOLMOCR: true,
+      fallbackToSimple: false,
+      enableCloudFallback: false,
+      useEnhancedIntegration: true
+    });
+    
+    logger.info('Loading PaliGemma2 model...');
+    await modelManager.loadModel('paligemma2');
+    
+    // Process document with PaliGemma2
+    const prompt = "<image>extract all text from this document accurately, preserving formatting and structure";
+    const startTime = Date.now();
+    const result = await modelManager.processImage(inputPath, prompt);
+    const processingTime = Date.now() - startTime;
+    
     return NextResponse.json({
       success: true,
-      engine: 'multi-engine-ensemble',
+      engine: 'paligemma2',
       outputFile: path.basename(inputPath),
-      text: result.text,
-      confidence: result.confidence || 0,
-      processingTime: result.processingTime || null,
-      enginesUsed: result.enginesUsed || [],
-      allResults: result.allResults || []
+      text: result.text || "",
+      confidence: result.confidence || 0.8,
+      processingTime,
+      modelUsed: result.modelUsed || "PaliGemma2",
+      enginesUsed: ['paligemma2'] // Only PaliGemma2 is used
     });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to process document' }, { status: 500 });
+    logger.error(`Error in PaliGemma2-only OCR route: ${error}`);
+    return NextResponse.json({ 
+      error: `Failed to process document with PaliGemma2: ${(error as Error).message || error}` 
+    }, { status: 500 });
   }
-} 
+}

@@ -1,23 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
-import { multiEngineOCR } from '@/lib/multi-engine-ocr';
-import { DocumentAnalyzer } from '../../../lib/document-analyzer';
-import { EnhancedDocumentAnalyzer, enhancedDocumentAnalyzer } from '../../../lib/enhanced-document-analyzer';
 import VLMModelManager from '../../../lib/vlm-model-manager.js';
 import { initializeDirectories } from '../../../lib/initialize-dirs';
 import logger from '../../../lib/logger';
-import pdfHandler from '../../../lib/pdf-handler.js';
 
 // Initialize directories on module load
 initializeDirectories();
-
-const documentAnalyzer = new DocumentAnalyzer();
 
 // Initialize VLM manager for PaliGemma2
 const vlmManager = new VLMModelManager({
     modelId: 'NSTiwari/paligemma2-3b-mix-224-onnx',
     useLocalFiles: true,
+    enableOLMOCR: true,
+    fallbackToSimple: false,
+    enableCloudFallback: false,
+    useEnhancedIntegration: true,
     modelPaths: [
         path.join(process.cwd(), 'models', 'paligemma2', 'google')
     ],
@@ -25,44 +23,43 @@ const vlmManager = new VLMModelManager({
 });
 
 /**
- * Select the appropriate default OCR engine based on file type and PaliGemma2 analysis
+ * Process document using PaliGemma2 with enhanced OCR prompt for smart OCR features
  */
-async function selectDefaultEngineForFile(inputPath, outputDir, documentType = 'general', useVlmEnhancement = true) {
-  const isPdf = inputPath.toLowerCase().endsWith('.pdf');
+async function processPaliGemma2Only(inputPath, documentType = 'general') {
+  const startTime = Date.now();
+  let prompt = "<image>extract all text from this document accurately, preserving formatting and structure";
   
-  // Try to get PaliGemma2 document analysis for engine recommendation
-  if (useVlmEnhancement) {
-    try {
-      const analysis = await vlmManager.processImage(inputPath, '<image>analyze this document and suggest the best OCR approach');
-      if (analysis && analysis.text) {
-        logger.info(`PaliGemma2 analysis: ${analysis.text}`);
-        const analysisText = analysis.text.toLowerCase();
-        if (analysisText.includes('handwrit') || analysisText.includes('handdrawn') || analysisText.includes('manuscript')) {
-          logger.info('PaliGemma2 detected handwriting, using ensemble with VLM priority');
-          documentType = 'handwriting';
-        } else if (analysisText.includes('table') || analysisText.includes('form') || analysisText.includes('structured')) {
-          logger.info('PaliGemma2 detected structured content, using ensemble with OCRmyPDF priority');
-          documentType = 'form';
-        }
-      }
-    } catch (error) {
-      logger.warn(`PaliGemma2 analysis failed, using file type heuristics: ${error.message}`);
-    }
+  // Enhance prompt based on document type
+  if (documentType === 'handwriting') {
+    prompt = "<image>extract all handwritten text from this document accurately, preserving formatting and structure";
+  } else if (documentType === 'form') {
+    prompt = "<image>extract all text from this form/structured document, maintaining table layouts and field relationships";
   }
   
-  if (isPdf) {
-    logger.info('PDF file detected, using OCRmyPDF engine');
-    documentType = 'form';
-  }
+  logger.info(`Processing document with PaliGemma2 (document type: ${documentType})`);
   
-  logger.info(`Using multi-engine ensemble for optimal results (document type: ${documentType})`);
-  // Only run the ensemble, do not fallback if it fails
-  return await multiEngineOCR.processDocument(inputPath, outputDir, {
-    documentType,
-    useVlmEnhancement,
-    confidenceThreshold: 0.75,
-    useAllEngines: true
-  });
+  try {
+    // Load PaliGemma2 model
+    await vlmManager.loadModel('paligemma2');
+    
+    // Process the document
+    const result = await vlmManager.processImage(inputPath, prompt);
+    const processingTime = Date.now() - startTime;
+    
+    return {
+      success: true,
+      text: result.text || "",
+      confidence: result.confidence || 0.85,
+      engine: "paligemma2",
+      outputPath: inputPath, // Since we're not creating a new file
+      processingTime,
+      vlmEnhanced: true,
+      modelUsed: result.modelUsed || "PaliGemma2"
+    };
+  } catch (error) {
+    logger.error(`PaliGemma2 processing failed: ${error.message}`);
+    throw error;
+  }
 }
 
 async function createOCRResponse(result) {
@@ -80,7 +77,7 @@ async function createOCRResponse(result) {
     : result.text;
 
   // Create response object
-  const response = {
+  return {
     success: result.success,
     engine: result.engine,
     outputFile: outputFilename, // Send only filename, not full path
@@ -90,25 +87,39 @@ async function createOCRResponse(result) {
     error: result.error,
     // Add VLM-related fields if available
     vlmEnhanced: result.vlmEnhanced || false,
-    vlmProcessingTime: result.vlmProcessingTimeMs
+    vlmProcessingTime: result.vlmProcessingTime,
+    modelUsed: result.modelUsed || "PaliGemma2"
   };
-  
-  // Add confidence assessment if available
-  if (result.confidenceAssessment) {
-    response['confidenceAssessment'] = {
-      overall: result.confidenceAssessment.overall,
-      lowConfidenceCount: result.confidenceAssessment.potentialErrors?.length || 0
-    };
-  }
-  
-  return response;
 }
 
 export async function POST(request) {
   let inputPath = "";
   
   try {
-    const formData = await request.formData();
+    // Check if the request has the correct content type
+    const contentType = request.headers.get('content-type') || '';
+    if (!contentType.includes('multipart/form-data')) {
+      logger.info(`Form data keys received: ${contentType}`);
+      return NextResponse.json({ 
+        error: 'Content type must be multipart/form-data',
+        received: contentType
+      }, { status: 400 });
+    }
+    
+    // Parse form data with error handling
+    let formData;
+    try {
+      formData = await request.formData();
+      // Log received form data keys for debugging
+      const keys = Array.from(formData.keys());
+      logger.info(`Form data keys received: ${keys.join(', ')}`);
+    } catch (formDataError) {
+      logger.error(`Failed to parse form data: ${formDataError.message}`);
+      return NextResponse.json({ 
+        error: 'Failed to parse form data. Make sure it is properly formatted multipart/form-data.'
+      }, { status: 400 });
+    }
+    
     const fileField = formData.get('image') || formData.get('file');
     if (!fileField) {
       logger.error('No file provided in form data');
@@ -134,14 +145,19 @@ export async function POST(request) {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
-    // Only run the selected engine, do not fallback
+    
+    // Determine document type (if provided)
+    const documentType = formData.get('documentType')?.toString() || 'general';
+    
+    // Process with PaliGemma2 only
     let result;
     try {
-      result = await selectDefaultEngineForFile(inputPath, outputDir);
+      result = await processPaliGemma2Only(inputPath, documentType);
     } catch (error) {
       logger.error(`Smart OCR failed: ${error}`);
       return NextResponse.json({ error: `Smart OCR failed: ${error.message || error}` }, { status: 500 });
     }
+    
     const response = await createOCRResponse(result);
     return NextResponse.json(response);
   } catch (error) {
