@@ -148,36 +148,24 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
 // Main POST handler
 export const POST = async (request: NextRequest) => {
   console.log("OCR API called with POST method");
-  
   let inputPath = "";
-  
   await ensureDirectories();
-  
   try {
     const formData = await request.formData();
     const file = formData.get("file") as any as File;
-    
     if (!file) {
       return createJsonResponse({
         success: false,
         error: "No file provided"
       }, 400);
     }
-    
-    // Get file data
     const fileName = file.name;
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    
-    // Determine upload path
     const uploadDir = join(process.cwd(), "uploads");
     inputPath = join(uploadDir, fileName);
-    
-    // Write the file to uploads directory
     await writeFile(inputPath, buffer);
     console.log(`File saved: ${inputPath}`);
-    
-    // Process OCR options from form data
     const options = {
       language: formData.get("language")?.toString() || "eng",
       deskew: formData.get("deskew") === "true",
@@ -189,245 +177,40 @@ export const POST = async (request: NextRequest) => {
       optimize: formData.get("optimize") === "true",
       rotate: formData.get("rotate")?.toString() || "0"
     };
-    
-    // Determine output path
     const processedDir = join(process.cwd(), "processed");
     const outputPath = join(processedDir, `${path.basename(fileName, '.pdf')}_${Date.now()}_ocr.pdf`);
-    
-    // Build and execute OCR command
     const command = buildOCRCommand(inputPath, outputPath, options);
     console.log(`Starting OCR process: ${command}`);
-    
     try {
-      const result = await execWithTimeout(command, appConfig.ocrTimeout || 600000);
-      
-      if (existsSync(outputPath)) {
-        // Extract confidence scores if enabled
-        let confidenceData: DocumentConfidence | null = null;
-        if (appConfig.confidence.enableConfidenceTracking) {
-          try {
-            // Use the processed file for confidence analysis to get more accurate results
-            confidenceData = await extractConfidenceScores(inputPath, outputPath, true);
-            if (confidenceData) {
-              await saveConfidenceData(confidenceData, outputPath);
-            }
-          } catch (confidenceError) {
-            console.warn("Failed to extract confidence scores:", confidenceError);
-          }
-        }
-
-        return createJsonResponse({
-          success: true,
-          inputFile: fileName,
-          outputFile: path.basename(outputPath),
-          details: result.stderr || result.stdout,
-          confidence: confidenceData ? {
-            averageConfidence: confidenceData.averageConfidence,
-            hasLowConfidencePages: confidenceData.hasLowConfidencePages,
-            warningPages: confidenceData.warningPages,
-            errorPages: confidenceData.errorPages,
-            pageCount: confidenceData.pageConfidences.length
-          } : undefined
-        });
-      } else {
-        throw new Error("OCR completed but output file was not created");
-      }
-    } catch (execError) {
-      console.error("OCR execution failed:", execError);
-      
-      // Check if output file was created despite error
-      if (existsSync(outputPath)) {
-        // Extract confidence scores even for partial success if enabled
-        let confidenceData: DocumentConfidence | null = null;
-        if (appConfig.confidence.enableConfidenceTracking) {
-          try {
-            confidenceData = await extractConfidenceScores(inputPath, outputPath);
-            if (confidenceData) {
-              await saveConfidenceData(confidenceData, outputPath);
-            }
-          } catch (confidenceError) {
-            console.warn("Failed to extract confidence scores for partial success:", confidenceError);
-          }
-        }
-
-        return createJsonResponse({
-          success: true,
-          inputFile: fileName,
-          outputFile: path.basename(outputPath),
-          warning: "OCR completed with warnings",
-          details: execError instanceof Error ? execError.message : String(execError),
-          confidence: confidenceData ? {
-            averageConfidence: confidenceData.averageConfidence,
-            hasLowConfidencePages: confidenceData.hasLowConfidencePages,
-            warningPages: confidenceData.warningPages,
-            errorPages: confidenceData.errorPages,
-            pageCount: confidenceData.pageConfidences.length
-          } : undefined
-        });
-      }
-      
-      // Check for specific error about page already having text
-      const errorMsg = execError instanceof Error ? execError.message : String(execError);
-      if ((errorMsg.includes('page already has text') || errorMsg.includes('PriorOcrFoundError')) && !options.force) {
-        console.log("Detected document with existing text. Retrying with --force-ocr option...");
-        
-        // Create a new command with force-ocr enabled and PDF output type to avoid bloat
-        const retryOptions = { ...options, force: true };
-        const retryOutputPath = join(
-          process.cwd(),
-          "processed",
-          `${path.basename(fileName, '.pdf')}_${Date.now()}_forced_ocr.pdf`
-        );
-        
-        const retryCommand = buildOCRCommand(inputPath, retryOutputPath, retryOptions);
-        console.log(`Retrying OCR with force option: ${retryCommand}`);
-        
-        try {
-          // Execute the retry command
-          const retryResult = await execWithTimeout(retryCommand, appConfig.ocrTimeout || 600000);
-          
-          if (existsSync(retryOutputPath)) {
-            // Extract confidence scores for retry output if enabled
-            let retryConfidenceData: DocumentConfidence | null = null;
-            if (appConfig.confidence.enableConfidenceTracking) {
-              try {
-                // Use the processed file for confidence analysis
-                retryConfidenceData = await extractConfidenceScores(inputPath, retryOutputPath, true);
-                if (retryConfidenceData) {
-                  await saveConfidenceData(retryConfidenceData, retryOutputPath);
-                }
-              } catch (confidenceError) {
-                console.warn("Failed to extract confidence scores for retry:", confidenceError);
-              }
-            }
-
-            return createJsonResponse({
-              success: true,
-              inputFile: fileName,
-              outputFile: path.basename(retryOutputPath),
-              details: "Document had existing text layer. Successfully processed with --force-ocr option.",
-              warnings: retryResult.stderr || undefined,
-              confidence: retryConfidenceData ? {
-                averageConfidence: retryConfidenceData.averageConfidence,
-                hasLowConfidencePages: retryConfidenceData.hasLowConfidencePages,
-                warningPages: retryConfidenceData.warningPages,
-                errorPages: retryConfidenceData.errorPages,
-                pageCount: retryConfidenceData.pageConfidences.length
-              } : undefined
-            });
-          }
-        } catch (retryError) {
-          console.error("OCR retry with force option failed:", retryError);
-          return createJsonResponse({
-            success: false,
-            error: "OCR process failed even with force option",
-            inputFile: fileName,
-            details: retryError instanceof Error ? retryError.message : String(retryError)
-          }, 500);
-        }
-      }
-      
-      // Try multi-engine OCR as fallback when primary OCR fails
-      logger.info(`Primary OCR failed for ${fileName}, attempting multi-engine fallback`);
-      
-      try {
-        const fallbackOutputDir = join(process.cwd(), "processed", `fallback_${Date.now()}`);
-        await mkdir(fallbackOutputDir, { recursive: true });
-        
-        const ensembleResult = await multiEngineOCR.processWithEnsemble(
-          inputPath,
-          fallbackOutputDir,
-          options.language,
-          false, // Don't use preprocessing for fallback to save time
-          true   // Use auto-customization
-        );
-        
-        if (ensembleResult.hasSuccessfulResults && ensembleResult.bestResult.outputPath) {
-          // Move the successful result to standard processed directory
-          const fallbackFinalPath = join(
-            process.cwd(),
-            "processed",
-            `${path.basename(fileName, '.pdf')}_${Date.now()}_fallback_ocr.pdf`
-          );
-          
-          // Copy the result file
-          await import('fs/promises').then(fs => 
-            fs.copyFile(ensembleResult.bestResult.outputPath!, fallbackFinalPath)
-          );
-          
-          // Extract confidence scores for fallback result if enabled
-          let fallbackConfidenceData: DocumentConfidence | null = null;
-          if (appConfig.confidence.enableConfidenceTracking) {
-            try {
-              fallbackConfidenceData = await extractConfidenceScores(inputPath, fallbackFinalPath, true);
-              if (fallbackConfidenceData) {
-                await saveConfidenceData(fallbackConfidenceData, fallbackFinalPath);
-              }
-            } catch (confidenceError) {
-              logger.warn("Failed to extract confidence scores for fallback result:", confidenceError);
-            }
-          }
-          
-          return createJsonResponse({
-            success: true,
-            inputFile: fileName,
-            outputFile: path.basename(fallbackFinalPath),
-            engine: ensembleResult.bestResult.engine,
-            warning: "Primary OCR failed, succeeded with multi-engine fallback",
-            details: `Fallback used ${ensembleResult.successCount}/${ensembleResult.allResults.length} engines successfully`,
-            engines: {
-              used: ensembleResult.allResults.map(r => r.engine),
-              successful: ensembleResult.allResults.filter(r => r.success).map(r => r.engine),
-              failed: ensembleResult.allResults.filter(r => !r.success).map(r => r.engine)
-            },
-            customizationApplied: ensembleResult.customizationApplied,
-            confidence: fallbackConfidenceData ? {
-              averageConfidence: fallbackConfidenceData.averageConfidence,
-              hasLowConfidencePages: fallbackConfidenceData.hasLowConfidencePages,
-              warningPages: fallbackConfidenceData.warningPages,
-              errorPages: fallbackConfidenceData.errorPages,
-              pageCount: fallbackConfidenceData.pageConfidences.length
-            } : undefined
-          });
-        } else {
-          logger.error(`Multi-engine fallback also failed for ${fileName}`);
-          return createJsonResponse({
-            success: false,
-            error: "Both primary OCR and multi-engine fallback failed",
-            inputFile: fileName,
-            details: {
-              primaryError: errorMsg,
-              fallbackEngines: ensembleResult.allResults.map(r => ({
-                engine: r.engine,
-                error: r.error
-              }))
-            }
-          }, 500);
-        }
-      } catch (fallbackError) {
-        logger.error("Multi-engine fallback failed with exception:", fallbackError);
-        return createJsonResponse({
-          success: false,
-          error: "Both primary OCR and multi-engine fallback failed",
-          inputFile: fileName,
-          details: {
-            primaryError: errorMsg,
-            fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-          }
-        }, 500);
-      }
+      await execWithTimeout(command, 300000);
+    } catch (error) {
+      logger.error(`OCRmyPDF failed: ${error}`);
+      return createJsonResponse({
+        success: false,
+        error: `OCRmyPDF failed: ${error.message || error}`
+      }, 500);
     }
-    
+    // Extract text from output PDF
+    let extractedText = "";
+    try {
+      const { execSync } = await import('child_process');
+      extractedText = execSync(`pdftotext "${outputPath}" -`).toString();
+    } catch (extractError) {
+      logger.warn(`Failed to extract text from PDF: ${extractError}`);
+    }
+    return createJsonResponse({
+      success: true,
+      outputFile: path.basename(outputPath),
+      text: extractedText
+    });
   } catch (error) {
-    console.error("Unexpected error during OCR process:", error);
-    
+    logger.error(`Error in OCR route: ${error}`);
     return createJsonResponse({
       success: false,
-      error: "Unexpected system error during OCR processing",
-      details: error instanceof Error ? error.message : String(error)
+      error: 'Failed to process document'
     }, 500);
   }
-}
+};
 
 // Other HTTP methods
 export const GET = async () => {

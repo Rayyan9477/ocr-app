@@ -18,57 +18,31 @@ export class PaliGemma2Parser {
    */
   parseDocumentAnalysis(rawResponse: any): Partial<DocumentAnalysisResponse> {
     try {
-      // If response is already parsed
-      if (typeof rawResponse === 'object' && rawResponse !== null && !Buffer.isBuffer(rawResponse)) {
-        return this.normalizeDocumentAnalysis(rawResponse);
-      }
-      
-      // If response is a string, try to parse JSON
-      if (typeof rawResponse === 'string') {
-        try {
-          // Extract JSON from the string (model might return text before/after JSON)
-          const jsonMatch = rawResponse.match(/\{(?:[^{}]|(\{(?:[^{}]|{[^{}]*})*\}))*\}/);
-          if (jsonMatch && jsonMatch[0]) {
-            const parsedJson = JSON.parse(jsonMatch[0]);
-            return this.normalizeDocumentAnalysis(parsedJson);
-          }
-        } catch (jsonError) {
-          logger.warn(`Failed to parse JSON from model response: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`);
-          // Continue with text parsing as fallback
+        // Handle both structured and unstructured responses
+        if (typeof rawResponse === 'string') {
+            return this.parseDocumentAnalysisText(rawResponse);
         }
         
-        // Parse structured text response (non-JSON)
-        return this.parseDocumentAnalysisText(rawResponse);
-      }
-      
-      // Fallback for unexpected response type
-      throw new VlmError(
-        VlmErrorType.PROCESSING_FAILED,
-        `Unexpected response type: ${typeof rawResponse}`,
-        { responseType: typeof rawResponse },
-        false
-      );
+        return this.normalizeDocumentAnalysis(rawResponse);
     } catch (error) {
-      logger.error(`Error parsing document analysis response: ${error instanceof Error ? error.message : String(error)}`);
-      
-      // Return default values on parse error
-      return {
-        documentType: 'unknown',
-        quality: {
-          overall: 0.5,
-          resolution: 0.5,
-          noise: 0.5,
-          contrast: 0.5
-        },
-        content: {
-          hasHandwriting: false,
-          hasTables: false,
-          hasHighlights: false,
-          hasImages: false,
-          hasSignatures: false
-        },
-        confidence: 0.5
-      };
+        logger.error('Error parsing document analysis:', error);
+        return {
+            documentType: 'unknown',
+            quality: {
+                overall: 0.5,
+                resolution: 0.5,
+                noise: 0.5,
+                contrast: 0.5
+            },
+            content: {
+                hasHandwriting: false,
+                hasTables: false,
+                hasHighlights: false,
+                hasImages: false,
+                hasSignatures: false,
+                languagePrediction: ['en']
+            }
+        };
     }
   }
   
@@ -77,53 +51,22 @@ export class PaliGemma2Parser {
    */
   parseTextExtraction(rawResponse: any): Partial<TextExtractionResponse> {
     try {
-      // If response is already parsed
-      if (typeof rawResponse === 'object' && rawResponse !== null && !Buffer.isBuffer(rawResponse)) {
-        return this.normalizeTextExtraction(rawResponse);
-      }
-      
-      // If response is a string
-      if (typeof rawResponse === 'string') {
-        try {
-          // Try to parse as JSON first
-          const jsonMatch = rawResponse.match(/\{(?:[^{}]|(\{(?:[^{}]|{[^{}]*})*\}))*\}/);
-          if (jsonMatch && jsonMatch[0]) {
-            const parsedJson = JSON.parse(jsonMatch[0]);
-            return this.normalizeTextExtraction(parsedJson);
-          }
-        } catch (jsonError) {
-          // Continue with text parsing
+        if (typeof rawResponse === 'string') {
+            return {
+                text: rawResponse,
+                confidence: this.estimateConfidence(rawResponse),
+                processingTimeMs: 0
+            };
         }
         
-        // Parse as plain text
-        return {
-          text: rawResponse.trim(),
-          confidence: this.estimateConfidence(rawResponse),
-          blocks: [
-            {
-              text: rawResponse.trim(),
-              bbox: [0, 0, 1, 1], // Full document
-              confidence: this.estimateConfidence(rawResponse)
-            }
-          ]
-        };
-      }
-      
-      // Fallback for unexpected response type
-      throw new VlmError(
-        VlmErrorType.PROCESSING_FAILED,
-        `Unexpected response type: ${typeof rawResponse}`,
-        { responseType: typeof rawResponse },
-        false
-      );
+        return this.normalizeTextExtraction(rawResponse);
     } catch (error) {
-      logger.error(`Error parsing text extraction response: ${error instanceof Error ? error.message : String(error)}`);
-      
-      // Return default values on parse error
-      return {
-        text: '',
-        confidence: 0.5
-      };
+        logger.error('Error parsing text extraction:', error);
+        return {
+            text: '',
+            confidence: 0,
+            processingTimeMs: 0
+        };
     }
   }
   
@@ -185,47 +128,27 @@ export class PaliGemma2Parser {
     
     // Extract and normalize quality
     const quality = {
-      overall: this.normalizeValue(data.quality?.overall || data.overall_quality || 0.5),
-      resolution: this.normalizeValue(data.quality?.resolution || data.resolution_quality || 0.5),
-      noise: this.normalizeValue(data.quality?.noise || data.noise_level || 0.5),
-      contrast: this.normalizeValue(data.quality?.contrast || data.contrast_quality || 0.5)
+        overall: this.normalizeValue(data.quality?.overall || data.overall_quality || 0.5),
+        resolution: this.normalizeValue(data.quality?.resolution || data.resolution_quality || 0.5),
+        noise: this.normalizeValue(data.quality?.noise || data.noise_level || 0.5),
+        contrast: this.normalizeValue(data.quality?.contrast || data.contrast_quality || 0.5)
     };
     
     // Extract and normalize content features
     const content = {
-      hasHandwriting: Boolean(data.content?.hasHandwriting || data.has_handwriting || false),
-      hasTables: Boolean(data.content?.hasTables || data.has_tables || false),
-      hasHighlights: Boolean(data.content?.hasHighlights || data.has_highlights || false),
-      hasImages: Boolean(data.content?.hasImages || data.has_images || false),
-      hasSignatures: Boolean(data.content?.hasSignatures || data.has_signatures || false),
-      languagePrediction: data.content?.languagePrediction || data.language || ['en']
+        hasHandwriting: Boolean(data.content?.hasHandwriting || data.has_handwriting || false),
+        hasTables: Boolean(data.content?.hasTables || data.has_tables || false),
+        hasHighlights: Boolean(data.content?.hasHighlights || data.has_highlights || false),
+        hasImages: Boolean(data.content?.hasImages || data.has_images || false),
+        hasSignatures: Boolean(data.content?.hasSignatures || data.has_signatures || false),
+        languagePrediction: data.content?.languagePrediction || data.language || ['en']
     };
-    
-    // Extract and normalize layout
-    const layout = Array.isArray(data.layout) ? data.layout.map((item: any) => ({
-      type: item.type || 'unknown',
-      bbox: Array.isArray(item.bbox) ? item.bbox : [0, 0, 1, 1],
-      confidence: this.normalizeValue(item.confidence || 0.8)
-    })) : [];
-    
-    // Extract and normalize recommendations
-    const recommendations = {
-      preferredEngine: data.recommendations?.preferredEngine || data.preferred_engine || 'default',
-      preprocessingSteps: data.recommendations?.preprocessingSteps || data.preprocessing_steps || [],
-      confidenceThreshold: this.normalizeValue(data.recommendations?.confidenceThreshold || data.confidence_threshold || 0.7),
-      priority: data.recommendations?.priority || data.priority || 'balanced'
-    };
-    
-    // Calculate overall confidence
-    const confidence = this.normalizeValue(data.confidence || quality.overall || 0.8);
     
     return {
-      documentType,
-      quality,
-      content,
-      layout,
-      recommendations,
-      confidence
+        documentType,
+        quality,
+        content,
+        confidence: this.normalizeValue(data.confidence || 0.5)
     };
   }
   
@@ -412,42 +335,23 @@ export class PaliGemma2Parser {
    * Estimate confidence based on text quality
    */
   private estimateConfidence(text: string): number {
-    if (!text || text.length === 0) {
-      return 0.5;
-    }
+    // Estimate confidence based on text characteristics
+    let confidence = 0.5;
     
-    // Higher confidence if response has good structure
-    let confidence = 0.7;
+    // Increase confidence for longer text
+    if (text.length > 100) confidence += 0.1;
+    if (text.length > 500) confidence += 0.1;
     
-    // Check for uncertainty markers
-    const uncertaintyMarkers = ['uncertain', 'unclear', 'difficult to read', 'illegible', 'can\'t determine'];
-    const hasUncertainty = uncertaintyMarkers.some(marker => text.toLowerCase().includes(marker));
-    if (hasUncertainty) {
-      confidence -= 0.2;
-    }
+    // Decrease confidence for potential OCR errors
+    const errorPatterns = [
+        /[A-Z]{5,}/g,  // Long uppercase sequences
+        /\d[A-Za-z]\d/g,  // Mixed digits and letters
+        /[^\x00-\x7F]+/g  // Non-ASCII characters
+    ];
     
-    // Check for confidence statements
-    const highConfidenceMarkers = ['confident', 'clear', 'certain', 'definitely', 'easily readable'];
-    const hasHighConfidence = highConfidenceMarkers.some(marker => text.toLowerCase().includes(marker));
-    if (hasHighConfidence) {
-      confidence += 0.1;
-    }
-    
-    // Check for explicit confidence scores
-    const confidenceMatch = text.match(/confidence\s*[:-]?\s*(\d+\.?\d*)/i);
-    if (confidenceMatch && confidenceMatch[1]) {
-      const explicitConfidence = parseFloat(confidenceMatch[1]);
-      if (!isNaN(explicitConfidence)) {
-        // If score is 0-1, use it directly
-        if (explicitConfidence >= 0 && explicitConfidence <= 1) {
-          return explicitConfidence;
-        }
-        // If score is 0-100, normalize it
-        if (explicitConfidence >= 0 && explicitConfidence <= 100) {
-          return explicitConfidence / 100;
-        }
-      }
-    }
+    errorPatterns.forEach(pattern => {
+        if (pattern.test(text)) confidence -= 0.1;
+    });
     
     return this.normalizeValue(confidence);
   }
@@ -456,17 +360,6 @@ export class PaliGemma2Parser {
    * Normalize a value to be between 0 and 1
    */
   private normalizeValue(value: number): number {
-    // If value is already between 0 and 1, return it
-    if (value >= 0 && value <= 1) {
-      return value;
-    }
-    
-    // If value is between 0 and 100, normalize it
-    if (value >= 0 && value <= 100) {
-      return value / 100;
-    }
-    
-    // Otherwise, clamp to 0-1 range
     return Math.max(0, Math.min(1, value));
   }
 }

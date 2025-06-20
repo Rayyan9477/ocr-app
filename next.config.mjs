@@ -1,5 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    serverComponentsExternalPackages: ['sharp'],
+  },
+  webpack: (config, { isServer }) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@/lib': path.join(__dirname, 'lib'),
+    };
+    return config;
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },

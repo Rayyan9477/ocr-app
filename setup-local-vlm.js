@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * Script to setup Paligemma2 VLM model locally using transformers.js
+ * Script to setup PaliGemma2 VLM model locally using Hugging Face transformers
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { AutoModel, AutoProcessor } from '@xenova/transformers';
+import PaliGemma2Simple from './lib/paligemma2-simple.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Use Microsoft's TrOCR model which is better supported by transformers.js
-const MODEL_ID = 'microsoft/trocr-base-handwritten';
-const MODEL_CACHE_DIR = path.join(__dirname, 'models', 'trocr');
+// Use PaliGemma2 ONNX model
+const MODEL_ID = 'NSTiwari/paligemma2-3b-mix-224-onnx';
+const MODEL_CACHE_DIR = path.join(__dirname, 'models', 'paligemma2');
 
 async function ensureModelDir() {
     if (!fs.existsSync(MODEL_CACHE_DIR)) {
@@ -25,40 +25,26 @@ async function ensureModelDir() {
 async function downloadModel() {
     console.log(`Downloading ${MODEL_ID} model...`);
     try {
-        // Set cache directory for transformers.js
+        // Set cache directory
         process.env.TRANSFORMERS_CACHE = MODEL_CACHE_DIR;
 
-        // Initialize model and processor
-        console.log('Initializing model and processor...');
+        // Initialize PaliGemma2 model
+        console.log('Initializing PaliGemma2 model...');
         
-        // For TrOCR, we need VisionEncoderDecoderModel and TrOCRProcessor
-        const { VisionEncoderDecoderModel, TrOCRProcessor } = await import('@xenova/transformers');
-        
-        const [model, processor] = await Promise.all([
-            VisionEncoderDecoderModel.from_pretrained(MODEL_ID),
-            TrOCRProcessor.from_pretrained(MODEL_ID)
-        ]);
+        const paligemma2 = new PaliGemma2Simple();
+        const success = await paligemma2.initialize();
 
-        console.log('Model and processor downloaded successfully!');
-        console.log('Model files cached in:', MODEL_CACHE_DIR);
-        return { model, processor };
-    } catch (error) {
-        console.error('Error downloading model:', error);
-        
-        // Fallback to a simpler model if the main one fails
-        console.log('Trying fallback model: microsoft/trocr-base-printed');
-        try {
-            const { VisionEncoderDecoderModel, TrOCRProcessor } = await import('@xenova/transformers');
-            const [model, processor] = await Promise.all([
-                VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed'),
-                TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
-            ]);
-            console.log('Fallback model downloaded successfully!');
-            return { model, processor };
-        } catch (fallbackError) {
-            console.error('Fallback model also failed:', fallbackError);
-            throw error;
+        if (success) {
+            console.log('✅ PaliGemma2 model downloaded and initialized successfully!');
+        } else {
+            console.log('⚠️ PaliGemma2 model downloaded with warnings (processor only)');
         }
+        
+        console.log('Model files cached in:', MODEL_CACHE_DIR);
+        return paligemma2;
+        
+    } catch (error) {
+        console.error('❌ Error downloading PaliGemma2 model:', error);
         throw error;
     }
 }
@@ -66,15 +52,24 @@ async function downloadModel() {
 export async function setupLocalVLM() {
     try {
         await ensureModelDir();
-        await downloadModel();
-        console.log('VLM setup completed successfully!');
+        const paligemma2 = await downloadModel();
+        console.log('✅ PaliGemma2 VLM setup completed successfully!');
+        return paligemma2;
     } catch (error) {
-        console.error('Error during VLM setup:', error);
-        process.exit(1);
+        console.error('❌ Error during PaliGemma2 VLM setup:', error);
+        throw error;
     }
 }
 
 // Run setup if called directly
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    setupLocalVLM();
+    console.log('🚀 Setting up PaliGemma2 VLM model locally...');
+    setupLocalVLM()
+        .then(() => {
+            console.log('✅ Setup complete!');
+        })
+        .catch((error) => {
+            console.error('❌ Setup failed:', error);
+            process.exit(1);
+        });
 }

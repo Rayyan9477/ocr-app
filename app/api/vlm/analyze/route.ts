@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
-import { vlmManager } from '../../../../lib/vlm/core/vlm-manager';
-import { VLMCapability } from '../../../../lib/vlm/core/vlm-capabilities';
+import VLMModelManager from '../../../../lib/vlm-model-manager.js';
 import { initializeDirectories } from '../../../../lib/initialize-dirs';
 import logger from '../../../../lib/logger';
-
-// Ensure VLM models are registered
-import '../../../../lib/vlm-bootstrap';
 
 // Initialize directories on module load
 initializeDirectories();
 
+// Create VLM manager instance
+const vlmManager = new VLMModelManager();
+
 /**
- * POST /api/vlm/analyze - Direct VLM document analysis
+ * POST /api/vlm/analyze - Direct VLM document analysis using PaliGemma2
  */
 export async function POST(request: NextRequest) {
   let inputPath = "";
@@ -22,8 +21,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get('image') as File || formData.get('file') as File;
     const analysisType = formData.get('analysisType') as string || 'document_analysis';
-    const modelId = formData.get('modelId') as string || 'paligemma2-3b-mix-224';
-    const deploymentStrategy = formData.get('deploymentStrategy') as string || 'local';
+    const customPrompt = formData.get('prompt') as string || '';
     
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
@@ -37,34 +35,27 @@ export async function POST(request: NextRequest) {
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     fs.writeFileSync(inputPath, fileBuffer);
     
-    // Get VLM instance
-    const vlm = await vlmManager.getVLM({
-      modelId,
-      deploymentStrategy: deploymentStrategy as 'local' | 'cloud' | 'hybrid'
-    });
-    
     let result;
     
-    // Perform analysis based on type
+    // Perform analysis based on type using PaliGemma2
     switch (analysisType) {
       case 'document_analysis':
-        result = await vlm.analyzeDocument(inputPath);
+        result = await vlmManager.processImage(inputPath, '<image>analyze this document');
         break;
         
       case 'text_extraction':
-        result = await vlm.extractText(inputPath);
+        result = await vlmManager.extractText(inputPath);
         break;
         
       case 'structured_data':
-        result = await vlm.extractStructuredData(inputPath);
+        result = await vlmManager.processImage(inputPath, '<image>extract structured data');
         break;
         
       case 'custom_prompt':
-        const customPrompt = formData.get('prompt') as string;
         if (!customPrompt) {
           return NextResponse.json({ error: 'Custom prompt required for custom_prompt analysis' }, { status: 400 });
         }
-        result = await vlm.processWithPrompt(inputPath, customPrompt);
+        result = await vlmManager.processImage(inputPath, `<image>${customPrompt}`);
         break;
         
       default:
@@ -75,9 +66,9 @@ export async function POST(request: NextRequest) {
       success: true,
       analysisType,
       model: {
-        id: vlm.id,
-        name: vlm.name,
-        capabilities: vlm.capabilities
+        id: 'paligemma2',
+        name: 'PaliGemma2 3B Mix 224 ONNX',
+        type: 'PaliGemma2Simple'
       },
       result: {
         ...result,

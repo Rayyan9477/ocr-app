@@ -1,35 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getVLMConfig, updateVLMConfig } from '../../../../lib/vlm/config/vlm-config';
+import VLMModelManager from '../../../../lib/vlm-model-manager.js';
 import logger from '../../../../lib/logger';
 
+// Create VLM manager instance
+const vlmManager = new VLMModelManager();
+
 /**
- * GET /api/vlm/config - Get current VLM configuration
+ * GET /api/vlm/config - Get current VLM configuration (PaliGemma2 only)
  */
 export async function GET() {
   try {
-    const config = getVLMConfig();
+    const status = vlmManager.getModelStatus();
     
-    // Remove sensitive information like API keys
-    const safeConfig = {
-      ...config,
-      // Don't expose API keys or sensitive data
-      modelConfigs: Object.keys(config.modelConfigs).reduce((acc, key) => {
-        const modelConfig = config.modelConfigs[key];
-        acc[key] = {
-          ...modelConfig,
-          options: modelConfig.options ? {
-            ...modelConfig.options,
-            // Remove sensitive fields
-            apiKey: modelConfig.options.apiKey ? '[REDACTED]' : undefined
-          } : undefined
-        };
-        return acc;
-      }, {} as any)
+    const config = {
+      enabled: true,
+      primaryModel: 'NSTiwari/paligemma2-3b-mix-224-onnx',
+      deploymentStrategy: 'local',
+      healthCheckIntervalMs: 60000,
+      globalOptions: {
+        resolution: {
+          width: 224,
+          height: 224
+        },
+        timeoutMs: 30000,
+        maxRetries: 3
+      },
+      modelConfigs: {
+        paligemma2: {
+          id: 'NSTiwari/paligemma2-3b-mix-224-onnx',
+          type: 'PaliGemma2Simple',
+          description: 'PaliGemma2 3B vision-language model for OCR and document understanding (ONNX optimized)',
+          loaded: status.paligemma2?.loaded || false,
+          health: status.paligemma2?.health || 'unknown'
+        }
+      }
     };
     
-    return NextResponse.json({
-      success: true,
-      config: safeConfig
+    return NextResponse.json({      success: true,
+      config,
+      note: 'This is a simplified PaliGemma2-only configuration'
     });
   } catch (error) {
     logger.error(`Failed to get VLM config: ${error}`);
@@ -45,46 +54,21 @@ export async function GET() {
 }
 
 /**
- * POST /api/vlm/config - Update VLM configuration
+ * POST /api/vlm/config - Update VLM configuration (limited for PaliGemma2-only system)
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    // Validate configuration update
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Invalid configuration data' 
-        }, 
-        { status: 400 }
-      );
-    }
+    logger.info('VLM config update requested - PaliGemma2 system has limited configuration options');
     
-    // Update configuration
-    const updatedConfig = updateVLMConfig(body);
-    
-    // Return updated configuration (without sensitive data)
-    const safeConfig = {
-      ...updatedConfig,
-      modelConfigs: Object.keys(updatedConfig.modelConfigs).reduce((acc, key) => {
-        const modelConfig = updatedConfig.modelConfigs[key];
-        acc[key] = {
-          ...modelConfig,
-          options: modelConfig.options ? {
-            ...modelConfig.options,
-            apiKey: modelConfig.options.apiKey ? '[REDACTED]' : undefined
-          } : undefined
-        };
-        return acc;
-      }, {} as any)
-    };
+    // For now, just acknowledge the request but don't actually change anything
+    // since our PaliGemma2 system is simplified
     
     return NextResponse.json({
       success: true,
-      message: 'VLM configuration updated successfully',
-      config: safeConfig
+      message: 'Configuration acknowledged (PaliGemma2 system uses fixed configuration)',
+      note: 'PaliGemma2 system uses a simplified, fixed configuration'
     });
   } catch (error) {
     logger.error(`Failed to update VLM config: ${error}`);
@@ -100,17 +84,14 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * PUT /api/vlm/config - Reset VLM configuration to defaults
+ * PUT /api/vlm/config - Reset VLM configuration (no-op for PaliGemma2-only system)
  */
 export async function PUT() {
   try {
-    // Reset to default configuration
-    const defaultConfig = updateVLMConfig({});
-    
     return NextResponse.json({
       success: true,
-      message: 'VLM configuration reset to defaults',
-      config: defaultConfig
+      message: 'Configuration reset acknowledged (PaliGemma2 system uses fixed configuration)',
+      note: 'PaliGemma2 system uses a simplified, fixed configuration'
     });
   } catch (error) {
     logger.error(`Failed to reset VLM config: ${error}`);

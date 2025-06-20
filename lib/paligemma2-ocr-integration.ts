@@ -32,14 +32,19 @@ export enum Paligemma2IntegrationMode {
   DIRECT = 'direct',
   
   /**
+   * Uses VLM to assist other OCR engines
+   */
+  ASSIST = 'assist',
+  
+  /**
    * Uses VLM for post-processing and enhancement only
    */
   ENHANCE = 'enhance',
   
   /**
-   * Uses VLM for hybrid processing combining direct OCR and enhancement
+   * Dynamically chooses the best approach for processing
    */
-  HYBRID = 'hybrid'
+  ADAPTIVE = 'adaptive'
 }
 
 /**
@@ -518,6 +523,169 @@ export class Paligemma2OCRIntegration implements OCREngine {
     this.model = null;
     this.processor = null;
     this.initialized = false;
+  }
+  
+  /**
+   * Process image with specified options
+   * 
+   * @param params Processing parameters
+   * @returns Processing result
+   */
+  async process(params: ProcessOptions): Promise<TextExtractionResponse> {
+    const { imagePath, options = {} } = params;
+    const mode = options.mode || this.mode;
+
+    try {
+      switch (mode) {
+        case Paligemma2IntegrationMode.DIRECT:
+          return await this.processDirectMode(imagePath, options);
+          
+        case Paligemma2IntegrationMode.ASSIST:
+          return await this.processAssistMode(imagePath, options);
+          
+        case Paligemma2IntegrationMode.ENHANCE:
+          return await this.processEnhanceMode(imagePath, options);
+          
+        case Paligemma2IntegrationMode.ADAPTIVE:
+          return await this.processAdaptiveMode(imagePath, options);
+          
+        default:
+          throw new Error(`Unsupported mode: ${mode}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error processing in ${mode} mode:`, error);
+      throw new VLMError('ProcessingError', `Failed to process image in ${mode} mode`, error);
+    }
+  }
+
+  private async processDirectMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+    this.logger.info('Processing in DIRECT mode');
+    const preprocessed = await this.preprocessImage(imagePath, options.documentType);
+    const result = await this.processImage(preprocessed, this.getDirectModePrompt(options));
+    return {
+      text: result.text,
+      confidence: result.metadata?.confidence || 0.8,
+      processingTime: result.processingTime,
+      metadata: result.metadata
+    };
+  }
+
+  private async processAssistMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+    this.logger.info('Processing in ASSIST mode');
+    // Analyze document to guide OCR engine selection
+    const analysis = await this.analyzeDocument(imagePath);
+    
+    // Generate preprocessing recommendations
+    const enhancedImage = await this.preprocessImage(imagePath, analysis.documentType);
+    
+    return {
+      text: '',  // Will be filled by OCR engine
+      confidence: 0,
+      processingTime: 0,
+      metadata: {
+        analysis,
+        recommendations: {
+          preprocessing: analysis.recommendations,
+          engineSelection: this.getEngineRecommendations(analysis)
+        }
+      }
+    };
+  }
+
+  private async processEnhanceMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+    this.logger.info('Processing in ENHANCE mode');
+    const { originalText } = options;
+    
+    if (!originalText) {
+      throw new VLMError('ValidationError', 'Original text is required for ENHANCE mode');
+    }
+
+    const result = await this.processImage(
+      imagePath,
+      this.getEnhancementPrompt(originalText, options)
+    );
+
+    return {
+      text: result.text,
+      confidence: result.metadata?.confidence || 0.8,
+      processingTime: result.processingTime,
+      metadata: {
+        enhancement: {
+          originalText,
+          changes: this.detectTextChanges(originalText, result.text)
+        }
+      }
+    };
+  }
+
+  private async processAdaptiveMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+    this.logger.info('Processing in ADAPTIVE mode');
+    
+    // First analyze the document
+    const analysis = await this.analyzeDocument(imagePath);
+    
+    // Choose the best mode based on analysis
+    const bestMode = this.determineBestMode(analysis);
+    this.logger.info(`Adaptive mode selected: ${bestMode}`);
+    
+    // Process with the selected mode
+    return await this.process({
+      imagePath,
+      options: { ...options, mode: bestMode }
+    });
+  }
+
+  private determineBestMode(analysis: DocumentAnalysis): Paligemma2IntegrationMode {
+    if (analysis.confidence.overall < 0.5) {
+      return Paligemma2IntegrationMode.ENHANCE;
+    }
+    
+    if (analysis.hasHandwriting || analysis.complexLayout) {
+      return Paligemma2IntegrationMode.DIRECT;
+    }
+    
+    return Paligemma2IntegrationMode.ASSIST;
+  }
+
+  private getEngineRecommendations(analysis: DocumentAnalysis): any {
+    return {
+      primaryEngine: this.selectPrimaryEngine(analysis),
+      fallbackEngine: this.selectFallbackEngine(analysis),
+      confidence: analysis.confidence.overall
+    };
+  }
+
+  private selectPrimaryEngine(analysis: DocumentAnalysis): string {
+    if (analysis.hasHandwriting && analysis.confidence.handwriting > 0.7) {
+      return 'paligemma2';
+    }
+    return 'tesseract';
+  }
+
+  private selectFallbackEngine(analysis: DocumentAnalysis): string {
+    return this.selectPrimaryEngine(analysis) === 'paligemma2' ? 'tesseract' : 'paligemma2';
+  }
+
+  private detectTextChanges(original: string, enhanced: string): any {
+    return {
+      charactersChanged: this.countDifferentCharacters(original, enhanced),
+      confidenceImprovement: this.calculateConfidenceImprovement(original, enhanced)
+    };
+  }
+
+  // Helper methods for text comparison and confidence calculation
+  private countDifferentCharacters(str1: string, str2: string): number {
+    let diff = 0;
+    const len = Math.max(str1.length, str2.length);
+    for (let i = 0; i < len; i++) {
+      if (str1[i] !== str2[i]) diff++;
+    }
+    return diff;
+  }
+
+  private calculateConfidenceImprovement(original: string, enhanced: string): number {
+    const diff = this.countDifferentCharacters(original, enhanced);
+    return Math.max(0, 1 - (diff / Math.max(original.length, enhanced.length)));
   }
 }
 

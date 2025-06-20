@@ -1,53 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { vlmManager } from '../../../../lib/vlm/core/vlm-manager';
-import { vlmRegistry } from '../../../../lib/vlm/core/vlm-registry';
-import { VLMCapability } from '../../../../lib/vlm/core/vlm-capabilities';
+import { VLMModelManager } from '@/lib/vlm-model-manager';
 import logger from '../../../../lib/logger';
 
-// Ensure VLM models are registered
-import '../../../../lib/vlm-bootstrap';
+// Create VLM manager instance
+const vlmManager = new VLMModelManager();
 
 /**
- * GET /api/vlm/models - Get available VLM models and their capabilities
+ * GET /api/vlm/models - Get available VLM models (PaliGemma2 only)
  */
 export async function GET() {
   try {
-    // Get all registered VLM implementations
-    const implementations = vlmRegistry.getAllImplementations();
+    // Get PaliGemma2 model status
+    const status = vlmManager.getModelStatus();
     
-    const models = implementations.map(entry => ({
-      id: entry.id,
-      name: entry.name,
-      deploymentStrategies: entry.deploymentStrategies,
-      capabilities: entry.capabilities,
-      sizeInMB: entry.sizeInMB,
-      isDefault: entry.isDefault,
-      metadata: entry.metadata || {}
+    const models = Object.entries(status).map(([key, info]) => ({
+      id: key,
+      name: 'PaliGemma2 3B Mix 224 ONNX',
+      deploymentStrategies: ['local'],
+      capabilities: [
+        'text_extraction',
+        'document_analysis', 
+        'structured_data_extraction',
+        'image_captioning',
+        'question_answering',
+        'object_detection'
+      ],
+      sizeInMB: 2800, // Approximate size
+      isDefault: true,
+      loaded: info.loaded,
+      health: info.health,
+      metadata: {
+        type: 'vision-language-model',
+        framework: 'paligemma2',
+        optimization: 'onnx',
+        description: info.config.description
+      }
     }));
     
-    // Get capability descriptions
+    // Capability descriptions for PaliGemma2
     const capabilityDescriptions: Record<string, string> = {
-      [VLMCapability.DOCUMENT_TYPE_DETECTION]: 'Detect document type (invoice, receipt, form, etc.)',
-      [VLMCapability.LAYOUT_ANALYSIS]: 'Analyze document layout and structure',
-      [VLMCapability.QUALITY_ASSESSMENT]: 'Assess image quality and readability',
-      [VLMCapability.HANDWRITING_DETECTION]: 'Detect presence of handwritten content',
-      [VLMCapability.TABLE_DETECTION]: 'Detect tables and tabular data',
-      [VLMCapability.TEXT_EXTRACTION]: 'Extract text with VLM capabilities',
-      [VLMCapability.HANDWRITING_RECOGNITION]: 'Recognize handwritten text',
-      [VLMCapability.LOW_QUALITY_TEXT_RECOGNITION]: 'Handle poor quality text',
-      [VLMCapability.TABLE_EXTRACTION]: 'Extract structured table data',
-      [VLMCapability.FORM_EXTRACTION]: 'Extract form fields and values',
-      [VLMCapability.KEY_VALUE_EXTRACTION]: 'Extract key-value pairs',
-      [VLMCapability.TEXT_CORRECTION]: 'Correct OCR errors and inconsistencies',
-      [VLMCapability.SEMANTIC_VALIDATION]: 'Validate text for semantic consistency',
-      [VLMCapability.CONFIDENCE_SCORING]: 'Provide detailed confidence assessments'
+      'text_extraction': 'Extract text with advanced vision-language understanding',
+      'document_analysis': 'Analyze document content and structure',
+      'structured_data_extraction': 'Extract structured data from documents',
+      'image_captioning': 'Generate detailed image descriptions',
+      'question_answering': 'Answer questions about image content',
+      'object_detection': 'Detect and identify objects in images'
     };
     
     return NextResponse.json({
       success: true,
       models,
       capabilities: capabilityDescriptions,
-      totalModels: models.length
+      totalModels: models.length,
+      note: 'Only PaliGemma2 model is supported in this configuration'
     });
   } catch (error) {
     logger.error(`Failed to get VLM models: ${error}`);

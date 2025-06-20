@@ -154,62 +154,83 @@ export class PaliGemma2Client {
   /**
    * Process an image with the model
    */
-  async process(imagePath: string, prompt: string, options: any = {}): Promise<any> {
-    if (!this.initialized || !this.client) {
-      throw new VlmError(
-        VlmErrorType.MODEL_NOT_INITIALIZED,
-        'PaliGemma2 client is not initialized',
-        undefined,
-        true,
-        ['Initialize the client first']
-      );
-    }
-    
+  async process(imagePath: string, prompt: string, options: any = {}) {
     try {
-      // Check if image exists
-      try {
-        if (fs) {
-          fs.accessSync(imagePath);
+        // Ensure client is initialized
+        if (!this.initialized) {
+            await this.initialize();
         }
-      } catch (error) {
-        throw new VlmError(
-          VlmErrorType.FILE_NOT_FOUND,
-          `Image file not found: ${imagePath}`,
-          { path: imagePath },
-          false
-        );
-      }
-      
-      // Read image
-      const imageBuffer = fs ? fs.readFileSync(imagePath) : Buffer.from([]);
-      
-      // Format prompt using template
-      const formattedPrompt = this.formatPrompt(prompt);
-      
-      // Process with client
-      const result = await this.client.process(imageBuffer, formattedPrompt, {
-        maxLength: options.maxLength || this.options.maxLength,
-        temperature: options.temperature || this.options.temperature,
-        topK: options.topK || this.options.topK,
-        repetitionPenalty: options.repetitionPenalty || this.options.repetitionPenalty,
-        numBeams: options.numBeams || this.options.numBeams,
-        timeoutMs: options.timeoutMs || this.options.timeoutMs
-      });
-      
-      return result;
+
+        // Load and preprocess image
+        const imageBuffer = await fs.promises.readFile(imagePath);
+        
+        const defaultOptions = {
+            maxLength: this.options.maxLength,
+            temperature: this.options.temperature,
+            topK: this.options.topK,
+            repetitionPenalty: this.options.repetitionPenalty
+        };
+        
+        const processOptions = { ...defaultOptions, ...options };
+        
+        // Process based on task
+        switch (options.task) {
+            case 'document_analysis':
+                return this.analyzeDocument(imageBuffer, options);
+                
+            case 'text_extraction':
+                return this.extractText(imageBuffer, options);
+                
+            case 'text_enhancement':
+                return this.enhanceText(imageBuffer, options.originalText, options);
+                
+            default:
+                throw new Error(`Unsupported task: ${options.task}`);
+        }
     } catch (error) {
-      if (error instanceof VlmError) {
+        logger.error('Error in PaliGemma2 processing:', error);
         throw error;
-      }
-      
-      throw new VlmError(
-        VlmErrorType.PROCESSING_FAILED,
-        `Failed to process image with PaliGemma2: ${error instanceof Error ? error.message : String(error)}`,
-        { originalError: error },
-        false
-      );
     }
-  }
+}
+
+private async analyzeDocument(imageBuffer: Buffer, options: any) {
+    const documentAnalysisPrompt = await this.buildDocumentAnalysisPrompt(options);
+    return await this.client.process(imageBuffer, documentAnalysisPrompt, options);
+}
+
+private async extractText(imageBuffer: Buffer, options: any) {
+    const textExtractionPrompt = await this.buildTextExtractionPrompt(options);
+    return await this.client.process(imageBuffer, textExtractionPrompt, options);
+}
+
+private async enhanceText(imageBuffer: Buffer, originalText: string, options: any) {
+    const textEnhancementPrompt = await this.buildTextEnhancementPrompt(originalText, options);
+    return await this.client.process(imageBuffer, textEnhancementPrompt, options);
+}
+
+private async buildDocumentAnalysisPrompt(options: any) {
+    // Use predefined prompt from paligemma2-prompts.ts
+    let prompt = documentAnalysisPrompt.template;
+    if (options.documentType) {
+        prompt = prompt.replace('{taskDescription}', 
+            `Focus on analyzing this document which appears to be a ${options.documentType}.`);
+    }
+    return prompt;
+}
+
+private async buildTextExtractionPrompt(options: any) {
+    // Use predefined prompt from paligemma2-prompts.ts
+    let prompt = textExtractionPrompt.template;
+    if (options.quality?.overall < 0.5) {
+        prompt = prompt.replace('{taskDescription}', 
+            'This is a low-quality document. Please make extra effort to accurately extract text.');
+    }
+    return prompt;
+}
+
+private async buildTextEnhancementPrompt(originalText: string, options: any) {
+    return `Review and enhance the following OCR text, correcting any errors while maintaining the original meaning and format:\n\n${originalText}`;
+}
   
   /**
    * Dispose of resources

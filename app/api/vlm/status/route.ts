@@ -1,33 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { vlmHealthMonitor } from '../../../../lib/vlm/core/vlm-health-monitor';
-import { vlmManager } from '../../../../lib/vlm/core/vlm-manager';
+import VLMModelManager from '../../../../lib/vlm-model-manager.js';
 import logger from '../../../../lib/logger';
 
+// Create VLM manager instance
+const vlmManager = new VLMModelManager();
+
 /**
- * GET /api/vlm/status - Get VLM system status
+ * GET /api/vlm/status - Get VLM system status (PaliGemma2 only)
  */
 export async function GET() {
   try {
-    // Get overall health status
-    const isHealthy = vlmHealthMonitor.isHealthy;
+    // Get PaliGemma2 model status
+    const status = vlmManager.getModelStatus();
     
-    // Get health status for all models
-    const allStatuses = vlmHealthMonitor.getAllHealthStatuses();
-    
-    // Convert Map to object for JSON serialization
     const modelStatuses: Record<string, any> = {};
-    for (const [key, status] of allStatuses.entries()) {
+    
+    for (const [key, info] of Object.entries(status)) {
       modelStatuses[key] = {
-        modelId: status.modelId,
-        deploymentStrategy: status.deploymentStrategy,
-        isHealthy: status.isHealthy,
-        lastCheckTime: status.lastCheckTime.toISOString(),
-        memoryUsageMB: status.memoryUsageMB,
-        avgResponseTimeMs: status.avgResponseTimeMs,
-        uptimeSeconds: status.uptimeSeconds,
-        errorMessage: status.lastError?.message
+        modelId: info.config.id,
+        type: info.config.type,
+        description: info.config.description,
+        loaded: info.loaded,
+        health: info.health,
+        hasProcessor: info.hasProcessor || false,
+        hasModel: info.hasModel || false,
+        lastCheckTime: new Date().toISOString()
       };
     }
+    
+    const healthyModels = Object.values(status).filter(s => s.health === 'healthy').length;
+    const isHealthy = healthyModels > 0;
     
     return NextResponse.json({
       success: true,
@@ -35,8 +37,9 @@ export async function GET() {
         overall: {
           isHealthy,
           timestamp: new Date().toISOString(),
-          totalModels: allStatuses.size,
-          healthyModels: Array.from(allStatuses.values()).filter(s => s.isHealthy).length
+          totalModels: Object.keys(status).length,
+          healthyModels,
+          modelType: 'PaliGemma2 Only'
         },
         models: modelStatuses
       }

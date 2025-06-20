@@ -1,7 +1,7 @@
 /**
  * VLM Configuration
  * 
- * Main configuration interface for VLM settings
+ * Main configuration interface for VLM settings using PaliGemma2 only
  */
 
 import { VLMCapability } from '../core/vlm-capabilities';
@@ -16,9 +16,9 @@ export interface VLMConfig {
   enabled: boolean;
   
   /**
-   * Primary model to use - Microsoft's TrOCR for enhanced OCR
+   * Primary model to use - PaliGemma2 for enhanced OCR and vision-language tasks
    */
-  primaryModel: 'microsoft/trocr-base-handwritten';
+  primaryModel: 'NSTiwari/paligemma2-3b-mix-224-onnx';
   
   /**
    * Deployment strategy set to local for better performance
@@ -31,7 +31,7 @@ export interface VLMConfig {
   healthCheckIntervalMs: number;
   
   /**
-   * Global options for Paligemma model
+   * Global options for PaliGemma2 model
    */
   globalOptions: {
     /**
