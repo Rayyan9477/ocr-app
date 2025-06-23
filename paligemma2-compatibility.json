@@ -1,0 +1,8 @@
+{
+  "version": "3.5.2",
+  "processorCompatible": true,
+  "modelCompatible": false,
+  "modelType": "paligemma",
+  "message": "Transformers.js does not support PaliGemma2 model type",
+  "processorOnlyMode": true
+}

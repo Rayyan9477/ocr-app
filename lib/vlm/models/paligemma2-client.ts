@@ -18,9 +18,13 @@ let pathModule: any = null;
 
 // This will only be executed on the server side
 if (typeof window === 'undefined') {
-  // Import fs synchronously for immediate use
-  fs = require('fs');
-  pathModule = require('path');
+  try {
+    // Import fs and path synchronously for immediate use
+    fs = require('fs');
+    pathModule = require('path');
+  } catch (error) {
+    console.error('Failed to load fs and path modules:', error);
+  }
 }
 
 /**

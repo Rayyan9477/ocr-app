@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import logger from './logger';
+import { compatibilityMonitor } from './paligemma2-compatibility-monitor';
 
 export interface VLMOptions {
   modelPath?: string;
@@ -47,6 +48,7 @@ export class Paligemma2VLService {
   private client: PaliGemma2Client | null = null;
   private initialized: boolean = false;
   private options: VLMOptions;
+  private processorOnlyMode: boolean = true;
 
   constructor(options: VLMOptions = {}) {
     this.options = {
@@ -57,6 +59,10 @@ export class Paligemma2VLService {
       preserveLayout: options.preserveLayout ?? true,
       enableStructuredDataExtraction: options.enableStructuredDataExtraction ?? true,
     };
+    
+    // Get initial compatibility status
+    const compatStatus = compatibilityMonitor.getStatus();
+    this.processorOnlyMode = compatStatus.processorOnlyMode;
   }
 
   /**
@@ -69,6 +75,15 @@ export class Paligemma2VLService {
 
     try {
       logger.info('Initializing Paligemma2 VLM Service...');
+      
+      // Check compatibility with transformers.js
+      const compatStatus = await compatibilityMonitor.checkCompatibility();
+      this.processorOnlyMode = compatStatus.processorOnlyMode;
+      
+      if (this.processorOnlyMode) {
+        logger.warn(`Running in processor-only mode due to transformers.js compatibility issue.`);
+        logger.info(`Upgrade instructions: ${compatStatus.upgradeInstructions}`);
+      }
       
       // Create model directory if it doesn't exist
       if (!fs.existsSync(this.options.modelPath)) {
@@ -96,6 +111,19 @@ export class Paligemma2VLService {
       logger.error(`Failed to initialize Paligemma2 VLM Service: ${error}`);
       throw new Error(`Failed to initialize Paligemma2 VLM Service: ${error}`);
     }
+  }
+  
+  /**
+   * Get the current status of the service
+   */
+  getStatus() {
+    return {
+      initialized: this.initialized,
+      processorOnly: this.processorOnlyMode,
+      documentType: this.options.documentType,
+      modelPath: this.options.modelPath,
+      compatibilityStatus: compatibilityMonitor.getStatus()
+    };
   }
 
   /**

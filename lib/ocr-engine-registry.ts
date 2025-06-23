@@ -1,5 +1,5 @@
 import { EnhancedTesseractEngine } from './enhanced-tesseract-engine';
-import { paligemma2Integration } from './paligemma2-ocr-integration';
+import { Paligemma2OCRIntegration } from './paligemma2-ocr-integration';
 import logger from './logger';
 
 /**
@@ -33,7 +33,7 @@ export class OCREngineRegistry {
     // Register Paligemma2 Integration
     this.registerEngine('paligemma2', {
       name: 'paligemma2',
-      create: () => paligemma2Integration
+      create: () => new Paligemma2OCRIntegration({ mode: 'adaptive' })
     });
 
     logger.info('Default OCR engines registered');
