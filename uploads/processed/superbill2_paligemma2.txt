@@ -1,0 +1,1 @@
+This document contains structured content that has been analyzed by the processor. Due to limitations with the current transformers.js library, the full model cannot be loaded to extract the text. For detailed extraction, please try another OCR engine.

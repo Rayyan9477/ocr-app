@@ -4,10 +4,24 @@ A powerful Next.js application that provides state-of-the-art Optical Character 
 
 ![OCR Application Banner](https://via.placeholder.com/1200x300/4F46E5/FFFFFF?text=Advanced+OCR+with+VLM)
 
+## 🚨 Base OCR Mode
+
+This application now includes a "Base OCR Only" mode that bypasses all PaliGemma2 VLM dependencies. If you're experiencing issues with PaliGemma2 model loading or compatibility, you can use this mode to ensure reliable OCR functionality with the base engines.
+
+To start in Base OCR Only mode:
+```bash
+./start-base-ocr-only.sh
+```
+
+To test the Base OCR functionality:
+```bash
+./test-smart-ocr-no-paligemma2.sh
+```
+
 ## 🌟 Key Features
 
 - **Advanced OCR Processing**: Optimized Tesseract.js with EnhancedTesseractEngine for various document types
-- **Vision Language Model Integration**: Paligemma2 for intelligent document analysis and understanding
+- **Vision Language Model Integration**: Paligemma2 for intelligent document analysis and understanding (optional)
 - **Enhanced Accuracy**: 
   - +35-45% for highlighted text recognition
   - +30-40% for handwritten content
@@ -348,4 +362,4 @@ For detailed documentation on specific features:
 - Next.js: https://nextjs.org/
 - Tailwind CSS: https://tailwindcss.com/
 - HuggingFace: https://huggingface.co/
-- PaliGemma2: https://huggingface.co/google/paligemma2-3b-mix-224
+- PaliGemma2: https://huggingface.co/google/paligemma2-3b-pt-224

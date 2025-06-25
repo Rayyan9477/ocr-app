@@ -3,19 +3,9 @@ import { readdir, readFile } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
 import { loadConfidenceData, type DocumentConfidence } from "@/lib/confidence-detector"
+import { createJsonResponse } from "@/lib/utils"
 
-// Helper function to create consistent JSON responses
-const createJsonResponse = (data: any, status: number = 200) => {
-  return new NextResponse(
-    JSON.stringify(data),
-    {
-      status,
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    }
-  );
-};
+// Removed the duplicated createJsonResponse function
 
 export const GET = async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
@@ -170,6 +160,16 @@ export const DELETE = async (request: NextRequest) => {
 };
 
 // Support OPTIONS for CORS requests
+export const OPTIONS = async () => {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Allow': 'GET, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    }
+  });
+};
 export const OPTIONS = async () => {
   return new NextResponse(null, {
     status: 200,

@@ -4,7 +4,7 @@
  * This module checks for compatibility updates and notifies when a compatible version is available.
  */
 
-import { compatibilityMonitor } from './paligemma2-compatibility-monitor';
+import { compatibilityMonitor } from './paligemma2-compatibility-monitor.js';
 import logger from './logger';
 import fs from 'fs';
 import path from 'path';

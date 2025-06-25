@@ -18,7 +18,7 @@ export interface VLMConfig {
   /**
    * Primary model to use - PaliGemma2 for enhanced OCR and vision-language tasks
    */
-  primaryModel: 'NSTiwari/paligemma2-3b-mix-224-onnx';
+  primaryModel: 'google/paligemma2-3b-pt-224';
   
   /**
    * Deployment strategy set to local for better performance
@@ -82,7 +82,7 @@ export interface VLMConfig {
    * Model-specific configurations for Paligemma
    */
   modelConfigs: {
-    'paligemma2-3b-mix-224': {
+    'google/paligemma2-3b-pt-224': {
       options: {
         modelPath: string;
         quantized: boolean;
@@ -103,7 +103,7 @@ export interface VLMConfig {
  */
 export const defaultVLMConfig: VLMConfig = {
   enabled: true,
-  primaryModel: 'paligemma2-3b-mix-224',
+  primaryModel: 'google/paligemma2-3b-pt-224',
   deploymentStrategy: 'local',
   healthCheckIntervalMs: 60000,
   globalOptions: {
@@ -120,7 +120,7 @@ export const defaultVLMConfig: VLMConfig = {
     logPerformance: true
   },
   modelConfigs: {
-    'paligemma2-3b-mix-224': {
+    'google/paligemma2-3b-pt-224': {
       preload: true,
       priority: 1,
       options: {

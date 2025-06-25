@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import logger from './logger';
-import { compatibilityMonitor } from './paligemma2-compatibility-monitor';
+import { compatibilityMonitor } from './paligemma2-compatibility-monitor.js';
 
 export interface VLMOptions {
   modelPath?: string;
@@ -92,7 +92,7 @@ export class Paligemma2VLService {
 
       // Initialize Paligemma2 client
       const clientOptions: PaliGemma2ClientOptions = {
-        modelId: 'google/paligemma2-3b-mix-224',
+        modelId: 'google/paligemma2-3b-pt-224',
         deploymentStrategy: 'local',
         maxLength: 2048,
         temperature: 0.2,
@@ -160,7 +160,7 @@ export class Paligemma2VLService {
         confidence: 0.9, // Paligemma2 doesn't provide confidence, using high default
         processingTime,
         metadata: {
-          model: 'google/paligemma2-3b-mix-224',
+          model: 'google/paligemma2-3b-pt-224',
           documentType: this.options.documentType,
           ...result.metadata
         }

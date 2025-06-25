@@ -485,7 +485,6 @@ export class MultiEngineOCR {
               logger.warn('PaliGemma2 enhancement result seems unreasonable, keeping original OCR result');
             }
           }
-          }
         } catch (error) {
           logger.warn(`VLM enhancement failed: ${error}`);
         }

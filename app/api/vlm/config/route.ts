@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import VLMModelManager from '../../../../lib/vlm-model-manager.js';
-import logger from '../../../../lib/logger';
+import logger from '../../../../lib/logger.mjs';
+
+type ModelStatus = {
+  paligemma2?: {
+    loaded: boolean;
+    health: string;
+  };
+  [key: string]: any; // Allow for other model statuses
+};
 
 // Create VLM manager instance
 const vlmManager = new VLMModelManager();
@@ -10,11 +18,11 @@ const vlmManager = new VLMModelManager();
  */
 export async function GET() {
   try {
-    const status = vlmManager.getModelStatus();
+    const status: ModelStatus = vlmManager.getModelStatus();
     
     const config = {
       enabled: true,
-      primaryModel: 'NSTiwari/paligemma2-3b-mix-224-onnx',
+      primaryModel: 'google/paligemma2-3b-pt-224',
       deploymentStrategy: 'local',
       healthCheckIntervalMs: 60000,
       globalOptions: {
@@ -27,7 +35,7 @@ export async function GET() {
       },
       modelConfigs: {
         paligemma2: {
-          id: 'NSTiwari/paligemma2-3b-mix-224-onnx',
+          id: 'google/paligemma2-3b-pt-224',
           type: 'PaliGemma2Simple',
           description: 'PaliGemma2 3B vision-language model for OCR and document understanding (ONNX optimized)',
           loaded: status.paligemma2?.loaded || false,

@@ -1,3 +1,5 @@
+import path from 'path';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
@@ -7,6 +9,7 @@ const nextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       '@/lib': path.join(__dirname, 'lib'),
+      '@/components': path.join(__dirname, 'components'),
     };
     return config;
   },

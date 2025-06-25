@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
+import ClientWrapper from "@/components/ClientWrapper"
 import Image from "next/image"
 import Link from "next/link"
 import { Terminal } from "@/components/ui/terminal"
@@ -23,7 +24,7 @@ import { cn } from "@/lib/utils"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
 
-export default function Home() {
+function Home() {
   const [files, setFiles] = useState<File[]>([])
   const [output, setOutput] = useState<string>("")
   const [isProcessing, setIsProcessing] = useState(false)
@@ -1073,4 +1074,12 @@ export default function Home() {
       </div>
     </main>
   )
+}
+
+export default function WrappedHome() {
+  return (
+    <ClientWrapper>
+      <Home />
+    </ClientWrapper>
+  );
 }

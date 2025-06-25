@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import VLMModelManager from '../../../../lib/vlm-model-manager.js';
-import logger from '../../../../lib/logger';
+import logger from '../../../../lib/logger.mjs';
 
 const vlmManager = new VLMModelManager({
-    modelId: 'NSTiwari/paligemma2-3b-mix-224-onnx',
+    modelId: 'google/paligemma2-3b-pt-224',
     useLocalFiles: true,
     modelPaths: [
         path.join(process.cwd(), 'models', 'paligemma2', 'google')

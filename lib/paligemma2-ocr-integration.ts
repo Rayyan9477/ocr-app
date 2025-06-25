@@ -8,8 +8,10 @@
 import { AutoModel, AutoProcessor } from '@xenova/transformers';
 import { PromptCategory } from './vlm/models/paligemma2-prompts';
 import { OCRResult, OCREngine } from './multi-engine-ocr';
-import logger from './logger';
+import logger from './logger.mjs';
 import { VLMOptions } from './paligemma2-service';
+import { PaliGemma2Client } from './vlm/models/paligemma2-client';
+// Using local DocumentAnalysis interface to avoid import conflict
 
 // Use dynamic imports for Node.js modules to ensure they're only loaded on the server
 let fsModule: any = null;
@@ -117,12 +119,60 @@ export interface VLMResponse<T = any> {
   processingTimeMs?: number;
 }
 
+interface ProcessOptions {
+  documentType?: string;
+  enhanceResolution?: boolean;
+  preserveLayout?: boolean;
+  mode?: Paligemma2IntegrationMode;
+  isFallback?: boolean;
+  additionalInstructions?: string;
+  [key: string]: any;
+}
+
+interface TextExtractionResponse {
+  text: string;
+  confidence: number;
+  metadata: {
+    processingTime: number;
+    model: string;
+    [key: string]: any;
+  };
+}
+
+interface DocumentAnalysis {
+  isHandwritten: boolean;
+  hasTables: boolean;
+  isPoorQuality: boolean;
+  isComplexLayout: boolean;
+  confidence: number;
+  metadata: {
+    processingTime: number;
+    model: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
 export class Paligemma2OCRIntegration implements OCREngine {
   name = 'paligemma2';
   service: any = this; // Reference to self for compatibility
   available = true;
   specialization: string[] = ['handwritten', 'document', 'general'];
   confidence = true; // Indicates this engine provides confidence scores
+  
+  private initialized = false;
+  public mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.ADAPTIVE;
+  private adapter: PaliGemma2Client | null = null;
+  private model: any = null;
+  private processor: any = null;
+  private analysis: any; // Will be properly typed later
+  private logger = logger; // Simple console logger
+  
+  constructor(options: { mode?: Paligemma2IntegrationMode } = {}) {
+    if (options.mode) {
+      this.mode = options.mode;
+    }
+  }
   
   // Required by OCREngine interface
   preprocessor = async (inputPath: string, documentType?: string): Promise<string> => {
@@ -131,92 +181,273 @@ export class Paligemma2OCRIntegration implements OCREngine {
   };
   
   // Add process method required by OCREngine
-  process = async (inputPath: string, options: any = {}): Promise<OCRResult> => {
-    const prompt = 'Extract all text from this document with high accuracy. ' +
-                 'Preserve formatting, line breaks, and document structure. ' +
-                 'Include all visible text including headers, footers, and page numbers.';
-    
-    const result = await this.processImage(inputPath, prompt);
-    
-    return {
-      text: result.text,
-      confidence: 0.9, // Default confidence since Paligemma2 doesn't provide this
-      engine: this.name,
-      processingTime: result.processingTime,
-      metadata: {
-        ...result.metadata,
-        engine: this.name
-      }
-    };
-  };
-  private model: any = null;
-  private processor: any = null;
-  private initialized: boolean = false;
-  private mode: Paligemma2IntegrationMode = Paligemma2IntegrationMode.DIRECT;
+  // Image processing methods
+  private async loadImage(imagePath: string): Promise<{ path: string }> {
+    // Implementation depends on your image loading library
+    // This is a placeholder - replace with actual implementation
+    return { path: imagePath };
+  }
   
-  // Add missing methods required by OCREngine interface
-  private preprocessImage = async (inputPath: string, documentType?: string): Promise<string> => {
-    // Simple preprocessing - just return the input path for now
-    // In a real implementation, you might want to enhance the image here
+  private async preprocessImage(inputPath: string, documentType?: string): Promise<string> {
+    // Simple implementation - just return the input path for now
+    // In a real implementation, you might want to do actual image preprocessing
     return inputPath;
-  };
+  }
   
-  private processPage = async (page: { path: string; metadata: any }): Promise<any> => {
+  private async processImage(imagePath: string, prompt: string, options: ProcessOptions = {}): Promise<TextExtractionResponse> {
     try {
       if (!this.initialized) {
         await this.initialize();
       }
-      
-      // Process the page using the adapter
-      const result = await this.processImage(page.path, 'Extract all text from this document page.');
-      
-      return {
-        ...page,
-        metadata: {
-          ...page.metadata,
-          ...result.metadata,
-          processingTime: result.processingTime
-        },
-        text: result.text
-      };
-    } catch (error) {
-      logger.error(`Error processing page ${page.path}: ${error}`);
-      throw error;
-    }
-  };
-  
-  private processImage = async (imagePath: string, prompt: string): Promise<{ text: string; processingTime: number; metadata: any }> => {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-    
-    const startTime = Date.now();
-    try {
-      // Load and process image
+      if (!this.model || !this.processor) {
+        throw new Error('Model or processor not initialized');
+      }
+      const startTime = Date.now();
       const image = await this.loadImage(imagePath);
-      const inputs = await this.processor(image);
-      const outputs = await this.model.generate(inputs);
-
+      const inputs = await this.processor(image, prompt);
+      const { output } = await this.model.generate(inputs);
+      const text = this.processor.decode(output[0], { skip_special_tokens: true });
+      
       return {
-        text: outputs.text || '',
-        processingTime: Date.now() - startTime,
+        text,
+        confidence: this.calculateConfidence(text, options),
         metadata: {
-          confidence: outputs.confidence || 0,
-          processedWith: 'Paligemma2',
-          mode: this.mode,
-          timestamp: new Date().toISOString()
+          processingTime: Date.now() - startTime,
+          model: 'paligemma2',
+          ...options
         }
       };
-    } catch (error) {
-      logger.error(`Error processing image: ${error}`);
+    } catch (error: any) {
+      console.error(`Error processing image: ${error}`);
+      throw new Error(`Image processing failed: ${error.message}`);
+    }
+  }
+  
+  private async processPage(page: { path: string; metadata: any }): Promise<{text: string; confidence: number; metadata: any}> {
+    if (!page) {
+      throw new Error('Page object is required');
+    }
+    try {
+      if (!this.initialized) {
+        await this.initialize();
+      }
+      const result = await this.processImage(page.path, 'Extract all text from this document page.');
+      return {
+        text: result.text,
+        confidence: result.confidence,
+        metadata: {
+          ...result.metadata,
+          ...page.metadata,
+          processingTime: result.metadata.processingTime
+        }
+      };
+    } catch (error: any) {
+      console.error(`Error processing page: ${error}`);
+      throw new Error(`Page processing failed: ${error.message}`);
+    }
+  }
+  
+  private calculateConfidence(text: string, metadata: any = {}): number {
+    if (!text || text.trim().length === 0) return 0;
+    
+    let confidence = 0.8;
+    const hasPunctuation = /[.,!?]/.test(text);
+    const hasNumbers = /\d/.test(text);
+    const hasLetters = /[a-zA-Z]/.test(text);
+    const words = text.trim().split(/\s+/);
+    const wordCount = words.length;
+    const avgWordLength = wordCount > 0 
+      ? words.reduce((sum: number, word: string) => sum + word.length, 0) / wordCount 
+      : 0;
+    
+    // Adjust confidence based on text characteristics
+    if (wordCount > 10) confidence += 0.1;
+    if (hasPunctuation) confidence += 0.05;
+    if (hasNumbers && hasLetters) confidence += 0.05;
+    if (avgWordLength > 3 && avgWordLength < 10) confidence += 0.02;
+    
+    // Apply metadata confidence if available
+    if (metadata?.confidence) {
+      confidence = (confidence + Number(metadata.confidence)) / 2;
+    }
+    
+    // Ensure confidence is within bounds
+    return Math.min(Math.max(confidence, 0), 1);
+  }
+  
+  /**
+   * Process an image file and extract text using Paligemma 2
+   * @param inputPath Path to the input image file
+   * @param options Processing options
+   * @returns OCR result with extracted text and metadata
+   */
+  async process(inputPath: string, options: ProcessOptions = {}): Promise<OCRResult> {
+    const {
+      documentType = 'general',
+      enhanceResolution = true,
+      preserveLayout = true,
+      confidenceThreshold = 0.7,
+      mode = this.mode,
+      ...otherOptions
+    } = options;
+
+    try {
+      // Generate context-aware prompt based on document type
+      const prompt = this.generatePrompt(documentType, options);
+      
+      // Process the document
+      const result = await this.processImage(inputPath, prompt, {
+        documentType,
+        enhanceResolution,
+        preserveLayout,
+        ...otherOptions
+      });
+
+      // Post-process the result
+      const processedText = this.postProcessText(result.text, documentType);
+      
+      // Calculate confidence based on result quality
+      const confidence = this.calculateConfidence(processedText, result.metadata);
+      
+      // If confidence is below threshold, try fallback mode
+      if (confidence < confidenceThreshold && mode === Paligemma2IntegrationMode.ADAPTIVE) {
+        this.logger.warn(`Low confidence (${confidence.toFixed(2)}) for ${documentType} document, trying fallback mode`);
+        return this.process(inputPath, {
+          ...options,
+          mode: Paligemma2IntegrationMode.ASSIST,
+          isFallback: true
+        });
+      }
+
+      return {
+        text: processedText,
+        confidence,
+        engine: this.name,
+        processingTime: result.metadata.processingTime,
+        metadata: {
+          ...result.metadata,
+          engine: this.name,
+          documentType,
+          mode,
+          confidence,
+          isFallback: options.isFallback || false
+        }
+      };
+    } catch (error: any) {
+      this.logger.error(`Error in Paligemma2 OCR processing: ${error.message}`);
+      
+      // If not already in fallback mode, try fallback
+      if (options.mode !== Paligemma2IntegrationMode.ASSIST && !options.isFallback) {
+        this.logger.info('Trying fallback mode after error');
+        return this.process(inputPath, {
+          ...options,
+          mode: Paligemma2IntegrationMode.ASSIST,
+          isFallback: true
+        });
+      }
+      
+      // If we're already in fallback mode or it's disabled, rethrow
       throw error;
     }
-  };
-  
-  constructor(options: { mode?: Paligemma2IntegrationMode } = {}) {
-    if (options.mode) {
-      this.mode = options.mode;
+  }
+
+  private generatePrompt(documentType: string = 'document', options: any = {}): string {
+    const docType = documentType.toLowerCase();
+    
+    // Base prompt with document type
+    let prompt = `Extract all text from this ${docType} document with high accuracy. `;
+    
+    // Add document-type specific instructions
+    const typeSpecificPrompts: Record<string, string> = {
+      'handwritten': 'Pay special attention to handwritten text and ensure accurate transcription. ' +
+                   'Be careful with similar-looking characters and maintain the original case. ',
+      'table': 'Extract all tabular data while preserving the table structure. ' +
+              'Maintain row and column alignment. ',
+      'medical': 'Extract all medical terms and values accurately. ' +
+                'Pay attention to units of measurement and maintain precision. ',
+      'form': 'Extract all form fields and their values. ' +
+             'Clearly indicate field labels and corresponding values. ',
+      'receipt': 'Extract all receipt details including vendor, date, items, prices, and totals. ' +
+                'Ensure accurate extraction of numerical values. ',
+      'invoice': 'Extract all invoice details including vendor, customer, dates, line items, ' +
+                'quantities, prices, and totals. Ensure accurate extraction of numerical values. ',
+      'id': 'Extract all text from this ID document accurately. Pay special attention to ' +
+            'names, ID numbers, dates, and other personal information. ',
+      'general': 'Extract all text while preserving the original formatting and structure. ' +
+                'Maintain line breaks and paragraphs as they appear in the document. '
+    };
+    
+    // Add document type specific prompt if available
+    prompt += typeSpecificPrompts[docType] || typeSpecificPrompts.general;
+    
+    // Add layout preservation if needed
+    if (options.preserveLayout) {
+      prompt += 'Preserve the original document layout and structure. ';
     }
+    
+    // Add quality considerations
+    if (options.enhanceResolution) {
+      prompt += 'The document may be of poor quality, so take extra care with character recognition. ';
+    }
+    
+    // Add any custom instructions
+    if (options.additionalInstructions) {
+      prompt += options.additionalInstructions;
+    }
+    
+    return prompt;
+  }
+  
+  /**
+   * Post-process the extracted text based on document type
+   * @param text Extracted text
+   * @param documentType Type of document being processed
+   * @returns Processed text
+   */
+  private postProcessText(text: string, documentType: string = 'general'): string {
+    if (!text) return '';
+    
+    // Common text cleaning
+    let processedText = text
+      .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    
+    // Document type specific processing
+    if (documentType) {
+      const docType = documentType.toLowerCase();
+      
+      switch (docType) {
+        case 'handwritten':
+          // Improve spacing for handwritten text
+          processedText = processedText.replace(/([.,!?])([^\s])/g, '$1 $2');
+          break;
+          
+        case 'table':
+          // Ensure consistent column alignment
+          processedText = processedText.replace(/\s{2,}/g, '\t');
+          break;
+          
+        case 'medical':
+          // Ensure proper spacing around units and numbers
+          processedText = processedText
+            .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+            .replace(/([a-zA-Z])(\d)/g, '$1 $2');
+          break;
+          
+        case 'form':
+        case 'receipt':
+        case 'invoice':
+          // Standardize common patterns
+          processedText = processedText
+            .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2') // Add space between words in camelCase
+            .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space between words in PascalCase
+            .replace(/:\s*/g, ': '); // Add form-specific processing
+          break;
+      }
+    }
+    
+    return processedText;
   }
   
   /**
@@ -233,12 +464,12 @@ export class Paligemma2OCRIntegration implements OCREngine {
 
       // Load model and processor
       [this.model, this.processor] = await Promise.all([
-        AutoModel.from_pretrained('Paligemma/paligemma2-3b-mix-224'),
-        AutoProcessor.from_pretrained('Paligemma/paligemma2-3b-mix-224')
+        AutoModel.from_pretrained('google/paligemma-2b-vit-bf16'),
+        AutoProcessor.from_pretrained('google/paligemma-2b-vit-bf16')
       ]);
 
       this.initialized = true;
-      logger.info('Paligemma 2 model initialized successfully');
+      this.logger.info('Paligemma2 OCR integration initialized');
       return true;
     } catch (error) {
       logger.error(`Failed to initialize Paligemma 2: ${error}`);
@@ -526,154 +757,226 @@ export class Paligemma2OCRIntegration implements OCREngine {
   }
   
   /**
-   * Process image with specified options
+   * Process document with specified options
    * 
-   * @param params Processing parameters
+   * @param inputPath Path to the input document
+   * @param options Processing options
    * @returns Processing result
    */
-  async process(params: ProcessOptions): Promise<TextExtractionResponse> {
-    const { imagePath, options = {} } = params;
-    const mode = options.mode || this.mode;
-
+  async processDocument(inputPath: string, options: ProcessOptions = {}): Promise<OCRResult> {
     try {
-      switch (mode) {
-        case Paligemma2IntegrationMode.DIRECT:
-          return await this.processDirectMode(imagePath, options);
-          
-        case Paligemma2IntegrationMode.ASSIST:
-          return await this.processAssistMode(imagePath, options);
-          
-        case Paligemma2IntegrationMode.ENHANCE:
-          return await this.processEnhanceMode(imagePath, options);
-          
-        case Paligemma2IntegrationMode.ADAPTIVE:
-          return await this.processAdaptiveMode(imagePath, options);
-          
-        default:
-          throw new Error(`Unsupported mode: ${mode}`);
+      if (!this.initialized) {
+        await this.initialize();
       }
-    } catch (error) {
-      this.logger.error(`Error processing in ${mode} mode:`, error);
-      throw new VLMError('ProcessingError', `Failed to process image in ${mode} mode`, error);
+      
+      const startTime = Date.now();
+      const documentType = options.documentType || 'document';
+      const prompt = this.generatePrompt(documentType, options);
+      const result = await this.processImage(inputPath, prompt, options);
+      
+      // Post-process the result
+      const processedText = this.postProcessText(result.text, documentType);
+      
+      return {
+        text: processedText,
+        confidence: result.confidence,
+        engine: this.name,
+        processingTime: Date.now() - startTime,
+        metadata: {
+          ...result.metadata,
+          engine: this.name,
+          documentType,
+          mode: this.mode,
+          isFallback: options.isFallback || false
+        }
+      };
+    } catch (error: any) {
+      this.logger.error(`Error in processDocument: ${error.message}`);
+      throw error;
     }
   }
 
-  private async processDirectMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+  private async analyzeDocument(imagePath: string): Promise<DocumentAnalysis> {
+    try {
+      // This is a simplified implementation - in a real app, you'd analyze the image
+      const analysis: DocumentAnalysis = {
+        isHandwritten: false,
+        hasTables: false,
+        isPoorQuality: false,
+        isComplexLayout: false,
+        confidence: 0.8,
+        metadata: {
+          processingTime: 0,
+          model: 'paligemma2',
+          recommendations: []
+        }
+      };
+
+      // Add some basic analysis based on file name (simplified)
+      if (imagePath.toLowerCase().includes('handwritten')) {
+        analysis.isHandwritten = true;
+        analysis.confidence = 0.6;
+      }
+      
+      if (imagePath.toLowerCase().includes('table')) {
+        analysis.hasTables = true;
+        analysis.isComplexLayout = true;
+      }
+
+      return analysis;
+    } catch (error: any) {
+      this.logger.error(`Error analyzing document: ${error.message}`);
+      // Return a default analysis on error
+      return {
+        isHandwritten: false,
+        hasTables: false,
+        isPoorQuality: false,
+        isComplexLayout: false,
+        confidence: 0.5,
+        metadata: {
+          processingTime: 0,
+          model: 'paligemma2',
+          error: error.message
+        },
+        recommendations: []
+      };
+    }
+  }
+
+  private getDirectModePrompt(options: any = {}): string {
+    const docType = options.documentType || 'document';
+    let prompt = `Extract all text from this ${docType} with high accuracy. `;
+    
+    if (docType === 'handwritten') {
+      prompt += 'The text is handwritten - take extra care with character recognition. ';
+    } else if (docType === 'form') {
+      prompt += 'Extract all fields and their values. ';
+    } else if (docType === 'receipt' || docType === 'invoice') {
+      prompt += 'Extract all items, quantities, prices, and totals. ';
+    }
+    
+    if (options.preserveLayout) {
+      prompt += 'Preserve the original layout and formatting. ';
+    }
+    
+    return prompt;
+  }
+
+  private async processDirectMode(imagePath: string, options: ProcessOptions = {}): Promise<TextExtractionResponse> {
     this.logger.info('Processing in DIRECT mode');
-    const preprocessed = await this.preprocessImage(imagePath, options.documentType);
-    const result = await this.processImage(preprocessed, this.getDirectModePrompt(options));
-    return {
-      text: result.text,
-      confidence: result.metadata?.confidence || 0.8,
-      processingTime: result.processingTime,
-      metadata: result.metadata
-    };
+    try {
+      const prompt = this.getDirectModePrompt(options);
+      const result = await this.processImage(imagePath, prompt, options);
+      
+      // Post-process the result
+      if (result.text) {
+        result.text = this.postProcessText(result.text, options.documentType);
+      }
+      
+      return result;
+    } catch (error: any) {
+      this.logger.error(`Error in processDirectMode: ${error.message}`);
+      throw new Error(`Direct mode processing failed: ${error.message}`);
+    }
   }
 
-  private async processAssistMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+  private async processAssistMode(imagePath: string, options: ProcessOptions = {}): Promise<TextExtractionResponse> {
     this.logger.info('Processing in ASSIST mode');
-    // Analyze document to guide OCR engine selection
-    const analysis = await this.analyzeDocument(imagePath);
-    
-    // Generate preprocessing recommendations
-    const enhancedImage = await this.preprocessImage(imagePath, analysis.documentType);
-    
-    return {
-      text: '',  // Will be filled by OCR engine
-      confidence: 0,
-      processingTime: 0,
-      metadata: {
-        analysis,
-        recommendations: {
-          preprocessing: analysis.recommendations,
-          engineSelection: this.getEngineRecommendations(analysis)
-        }
+    try {
+      // First try direct mode
+      const directResult = await this.processDirectMode(imagePath, options);
+      
+      // If confidence is high, return the result
+      if (directResult.confidence > 0.85) {
+        return directResult;
       }
-    };
+      
+      // Otherwise, try enhance mode with the direct result
+      if (directResult.text) {
+        return this.processEnhanceMode(imagePath, { 
+          ...options, 
+          originalText: directResult.text 
+        });
+      }
+      
+      // Fallback to direct result if no text was extracted
+      return directResult;
+    } catch (error: any) {
+      this.logger.error(`Error in processAssistMode: ${error.message}`);
+      throw new Error(`Assist mode processing failed: ${error.message}`);
+    }
   }
 
-  private async processEnhanceMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
+  private async processEnhanceMode(imagePath: string, options: ProcessOptions & { originalText?: string } = {}): Promise<TextExtractionResponse> {
     this.logger.info('Processing in ENHANCE mode');
-    const { originalText } = options;
-    
-    if (!originalText) {
-      throw new VLMError('ValidationError', 'Original text is required for ENHANCE mode');
-    }
-
-    const result = await this.processImage(
-      imagePath,
-      this.getEnhancementPrompt(originalText, options)
-    );
-
-    return {
-      text: result.text,
-      confidence: result.metadata?.confidence || 0.8,
-      processingTime: result.processingTime,
-      metadata: {
-        enhancement: {
-          originalText,
-          changes: this.detectTextChanges(originalText, result.text)
-        }
+    try {
+      const { originalText, ...otherOptions } = options;
+      
+      if (!originalText) {
+        this.logger.warn('No original text provided for enhancement, falling back to direct mode');
+        return this.processDirectMode(imagePath, otherOptions);
       }
-    };
+      
+      const prompt = this.getEnhancementPrompt(originalText, otherOptions);
+      const result = await this.processImage(imagePath, prompt, otherOptions);
+      
+      // Calculate confidence based on changes from original
+      const changes = this.detectTextChanges(originalText, result.text);
+      const changeRatio = changes.changes.length / (originalText.length || 1);
+      
+      // Adjust confidence based on changes (fewer changes might indicate better quality)
+      const adjustedConfidence = Math.max(0, Math.min(1, result.confidence * (1 - changeRatio * 0.5)));
+      
+      return {
+        ...result,
+        confidence: adjustedConfidence,
+        metadata: {
+          ...result.metadata,
+          enhancementChanges: changes.changes.length,
+          originalConfidence: result.confidence,
+          adjustedConfidence: adjustedConfidence,
+          changeRatio: changeRatio
+        }
+      };
+    } catch (error: any) {
+      this.logger.error(`Error in processEnhanceMode: ${error.message}`);
+      // Fall back to direct mode if enhancement fails
+      return this.processDirectMode(imagePath, options);
+    }
   }
 
-  private async processAdaptiveMode(imagePath: string, options: any): Promise<TextExtractionResponse> {
-    this.logger.info('Processing in ADAPTIVE mode');
+  private getEnhancementPrompt(originalText: string, options: ProcessOptions = {}): string {
+    const docType = options.documentType || 'document';
+    let prompt = `The following text was extracted from a ${docType} using OCR. `;
+    prompt += 'Please correct any recognition errors while preserving the original meaning and formatting.\n\n';
+    prompt += `Original text: ${originalText}\n\n`;
+    prompt += 'Corrected text:';
     
-    // First analyze the document
-    const analysis = await this.analyzeDocument(imagePath);
-    
-    // Choose the best mode based on analysis
-    const bestMode = this.determineBestMode(analysis);
-    this.logger.info(`Adaptive mode selected: ${bestMode}`);
-    
-    // Process with the selected mode
-    return await this.process({
-      imagePath,
-      options: { ...options, mode: bestMode }
-    });
+    return prompt;
   }
 
-  private determineBestMode(analysis: DocumentAnalysis): Paligemma2IntegrationMode {
-    if (analysis.confidence.overall < 0.5) {
-      return Paligemma2IntegrationMode.ENHANCE;
+  private detectTextChanges(original: string, enhanced: string): { changes: Array<{ from: string, to: string }> } {
+    const changes: Array<{ from: string, to: string }> = [];
+    
+    // Simple diff implementation - in a real app, you might want to use a proper diffing library
+    const originalLines = original.split('\n');
+    const enhancedLines = enhanced.split('\n');
+    
+    for (let i = 0; i < Math.max(originalLines.length, enhancedLines.length); i++) {
+      const origLine = originalLines[i] || '';
+      const enhLine = enhancedLines[i] || '';
+      
+      if (origLine !== enhLine) {
+        changes.push({
+          from: origLine,
+          to: enhLine
+        });
+      }
     }
     
-    if (analysis.hasHandwriting || analysis.complexLayout) {
-      return Paligemma2IntegrationMode.DIRECT;
-    }
-    
-    return Paligemma2IntegrationMode.ASSIST;
+    return { changes };
   }
-
-  private getEngineRecommendations(analysis: DocumentAnalysis): any {
-    return {
-      primaryEngine: this.selectPrimaryEngine(analysis),
-      fallbackEngine: this.selectFallbackEngine(analysis),
-      confidence: analysis.confidence.overall
-    };
-  }
-
-  private selectPrimaryEngine(analysis: DocumentAnalysis): string {
-    if (analysis.hasHandwriting && analysis.confidence.handwriting > 0.7) {
-      return 'paligemma2';
-    }
-    return 'tesseract';
-  }
-
-  private selectFallbackEngine(analysis: DocumentAnalysis): string {
-    return this.selectPrimaryEngine(analysis) === 'paligemma2' ? 'tesseract' : 'paligemma2';
-  }
-
-  private detectTextChanges(original: string, enhanced: string): any {
-    return {
-      charactersChanged: this.countDifferentCharacters(original, enhanced),
-      confidenceImprovement: this.calculateConfidenceImprovement(original, enhanced)
-    };
-  }
-
-  // Helper methods for text comparison and confidence calculation
+  
   private countDifferentCharacters(str1: string, str2: string): number {
     let diff = 0;
     const len = Math.max(str1.length, str2.length);

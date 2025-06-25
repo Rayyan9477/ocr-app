@@ -63,7 +63,7 @@ export class EnhancedDocumentAnalyzer {
   constructor() {
     // Initialize VLM manager with PaliGemma2 as default model
     this.vlmManager = new VLMManager({
-      defaultModelId: 'paligemma2-3b-mix-224',
+      defaultModelId: 'google/paligemma2-3b-pt-224',
       defaultDeploymentStrategy: 'local',
       maxCachedInstances: 1 // Keep one instance in memory
     });

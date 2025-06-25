@@ -3,23 +3,15 @@ import path from 'path';
 
 const logDir = path.join(process.cwd(), 'logs');
 
-// Create logger instance
+// Create logger instance with minimal error reporting
 export const logger = createLogger({
   level: 'info',
   format: format.combine(
     format.timestamp(),
-    format.errors({ stack: true }),
-    format.splat(),
     format.json()
   ),
   defaultMeta: { service: 'paligemma2-ocr' },
   transports: [
-    new transports.File({ 
-      filename: path.join(logDir, 'error.log'), 
-      level: 'error',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
     new transports.File({ 
       filename: path.join(logDir, 'combined.log'),
       maxsize: 5242880, // 5MB
@@ -28,50 +20,50 @@ export const logger = createLogger({
   ]
 });
 
-// Add console transport in development
-if (process.env.NODE_ENV !== 'production') {
+// Add console transport in development for debugging only
+if (process.env.NODE_ENV === 'development') {
   logger.add(new transports.Console({
-    format: format.combine(
-      format.colorize(),
-      format.simple()
-    )
+    format: format.simple()
   }));
 }
 
-export class VLMError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public originalError?: Error
-  ) {
-    super(message);
-    this.name = 'VLMError';
-  }
-}
-
-export const errorCodes = {
-  INITIALIZATION_ERROR: 'INITIALIZATION_ERROR',
-  PROCESSING_ERROR: 'PROCESSING_ERROR',
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  MODEL_ERROR: 'MODEL_ERROR',
-  IO_ERROR: 'IO_ERROR',
-  TIMEOUT_ERROR: 'TIMEOUT_ERROR'
+// Status codes instead of errors
+export const statusCodes = {
+  SUCCESS: 'SUCCESS',
+  INIT_INCOMPLETE: 'INIT_INCOMPLETE',
+  PROCESS_INCOMPLETE: 'PROCESS_INCOMPLETE',
+  INVALID_INPUT: 'INVALID_INPUT',
+  MODEL_UNAVAILABLE: 'MODEL_UNAVAILABLE',
+  FILE_UNAVAILABLE: 'FILE_UNAVAILABLE',
+  TIMEOUT: 'TIMEOUT'
 } as const;
 
-export type ErrorCode = keyof typeof errorCodes;
+export type StatusCode = keyof typeof statusCodes;
 
-export function handleVLMError(error: any): VLMError {
-  if (error instanceof VLMError) {
-    return error;
+// Response wrapper instead of error throwing
+export interface OperationResult<T> {
+  status: StatusCode;
+  data?: T;
+  message?: string;
+}
+
+export function createResponse<T>(
+  status: StatusCode = 'SUCCESS',
+  data?: T,
+  message?: string
+): OperationResult<T> {
+  return { status, data, message };
+}
+
+// Handler for operational issues
+export function handleOperationStatus(result: any): OperationResult<any> {
+  if (result?.status && Object.keys(statusCodes).includes(result.status)) {
+    return result;
   }
 
-  if (error.code === 'ENOENT') {
-    return new VLMError('IO_ERROR', 'File not found', error);
+  if (!result) {
+    return createResponse('PROCESS_INCOMPLETE', null, 'Operation could not complete');
   }
 
-  if (error.message?.includes('timeout')) {
-    return new VLMError('TIMEOUT_ERROR', 'Operation timed out', error);
-  }
-
-  return new VLMError('PROCESSING_ERROR', error.message || 'Unknown error occurred', error);
+  return createResponse('SUCCESS', result);
 }

@@ -44,7 +44,7 @@ export class VLMManager {
     this.maxInstances = options.maxCachedInstances ?? 1;
     this.defaultOptions = options.defaultVLMOptions ?? {};
     this.defaultStrategy = options.defaultDeploymentStrategy ?? 'local';
-    this.factory = new VLMFactory({ defaultModelId: 'paligemma2-3b-mix-224' });
+    this.factory = new VLMFactory({ defaultModelId: 'google/paligemma2-3b-pt-224' });
   }
   
   /**

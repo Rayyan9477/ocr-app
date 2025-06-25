@@ -5,21 +5,9 @@ import { writeFile, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import appConfig from "@/lib/config";
+import { createJsonResponse } from "@/lib/utils";
 
 const execPromise = promisify(exec);
-
-// Add a helper function to create consistent JSON responses
-const createJsonResponse = (data: any, status: number = 200) => {
-  return new NextResponse(
-    JSON.stringify(data),
-    {
-      status,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-};
 
 interface DependencyCheck {
   name: string;

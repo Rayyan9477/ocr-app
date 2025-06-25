@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { VLMModelManager } from '@/lib/vlm-model-manager';
-import logger from '../../../../lib/logger';
+import logger from '../../../../lib/logger.mjs';
 
 // Create VLM manager instance
 const vlmManager = new VLMModelManager();

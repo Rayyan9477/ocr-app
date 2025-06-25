@@ -3,9 +3,9 @@
  * This script runs when the server starts to check for compatibility updates
  */
 
-import { compatibilityMonitor } from './lib/paligemma2-compatibility-monitor';
-import { compatibilityNotification } from './lib/paligemma2-compatibility-notification';
-import logger from './lib/logger';
+import { compatibilityMonitor } from './lib/paligemma2-compatibility-monitor.js';
+import { compatibilityNotification } from './lib/paligemma2-compatibility-notification.js';
+import logger from './lib/logger.mjs';
 import fs from 'fs';
 import path from 'path';
 

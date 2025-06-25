@@ -1,12 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, statSync } from 'fs';
-import { writeFile      try {
-        // All engines are built-in, so they're always available
-        engine.available = true;
-        
-        logger.info(`OCR engine ${engine.name} is available`);
-      } catch (error) { from 'fs/promises';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import logger from './logger';
 import { preprocessingService } from './preprocessing-service';
@@ -348,44 +343,43 @@ export class FourEngineOCRService {
     const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
     
     // Enhanced Tesseract processing using internal module
-      let enhancement = 'medical_bills'; // Default to medical bills
-      if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
-      if (options.medicalTerminology) enhancement = 'medical_structured';
-      if (options.preserveLayout) enhancement = 'medical_layout';
-      
-      // Import the EnhancedTesseractEngine directly
-      const { EnhancedTesseractEngine } = require('../lib/enhanced-tesseract-engine');
-      const enhancedEngine = new EnhancedTesseractEngine({
-        enableHandwritingOptimization: options.enhanceHandwriting,
-        enhancementMode: enhancement,
-        preserveLayout: options.preserveLayout,
-        extractMedicalFields: true,
-        language
-      });
-      
-      // Process the document
-      const result = await enhancedEngine.processDocument(inputPath, {
-        outputPath,
-        extractDates: true,
-        extractAddresses: true,
-        extractCodes: true,
-        medicalContext: true
-      });
-      
-      if (!result || !result.text) {
-        throw new Error('Enhanced Tesseract processing failed');
-      }
-      
-      // Extract medical data from the result
-      const enhancedResult = {
-        ...result,
-        medical_optimization: true,
-        extraction_targets: ['dates', 'addresses', 'codes', 'patient_info'],
-        processing_mode: enhancement,
-        handwriting_support: engine.handwritingSupport
-      };
-      await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
+    let enhancement = 'medical_bills'; // Default to medical bills
+    if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
+    if (options.medicalTerminology) enhancement = 'medical_structured';
+    if (options.preserveLayout) enhancement = 'medical_layout';
+    
+    // Import the EnhancedTesseractEngine directly
+    const { EnhancedTesseractEngine } = require('../lib/enhanced-tesseract-engine');
+    const enhancedEngine = new EnhancedTesseractEngine({
+      enableHandwritingOptimization: options.enhanceHandwriting,
+      enhancementMode: enhancement,
+      preserveLayout: options.preserveLayout,
+      extractMedicalFields: true,
+      language
+    });
+    
+    // Process the document
+    const result = await enhancedEngine.processDocument(inputPath, {
+      outputPath,
+      extractDates: true,
+      extractAddresses: true,
+      extractCodes: true,
+      medicalContext: true
+    });
+    
+    if (!result || !result.text) {
+      throw new Error('Enhanced Tesseract processing failed');
     }
+    
+    // Extract medical data from the result
+    const enhancedResult = {
+      ...result,
+      medical_optimization: true,
+      extraction_targets: ['dates', 'addresses', 'codes', 'patient_info'],
+      processing_mode: enhancement,
+      handwriting_support: engine.handwritingSupport
+    };
+    await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
   }
 
   /**
@@ -401,36 +395,79 @@ export class FourEngineOCRService {
 
     try {
       if (engine.name === 'enhanced-tesseract') {
-        // Enhanced Tesseract returns a more structured output
-        const jsonContent = await readFile(outputPath, 'utf-8');
-        const enhancedResult = JSON.parse(jsonContent);
-        extractedText = enhancedResult.text || '';
-        confidence = enhancedResult.confidence || 0;
-        
-        // Extract additional metadata if available
-        if (enhancedResult.metadata) {
-          this.lastProcessedResult.metadata = {
-            ...this.lastProcessedResult.metadata,
-            ...enhancedResult.metadata
-          };
+        try {
+          // Enhanced Tesseract returns a more structured output
+          const jsonContent = await readFile(outputPath, 'utf-8');
+          const enhancedResult = JSON.parse(jsonContent);
+          extractedText = enhancedResult.text || '';
+          confidence = enhancedResult.confidence || 0;
+          
+          // Extract additional metadata if available
+          if (enhancedResult.metadata) {
+            this.lastProcessedResult.metadata = {
+              ...this.lastProcessedResult.metadata,
+              ...enhancedResult.metadata
+            };
+          }
+        } catch (jsonError) {
+          logger.warn(`Failed to parse enhanced-tesseract JSON output: ${jsonError}`);
+          // Fallback to reading file directly
+          const fileContent = await readFile(outputPath, 'utf-8');
+          extractedText = fileContent.slice(0, 5000); // Limit size
+          confidence = 70; // Default confidence when parsing fails
         }
       } else {
         // OCRmyPDF and Tesseract - extract from PDF
-        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
-        extractedText = stdout.trim();
-        
-        if (engine.confidence && engine.name === 'tesseract') {
-          confidence = await this.extractTesseractConfidence(inputPath);
-        } else {
-          confidence = 90; // Default for OCRmyPDF
+        try {
+          const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
+          // Clean up and sanitize text
+          extractedText = stdout
+            .trim()
+            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '') // Remove control characters
+            .replace(/\\(?![\"\\\/bfnrt])/g, '\\\\'); // Escape backslashes
+          
+          if (engine.confidence && engine.name === 'tesseract') {
+            confidence = await this.extractTesseractConfidence(inputPath);
+          } else {
+            confidence = 90; // Default for OCRmyPDF
+          }
+        } catch (pdfError) {
+          logger.warn(`Failed to extract text from PDF: ${pdfError}`);
+          extractedText = '[PDF text extraction failed]';
+          confidence = 50; // Lower confidence when extraction fails
         }
       }
     } catch (textError) {
       logger.warn(`Failed to extract text from ${engine.name} output: ${textError}`);
       extractedText = '[Text extraction failed]';
+      confidence = 50; // Lower confidence when extraction fails
     }
 
+    // Ensure text is safe for JSON serialization
+    extractedText = this.sanitizeTextForJson(extractedText);
+    
     return { extractedText, confidence };
+  }
+  
+  /**
+   * Sanitize text to ensure it can be safely included in JSON responses
+   */
+  private sanitizeTextForJson(text: string): string {
+    if (!text) return '';
+    
+    return text
+      // Remove control characters
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+      // Replace any sequence of whitespace with a single space
+      .replace(/\s+/g, ' ')
+      // Properly escape special characters for JSON
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t')
+      // Limit size
+      .slice(0, 5000);
   }
 
   /**

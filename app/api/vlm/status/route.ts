@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import VLMModelManager from '../../../../lib/vlm-model-manager.js';
-import logger from '../../../../lib/logger';
+import logger from '../../../../lib/logger.mjs';
 
 // Create VLM manager instance
 const vlmManager = new VLMModelManager();
@@ -63,7 +63,7 @@ export async function GET() {
 export async function POST() {
   try {
     // Force a fresh health check
-    await vlmHealthMonitor.checkAllModels();
+    await vlmManager.checkAllModels();
     
     // Return updated status
     return GET();

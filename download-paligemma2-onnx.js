@@ -27,6 +27,23 @@ class PaliGemma2ModelDownloader {
     }
   }
 
+  async installHuggingFaceCLI() {
+    try {
+      console.log('🔧 Installing Hugging Face CLI...');
+      await new Promise((resolve, reject) => {
+        const install = spawn('pip', ['install', '--user', 'huggingface_hub'], { stdio: 'inherit' });
+        install.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`Failed to install huggingface_hub (exit code: ${code})`));
+        });
+      });
+      console.log('✅ Hugging Face CLI installed successfully');
+    } catch (error) {
+      console.error('❌ Failed to install Hugging Face CLI:', error.message);
+      throw error;
+    }
+  }
+
   async downloadModel(modelId) {
     console.log(`📥 Downloading model: ${modelId}`);
     

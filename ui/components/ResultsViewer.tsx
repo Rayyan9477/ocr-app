@@ -58,11 +58,20 @@ export const ResultsViewer: React.FC<ResultsViewerProps> = ({ result }) => {
             onClick={() => {
               const blob = new Blob([viewMode === 'text' ? result.text : JSON.stringify(result.structuredData || result.layout, null, 2)], 
                 { type: 'text/plain;charset=utf-8' });
+              
+              // Create an anchor element and trigger download
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = 'ocr-result.txt';
+              a.download = `ocr-result-${Date.now()}.txt`;
+              document.body.appendChild(a);
               a.click();
+              
+              // Cleanup
+              setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }, 100);
             }}
             title="Download as text file"
           >

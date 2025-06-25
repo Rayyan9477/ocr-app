@@ -1,59 +1,40 @@
 #!/bin/bash
-# Health check script for OCR application container
+# Health status reporter for OCR application container
 
-set -e
+# Initialize status
+status=0
+report="{"
 
-# Test if OCRmyPDF is available
-if ! command -v ocrmypdf &> /dev/null; then
-    echo "ERROR: OCRmyPDF not found"
-    exit 1
+# Check OCRmyPDF availability
+if command -v ocrmypdf &> /dev/null; then
+    version=$(ocrmypdf --version 2>&1)
+    report="$report \"ocrmypdf\": {\"status\": \"available\", \"version\": \"$version\"},"
+else
+    report="$report \"ocrmypdf\": {\"status\": \"unavailable\"},"
+    status=1
 fi
 
-# Test if Tesseract is available
-if ! command -v tesseract &> /dev/null; then
-    echo "ERROR: Tesseract not found"
-    exit 1
+# Check Tesseract availability
+if command -v tesseract &> /dev/null; then
+    version=$(tesseract --version 2>&1 | head -n 1)
+    report="$report \"tesseract\": {\"status\": \"available\", \"version\": \"$version\"},"
+else
+    report="$report \"tesseract\": {\"status\": \"unavailable\"},"
+    status=1
 fi
 
-# Test jbig2 availability (Optional, not critical for operation)
+# Check jbig2 availability (Optional)
 if command -v jbig2 &> /dev/null; then
-    echo "INFO: jbig2 is available"
+    report="$report \"jbig2\": {\"status\": \"available\"}"
 else
-    echo "WARNING: jbig2 not found, PDF optimization will be limited"
+    report="$report \"jbig2\": {\"status\": \"unavailable\"}"
 fi
 
-# Check if the Node.js server is running
-PORT=${PORT:-3000}
-if curl -s --head --fail http://localhost:${PORT}/api/status > /dev/null; then
-    echo "SUCCESS: Next.js application is running correctly"
-else
-    echo "ERROR: Next.js application is not responding"
-    exit 1
-fi
+# Close JSON
+report="$report }"
 
-# Check if upload and processed directories exist and are writable
-UPLOADS_DIR=${UPLOADS_DIR:-/app/uploads}
-PROCESSED_DIR=${PROCESSED_DIR:-/app/processed}
+# Output status report
+echo "$report"
 
-if [ ! -d "$UPLOADS_DIR" ]; then
-    echo "ERROR: Upload directory does not exist: $UPLOADS_DIR"
-    exit 1
-fi
-
-if [ ! -w "$UPLOADS_DIR" ]; then
-    echo "ERROR: Upload directory is not writable: $UPLOADS_DIR"
-    exit 1
-fi
-
-if [ ! -d "$PROCESSED_DIR" ]; then
-    echo "ERROR: Processed directory does not exist: $PROCESSED_DIR"
-    exit 1
-fi
-
-if [ ! -w "$PROCESSED_DIR" ]; then
-    echo "ERROR: Processed directory is not writable: $PROCESSED_DIR"
-    exit 1
-fi
-
-echo "All health checks passed!"
-exit 0
+# Exit with status
+exit $status

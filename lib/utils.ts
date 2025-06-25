@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { NextResponse } from 'next/server';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -29,16 +30,23 @@ export async function fileExists(filePath: string): Promise<boolean> {
 }
 
 /**
- * Create a standardized JSON response for API endpoints
+ * Creates a standardized JSON response object
+ * 
+ * @param data - The data to include in the response
+ * @param status - HTTP status code (default: 200)
+ * @returns NextResponse with proper headers and status
  */
-export function createJsonResponse(data: any, status: number = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-}
+export const createJsonResponse = (data: any, status: number = 200) => {
+  return new NextResponse(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+};
 
 /**
  * Generate proper output filename based on input
@@ -140,3 +148,65 @@ export function bufferToDataURL(buffer: Buffer, mimeType: string = 'image/jpeg')
   }
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }
+
+/**
+ * Recursively sanitizes an object with text fields for JSON serialization
+ */
+export function sanitizeObject(obj: any): any {
+  if (!obj) return obj;
+  
+  if (typeof obj === "string") {
+    return sanitizeText(obj);
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeObject(item));
+  }
+  
+  if (typeof obj === "object") {
+    const result: Record<string, any> = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        // Special handling for text fields
+        if (
+          (key === "text" || key.includes("Text") || key.includes("content")) && 
+          typeof obj[key] === "string"
+        ) {
+          result[key] = sanitizeText(obj[key]);
+        } else {
+          result[key] = sanitizeObject(obj[key]);
+        }
+      }
+    }
+    return result;
+  }
+  
+  return obj;
+}
+
+/**
+ * Sanitizes text to ensure valid JSON serialization
+ */
+export function sanitizeText(text: string): string {
+  if (!text) return "";
+  
+  try {
+    return text
+      // Remove control characters
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+      // Normalize quotes
+      .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'") // single quotes
+      .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"') // double quotes
+      // Replace other problematic characters
+      .replace(/[\u2013\u2014]/g, '-') // em/en dashes
+      // Normalize line breaks
+      .replace(/\r\n/g, '\n')
+      // Limit length to prevent giant responses
+      .substring(0, 200000);
+  } catch (error) {
+    console.error("Text sanitization error:", error);
+    return "Error sanitizing text";
+  }
+}
+
+// Other utility exports...

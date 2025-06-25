@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { compatibilityMonitor } from '../../../lib/paligemma2-compatibility-monitor';
+import { compatibilityMonitor } from '../../../lib/paligemma2-compatibility-monitor.js';
 import logger from '../../../lib/logger';
 
 /**
@@ -54,3 +54,7 @@ export async function POST(request: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Add forcing dynamic runtime
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';

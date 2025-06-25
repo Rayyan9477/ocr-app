@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import VLMModelManager from '../../../../lib/vlm-model-manager.js';
 import { initializeDirectories } from '../../../../lib/initialize-dirs';
-import logger from '../../../../lib/logger';
+import logger from '../../../../lib/logger.mjs';
 
 // Initialize directories on module load
 initializeDirectories();
@@ -19,20 +19,33 @@ export async function POST(request: NextRequest) {
   
   try {
     const formData = await request.formData();
-    const file = formData.get('image') as File || formData.get('file') as File;
+    const fileField = formData.get('image') || formData.get('file');
     const analysisType = formData.get('analysisType') as string || 'document_analysis';
     const customPrompt = formData.get('prompt') as string || '';
     
-    if (!file) {
+    if (!fileField) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    }
+    
+    let fileName = 'unknown.pdf';
+    let fileBuffer;
+    if (typeof fileField === 'object' && fileField !== null) {
+      if ('name' in fileField && typeof fileField.name === 'string') {
+        fileName = fileField.name;
+      }
+      if ('arrayBuffer' in fileField && typeof fileField.arrayBuffer === 'function') {
+        const arrayBuffer = await fileField.arrayBuffer();
+        fileBuffer = Buffer.from(arrayBuffer);
+      } else {
+        return NextResponse.json({ error: 'Invalid file format' }, { status: 400 });
+      }
     }
     
     // Save the uploaded file
     const uploadsDir = path.join(process.cwd(), 'uploads');
-    const fileName = `${Date.now()}_${file.name}`;
-    inputPath = path.join(uploadsDir, fileName);
+    const safeFileName = `${Date.now()}_${fileName}`;
+    inputPath = path.join(uploadsDir, safeFileName);
     
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
     fs.writeFileSync(inputPath, fileBuffer);
     
     let result;

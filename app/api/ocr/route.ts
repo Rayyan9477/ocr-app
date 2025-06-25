@@ -3,8 +3,8 @@ import { writeFile, mkdir } from "fs/promises"
 import { join } from "path"
 import path from "path"
 import { existsSync } from "fs"
-import logger from "@/lib/logger"
-import VLMModelManager from "@/lib/vlm-model-manager.js"
+import logger from '../../../lib/logger.mjs';
+import VLMModelManager from '../../../lib/vlm-model-manager.js'
 
 // Configure Next.js to handle large files
 export const config = {
@@ -14,9 +14,18 @@ export const config = {
   },
 }
 
+// Add runtime and dynamic to force dynamic route
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 // Helper function to create consistent JSON responses
 const createJsonResponse = (data: any) => {
   try {
+    // Sanitize any text content to ensure valid JSON
+    if (data.text) {
+      data.text = sanitizeOcrText(data.text);
+    }
+    
     const jsonString = JSON.stringify(data);
     return new NextResponse(jsonString, {
       status: 200,
@@ -26,12 +35,40 @@ const createJsonResponse = (data: any) => {
     });
   } catch (error) {
     logger.error('Failed to create JSON response:', error);
+    // Return a minimal response if full one fails
     return new NextResponse(
-      JSON.stringify({ success: false, error: 'Internal Server Error' }),
+      JSON.stringify({ 
+        success: false, 
+        error: 'Internal Server Error',
+        details: 'Failed to serialize OCR result' 
+      }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 };
+
+// Add this function to sanitize OCR text
+function sanitizeOcrText(text: string): string {
+  if (!text) return '';
+  
+  try {
+    return text
+      // Remove control characters
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+      // Replace problematic quotes and apostrophes with simple versions
+      .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
+      .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+      // Replace tabs and other whitespace
+      .replace(/\t/g, ' ')
+      // Normalize line breaks
+      .replace(/\r\n/g, '\n')
+      // Limit text length if extremely long (optional)
+      .substring(0, 100000); // Set a reasonable maximum length
+  } catch (e) {
+    logger.error('Error sanitizing OCR text:', e);
+    return 'Text sanitization error';
+  }
+}
 
 // Ensure upload and processed directories exist
 const ensureDirectories = async () => {
@@ -63,19 +100,34 @@ export const POST = async (request: NextRequest) => {
     const formData = await request.formData();
     logger.info(`Form data keys received: ${Array.from(formData.keys()).join(', ')}`);
     
-    const file = formData.get("file") as any as File;
-    if (!file) {
+    const fileField = formData.get("file") || formData.get("image");
+    if (!fileField) {
       return new NextResponse(
         JSON.stringify({ success: false, error: "No file provided" }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
     
-    const fileName = `${Date.now()}_${file.name}`;
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    let fileName = 'unknown.pdf';
+    let buffer;
+    if (typeof fileField === 'object' && fileField !== null) {
+      if ('name' in fileField && typeof fileField.name === 'string') {
+        fileName = fileField.name;
+      }
+      if ('arrayBuffer' in fileField && typeof fileField.arrayBuffer === 'function') {
+        const bytes = await fileField.arrayBuffer();
+        buffer = Buffer.from(bytes);
+      } else {
+        return new NextResponse(
+          JSON.stringify({ success: false, error: "Invalid file format" }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    
+    const safeFileName = `${Date.now()}_${fileName}`;
     const uploadDir = join(process.cwd(), "uploads");
-    inputPath = join(uploadDir, fileName);
+    inputPath = join(uploadDir, safeFileName);
     await writeFile(inputPath, buffer);
     console.log(`File saved: ${inputPath}`);
 
@@ -106,10 +158,13 @@ export const POST = async (request: NextRequest) => {
     const prompt = "<image>extract all text from this document accurately, preserving formatting and structure";
     const result = await modelManager.processImage(inputPath, prompt);
     
+    // Sanitize text before returning
+    const sanitizedText = sanitizeOcrText(result.text || "");
+    
     return createJsonResponse({
       success: true,
       outputFile: path.basename(inputPath),
-      text: result.text || "",
+      text: sanitizedText,
       engine: "paligemma2",
       modelUsed: result.modelUsed || "PaliGemma2",
       confidence: result.confidence || 0.8,

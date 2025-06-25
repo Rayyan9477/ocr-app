@@ -4,6 +4,53 @@ import fs from 'fs';
 import VLMModelManager from '@/lib/vlm-model-manager.js';
 import logger from '@/lib/logger';
 
+// Add sanitization function
+function sanitizeOcrText(text: string): string {
+  if (!text) return '';
+  
+  try {
+    return text
+      // Remove control characters
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+      // Replace problematic quotes and apostrophes with simple versions
+      .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
+      .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+      // Replace tabs and other whitespace
+      .replace(/\t/g, ' ')
+      // Normalize line breaks
+      .replace(/\r\n/g, '\n')
+      // Limit text length if extremely long
+      .substring(0, 100000);
+  } catch (e) {
+    logger.error('Error sanitizing OCR text:', e);
+    return 'Text sanitization error';
+  }
+}
+
+// Create safe JSON response
+function createSafeJsonResponse(data: any): NextResponse {
+  try {
+    // Sanitize text field if present
+    if (data.text) {
+      data.text = sanitizeOcrText(data.text);
+    }
+    
+    const jsonString = JSON.stringify(data);
+    return NextResponse.json(data, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  } catch (error) {
+    logger.error(`Error creating JSON response: ${error}`);
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to generate valid JSON response'
+    }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   let inputPath = '';
   try {
@@ -52,7 +99,8 @@ export async function POST(request: NextRequest) {
     const result = await modelManager.processImage(inputPath, prompt);
     const processingTime = Date.now() - startTime;
     
-    return NextResponse.json({
+    // Use safe response creator
+    return createSafeJsonResponse({
       success: true,
       engine: 'paligemma2',
       outputFile: path.basename(inputPath),

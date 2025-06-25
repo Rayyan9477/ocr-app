@@ -1,6 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import logger from './logger';
+import logger from './logger.mjs';
 import * as path from 'path';
 import * as fs from 'fs';
 

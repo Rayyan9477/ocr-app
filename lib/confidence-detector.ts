@@ -1,11 +1,8 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { execAsync } from './utils/exec-async';
+import { createResponse, logger, OperationResult } from './vlm/error-handling';
+import { config } from './config';
 import { join } from 'path';
-import logger from './logger';
-import config from './config';
-
-const execAsync = promisify(exec);
+import { existsSync } from 'fs';
 
 export interface ConfidenceData {
   pageNumber: number;
@@ -30,324 +27,94 @@ export interface DocumentConfidence {
   errorPages: number[];
 }
 
-/**
- * Extract confidence scores from a PDF using Tesseract's hOCR output
- * Enhanced to handle both original files and processed OCR outputs
- */
 export async function extractConfidenceScores(
   inputPath: string,
   outputPath: string,
   useProcessedFile: boolean = false
-): Promise<DocumentConfidence | null> {
+): Promise<OperationResult<DocumentConfidence>> {
   if (!config.confidence.enableConfidenceTracking) {
-    return null;
+    return createResponse('SUCCESS', null);
   }
 
-  try {
-    logger.info(`Extracting confidence scores for ${inputPath}`);
+  if (!existsSync(inputPath)) {
+    return createResponse('FILE_UNAVAILABLE', null, `Input file not found: ${inputPath}`);
+  }
 
-    // Create a temporary directory for processing
-    const tempDir = join(process.cwd(), 'tmp', 'confidence_' + Date.now());
-    await execAsync(`mkdir -p "${tempDir}"`);
+  // Create temporary directory
+  const tempDir = join(process.cwd(), 'tmp', 'confidence_' + Date.now());
+  await execAsync(`mkdir -p "${tempDir}"`);
 
-    // Determine which file to analyze for confidence
-    const analysisTarget = useProcessedFile && existsSync(outputPath) ? outputPath : inputPath;
-    logger.info(`Using ${analysisTarget} for confidence analysis`);
+  const analysisTarget = useProcessedFile && existsSync(outputPath) ? outputPath : inputPath;
+  const hocrPath = join(tempDir, 'output.hocr');
 
-    let hocrPath = join(tempDir, 'output.hocr');
-    
-    try {
-      // For PDFs, we need to convert to images first, then run Tesseract
-      if (analysisTarget.toLowerCase().endsWith('.pdf')) {
-        logger.info('Converting PDF to images for confidence analysis');
-        
-        // Check if the PDF has extractable text first
-        let hasExistingText = false;
-        let extractedText = '';
-        try {
-          const { stdout: textContent } = await execAsync(`pdftotext "${analysisTarget}" -`);
-          extractedText = textContent.trim();
-          hasExistingText = extractedText.length > 0;
-          logger.info(`PDF has existing text: ${hasExistingText} (${extractedText.length} characters)`);
-        } catch (error) {
-          logger.warn(`Could not extract text from PDF: ${error}`);
-        }
-
-        // Note: For processed PDFs with existing text, we could estimate confidence,
-        // but for accuracy we'll always perform proper page-by-page analysis.
-        // This ensures accurate page counts and detailed confidence metrics.
-        if (hasExistingText && useProcessedFile && extractedText.length > 100) {
-          logger.info('PDF has substantial text content, but performing full page analysis for accuracy');
-        }
-
-        // Convert PDF to images using pdftoppm with higher quality for better OCR
-        const imageDir = join(tempDir, 'pages');
-        await execAsync(`mkdir -p "${imageDir}"`);
-        
-        // Use higher DPI for better OCR accuracy
-        const dpi = hasExistingText ? 150 : 300; // Lower DPI if text exists, higher for image-only PDFs
-        await execAsync(`pdftoppm -png -r ${dpi} "${analysisTarget}" "${imageDir}/page"`);
-        
-        // Find all generated image files
-        const { readdir } = await import('fs/promises');
-        const imageFiles = (await readdir(imageDir))
-          .filter(f => f.endsWith('.png'))
-          .sort((a, b) => {
-            // Ensure proper numerical sorting (page-1.png, page-2.png, etc.)
-            const aNum = parseInt(a.match(/(\d+)\.png$/)?.[1] || '0');
-            const bNum = parseInt(b.match(/(\d+)\.png$/)?.[1] || '0');
-            return aNum - bNum;
-          });
-        
-        if (imageFiles.length === 0) {
-          logger.warn(`No images generated from PDF ${analysisTarget}`);
-          await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
-          return null;
-        }
-        
-        logger.info(`Generated ${imageFiles.length} page images for analysis`);
-        
-        // Process each page image with Tesseract to get hOCR
-        const pageHocrFiles: string[] = [];
-        
-        for (let i = 0; i < imageFiles.length; i++) {
-          const imagePath = join(imageDir, imageFiles[i]);
-          const pageHocrPath = join(tempDir, `page_${i + 1}.hocr`);
-          
-          try {
-            // Enhanced Tesseract parameters for better confidence detection
-            const tesseractOptions = [
-              '-l eng',
-              '--psm 1', // Automatic page segmentation with OSD
-              '--oem 3', // Use both legacy and LSTM engines
-              '-c tessedit_create_hocr=1',
-              '-c hocr_font_info=1'
-            ].join(' ');
-            
-            await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" ${tesseractOptions} hocr`);
-            
-            if (existsSync(pageHocrPath)) {
-              pageHocrFiles.push(pageHocrPath);
-              logger.info(`Successfully processed page ${i + 1}`);
-            }
-          } catch (pageError) {
-            logger.warn(`Failed to process page ${i + 1} with PSM 1: ${pageError}`);
-            // Try with more permissive PSM modes
-            const fallbackModes = [3, 6, 4]; // Try different page segmentation modes
-            
-            for (const psm of fallbackModes) {
-              try {
-                const fallbackOptions = `-l eng --psm ${psm} --oem 3`;
-                await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" ${fallbackOptions} hocr`);
-                
-                if (existsSync(pageHocrPath)) {
-                  pageHocrFiles.push(pageHocrPath);
-                  logger.info(`Successfully processed page ${i + 1} with PSM ${psm}`);
-                  break;
-                }
-              } catch (fallbackError) {
-                logger.warn(`PSM ${psm} also failed for page ${i + 1}: ${fallbackError}`);
-              }
-            }
-          }
-        }
-        
-        if (pageHocrFiles.length === 0) {
-          logger.warn(`No hOCR files generated for ${inputPath}`);
-          await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
-          return null;
-        }
-        
-        // Combine all page hOCR files into one
-        const { readFile, writeFile } = await import('fs/promises');
-        let combinedHocr = '';
-        
-        for (let i = 0; i < pageHocrFiles.length; i++) {
-          const pageContent = await readFile(pageHocrFiles[i], 'utf-8');
-          
-          if (i === 0) {
-            // For the first page, include the full hOCR structure
-            // But ensure the page has the correct ID
-            combinedHocr = pageContent.replace(
-              /<div class='ocr_page' id='page_1'/,
-              `<div class='ocr_page' id='page_${i + 1}'`
-            );
-          } else {
-            // For subsequent pages, extract only the page content and append
-            // Use a more robust method to extract the complete page div with all nested content
-            const pageStartMatch = pageContent.match(/<div class='ocr_page'[^>]*>/);
-            if (pageStartMatch) {
-              const startIndex = pageContent.indexOf(pageStartMatch[0]);
-              const bodyEndIndex = pageContent.indexOf('</body>');
-              
-              if (startIndex !== -1 && bodyEndIndex !== -1) {
-                // Extract everything from the page div start to just before </body>
-                let pageDiv = pageContent.substring(startIndex, bodyEndIndex).trim();
-                
-                // Fix the page ID to be unique for this page
-                pageDiv = pageDiv.replace(
-                  /<div class='ocr_page' id='page_1'/,
-                  `<div class='ocr_page' id='page_${i + 1}'`
-                );
-                
-                // Replace the closing body and html tags with the new page content
-                combinedHocr = combinedHocr.replace(
-                  /<\/body>\s*<\/html>\s*$/,
-                  pageDiv + '\n</body>\n</html>'
-                );
-              }
-            }
-          }
-        }
-        
-        // Write the combined hOCR content
-        await writeFile(hocrPath, combinedHocr, 'utf-8');
-        
-      } else {
-        // For PDFs, we need to convert to images first, then run Tesseract
-        const tesseractCommand = `tesseract "${inputPath}" "${join(tempDir, 'output')}" -l eng --psm 1 hocr`;
-        
-        try {
-          // First try direct PDF processing with Tesseract (may fail)
-          await execAsync(tesseractCommand);
-        } catch (error) {
-          logger.warn(`Direct PDF processing failed: ${error}. Converting to images first.`);
-          
-          // Convert PDF to images first, then process with Tesseract
-          const imageDir = join(tempDir, 'images');
-          await execAsync(`mkdir -p "${imageDir}"`);
-          await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
-          
-          // Get all generated images
-          const { readdir } = await import('fs/promises');
-          const imageFiles = (await readdir(imageDir))
-            .filter(f => f.endsWith('.png'))
-            .sort((a, b) => {
-              const aNum = parseInt(a.match(/(\d+)\.png$/)?.[1] || '0');
-              const bNum = parseInt(b.match(/(\d+)\.png$/)?.[1] || '0');
-              return aNum - bNum;
-            });
-          
-          // Process each page image with Tesseract
-          const hocrFiles: string[] = [];
-          for (let i = 0; i < imageFiles.length; i++) {
-            const imagePath = join(imageDir, imageFiles[i]);
-            const pageHocrPath = join(tempDir, `page_${i + 1}.hocr`);
-            
-            try {
-              await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" -l eng --psm 1 hocr`);
-              if (existsSync(pageHocrPath)) {
-                hocrFiles.push(pageHocrPath);
-              }
-            } catch (pageError) {
-              logger.warn(`Failed to process page ${i + 1}: ${pageError}`);
-              // Try with fallback PSM mode
-              try {
-                await execAsync(`tesseract "${imagePath}" "${pageHocrPath.replace('.hocr', '')}" -l eng --psm 3 hocr`);
-                if (existsSync(pageHocrPath)) {
-                  hocrFiles.push(pageHocrPath);
-                }
-              } catch (fallbackError) {
-                logger.warn(`Fallback processing also failed for page ${i + 1}: ${fallbackError}`);
-              }
-            }
-          }
-          
-          // Combine all page hOCR files
-          if (hocrFiles.length > 0) {
-            const { readFile, writeFile } = await import('fs/promises');
-            let combinedHocr = '';
-            
-            for (let i = 0; i < hocrFiles.length; i++) {
-              const pageContent = await readFile(hocrFiles[i], 'utf-8');
-              
-              if (i === 0) {
-                // For the first page, include the full hOCR structure
-                // But ensure the page has the correct ID
-                combinedHocr = pageContent.replace(
-                  /<div class='ocr_page' id='page_1'/,
-                  `<div class='ocr_page' id='page_${i + 1}'`
-                );
-              } else {
-                // For subsequent pages, extract only the page content and append
-                // Use a more robust method to extract the complete page div with all nested content
-                const pageStartMatch = pageContent.match(/<div class='ocr_page'[^>]*>/);
-                if (pageStartMatch) {
-                  const startIndex = pageContent.indexOf(pageStartMatch[0]);
-                  const bodyEndIndex = pageContent.indexOf('</body>');
-                  
-                  if (startIndex !== -1 && bodyEndIndex !== -1) {
-                    // Extract everything from the page div start to just before </body>
-                    let pageDiv = pageContent.substring(startIndex, bodyEndIndex).trim();
-                    
-                    // Fix the page ID to be unique for this page
-                    pageDiv = pageDiv.replace(
-                      /<div class='ocr_page' id='page_1'/,
-                      `<div class='ocr_page' id='page_${i + 1}'`
-                    );
-                    
-                    // Replace the closing body and html tags with the new page content
-                    combinedHocr = combinedHocr.replace(
-                      /<\/body>\s*<\/html>\s*$/,
-                      pageDiv + '\n</body>\n</html>'
-                    );
-                  }
-                }
-              }
-            }
-            
-            await writeFile(hocrPath, combinedHocr, 'utf-8');
-          } else {
-            throw new Error('No pages could be processed with Tesseract');
-          }
-        }
-      }
-    } catch (conversionError) {
-      logger.error(`Error during PDF conversion or Tesseract processing: ${conversionError}`);
-      await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
-      return null;
-    }
-
-    if (!existsSync(hocrPath)) {
-      logger.warn(`hOCR file not generated for ${inputPath}`);
-      // Cleanup
-      await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
-      return null;
-    }
-
-    // Parse the hOCR file to extract confidence data
-    const { readFile } = await import('fs/promises');
-    const hocrContent = await readFile(hocrPath, 'utf-8');
-    
-    const confidenceData = parseHocrConfidence(hocrContent);
-    
-    // Cleanup temporary files
+  // Process file
+  const processResult = await processFileForConfidence(analysisTarget, tempDir, hocrPath);
+  if (processResult.status !== 'SUCCESS') {
     await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
+    return processResult;
+  }
 
-    // Calculate document-level statistics
-    const averageConfidence = calculateAverageConfidence(confidenceData);
-    const { warningPages, errorPages } = categorizePages(confidenceData);
+  // Parse confidence data
+  const confidenceData = parseHocrConfidence(processResult.data || '');
+  
+  // Calculate statistics
+  const averageConfidence = calculateAverageConfidence(confidenceData);
+  const { warningPages, errorPages } = categorizePages(confidenceData);
 
-    const documentConfidence: DocumentConfidence = {
-      documentId: generateDocumentId(inputPath),
-      inputFile: inputPath,
-      outputFile: outputPath,
-      averageConfidence,
-      pageConfidences: confidenceData,
-      processedAt: new Date(),
-      hasLowConfidencePages: warningPages.length > 0 || errorPages.length > 0,
-      warningPages,
-      errorPages,
-    };
+  const documentConfidence: DocumentConfidence = {
+    documentId: generateDocumentId(inputPath),
+    inputFile: inputPath,
+    outputFile: outputPath,
+    averageConfidence,
+    pageConfidences: confidenceData,
+    processedAt: new Date(),
+    hasLowConfidencePages: warningPages.length > 0 || errorPages.length > 0,
+    warningPages,
+    errorPages,
+  };
 
-    // Log confidence information
-    logger.info(`Confidence analysis for ${inputPath}: Average=${averageConfidence.toFixed(2)}%, Warning pages=${warningPages.length}, Error pages=${errorPages.length}`);
+  await execAsync(`rm -rf "${tempDir}"`).catch(() => {});
+  return createResponse('SUCCESS', documentConfidence);
+}
 
-    return documentConfidence;
+async function processFileForConfidence(
+  filePath: string,
+  tempDir: string,
+  hocrPath: string
+): Promise<OperationResult<string>> {
+  const imageDir = join(tempDir, 'pages');
+  await execAsync(`mkdir -p "${imageDir}"`);
 
-  } catch (error) {
-    logger.error(`Error extracting confidence scores for ${inputPath}:`, error);
-    return null;
+  if (filePath.toLowerCase().endsWith('.pdf')) {
+    // Convert PDF to images
+    await execAsync(`pdftoppm -png -r 300 "${filePath}" "${imageDir}/page"`);
+    
+    // Process images with Tesseract
+    const { readdir } = await import('fs/promises');
+    const imageFiles = (await readdir(imageDir))
+      .filter(f => f.endsWith('.png'))
+      .sort();
+
+    if (imageFiles.length === 0) {
+      return createResponse('PROCESS_INCOMPLETE', '', 'No images generated from PDF');
+    }
+
+    // Process each page
+    const hocrContents: string[] = [];
+    for (const imageFile of imageFiles) {
+      const imagePath = join(imageDir, imageFile);
+      const pageResult = await processImageWithTesseract(imagePath);
+      if (pageResult.data) {
+        hocrContents.push(pageResult.data);
+      }
+    }
+
+    // Combine results
+    const combinedHocr = combineHocrPages(hocrContents);
+    return createResponse('SUCCESS', combinedHocr);
+  } else {
+    // Direct processing for images
+    return processImageWithTesseract(filePath);
   }
 }
 
@@ -560,5 +327,3 @@ export async function loadConfidenceData(outputPath: string): Promise<DocumentCo
     return null;
   }
 }
-
-export { estimateConfidenceFromText };
