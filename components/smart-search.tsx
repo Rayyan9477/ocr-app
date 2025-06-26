@@ -20,7 +20,7 @@ import {
   AlertTriangle, 
   CheckCircle, 
   Clock,
-  Filter,
+  SlidersHorizontal,
   SortAsc,
   Zap,
   Brain,
@@ -29,7 +29,8 @@ import {
   Download,
   BarChart3,
   Database,
-  Layers
+  Layers,
+  Filter
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -727,7 +728,7 @@ export function SmartSearch({ className, onResultSelect, initialQuery = "" }: Sm
                 {/* Max Results */}
                 <div className="space-y-2">
                   <Label className="flex items-center gap-2">
-                    <Filter className="h-4 w-4" />
+                    <SlidersHorizontal className="h-4 w-4" />
                     Max Results: {searchOptions.maxResults}
                   </Label>
                   <Slider

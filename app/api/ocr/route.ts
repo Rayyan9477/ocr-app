@@ -429,6 +429,92 @@ export const POST = async (request: NextRequest) => {
   }
 }
 
+// Enhanced OCR processing endpoint
+export const POST_enhanced_ocr = async (request: NextRequest) => {
+  console.log("Enhanced OCR API called with POST method");
+  
+  let inputPath = "";
+  
+  await ensureDirectories();
+  
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file") as any as File;
+    
+    if (!file) {
+      return createJsonResponse({
+        success: false,
+        error: "No file provided"
+      }, 400);
+    }
+    
+    // Get file data
+    const fileName = file.name;
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    
+    // Determine upload path
+    const uploadDir = join(process.cwd(), "uploads");
+    inputPath = join(uploadDir, fileName);
+    
+    // Write the file to uploads directory
+    await writeFile(inputPath, buffer);
+    console.log(`File saved: ${inputPath}`);
+    
+    // Process enhanced OCR options from form data
+    const options = {
+      enableCLAHE: formData.get("enableCLAHE")?.toString() === "true",
+      enableEdgeEnhancement: formData.get("enableEdgeEnhancement")?.toString() === "true",
+      enableDeskew: formData.get("enableDeskew")?.toString() === "true",
+      enableHighlightOptimization: formData.get("enableHighlightOptimization")?.toString() === "true",
+      language: formData.get("language")?.toString() || "eng"
+    };
+    
+    // Load enhanced OCR pipeline
+    const enhancedOCRPipeline = new (await import('../../../lib/enhanced-ocr-pipeline')).default();
+    
+    const pipelineOptions = {
+      outputDir: path.join(process.cwd(), 'processed'),
+      language: options.language,
+      preprocessing: {
+        applyCLAHE: options.enableCLAHE,
+        enhanceEdges: options.enableEdgeEnhancement,
+        deskew: options.enableDeskew,
+        optimizeHighlightedText: options.enableHighlightOptimization,
+        normalize: true
+      }
+    };
+
+    // Process document with enhanced OCR pipeline
+    const result = await enhancedOCRPipeline.processDocument(inputPath, pipelineOptions);
+
+    if (result.error) {
+      return createJsonResponse({ 
+        success: false, 
+        error: result.error 
+      }, 500);
+    }
+
+    return createJsonResponse({
+      success: true,
+      text: result.text,
+      confidence: result.confidence,
+      processingTime: result.processingTime,
+      documentType: result.documentType,
+      wordCount: result.wordCount,
+      preprocessingOperations: result.preprocessingOperations,
+      highlightedRegionsCount: result.highlightedRegions.length
+    });
+
+  } catch (error) {
+    logger.error(`Enhanced OCR processing failed: ${error}`);
+    return createJsonResponse({ 
+      success: false, 
+      error: 'Enhanced OCR processing failed' 
+    }, 500);
+  }
+}
+
 // Other HTTP methods
 export const GET = async () => {
   return createJsonResponse({ success: false, error: "Method Not Allowed" }, 405);

@@ -164,6 +164,56 @@ export class HighlightDetector {
   }
 
   /**
+   * Enhanced highlight detection with improved preprocessing
+   */
+  async detectHighlightsWithEnhancedPreprocessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply optimized preprocessing for highlight detection
+      const sessionDir = path.join(this.tempDir, `enhanced_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      
+      const preprocessedPath = await this.preprocessForEnhancedHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Proceed with highlight detection on the enhanced image
+      const result = await this.detectHighlights(preprocessedPath, {
+        ...options,
+        sensitivityLevel: 'high', // Increase sensitivity for preprocessed image
+        enableDynamicThresholding: true
+      });
+      
+      // Enhanced text extraction from detected highlights
+      if (result.hasHighlights && result.highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          preprocessedPath,
+          result.highlightRegions,
+          sessionDir
+        );
+      }
+      
+      return {
+        ...result,
+        processingTime: Date.now() - startTime
+      };
+      
+    } catch (error) {
+      logger.error(`Enhanced highlight detection failed: ${error}`);
+      // Fall back to regular detection
+      return this.detectHighlights(imagePath, options);
+    }
+  }
+
+  /**
    * Prepare image for highlight detection (enhanced version)
    */
   private async prepareImage(inputPath: string, sessionDir: string): Promise<string> {
@@ -242,6 +292,58 @@ export class HighlightDetector {
   }
 
   /**
+   * Preprocessing optimized specifically for highlight detection
+   */
+  private async preprocessForEnhancedHighlightDetection(
+    imagePath: string,
+    sessionDir: string,
+    useAdvancedFiltering: boolean
+  ): Promise<string> {
+    try {
+      const preprocessedPath = path.join(sessionDir, 'enhanced_preprocessed_for_highlights.png');
+      
+      // Enhanced preprocessing pipeline for highlight detection
+      const commands = [
+        // Step 1: Color space optimization
+        `convert "${imagePath}" -colorspace sRGB -depth 8 "${path.join(sessionDir, 'step1.png')}"`,
+        
+        // Step 2: Enhanced channel separation and normalization
+        `convert "${path.join(sessionDir, 'step1.png')}" -separate -normalize -combine "${path.join(sessionDir, 'step2.png')}"`,
+        
+        // Step 3: Saturation enhancement for better highlight detection
+        `convert "${path.join(sessionDir, 'step2.png')}" -modulate 100,150,100 "${path.join(sessionDir, 'step3.png')}"`,
+        
+        // Step 4: Adaptive contrast enhancement
+        `convert "${path.join(sessionDir, 'step3.png')}" -adaptive-blur 0x1 -normalize "${preprocessedPath}"`,
+      ];
+      
+      // Execute commands sequentially
+      for (const command of commands) {
+        await execAsync(command);
+      }
+      
+      // Cleanup intermediate files
+      await Promise.all([
+        execAsync(`rm -f "${path.join(sessionDir, 'step1.png')}"`).catch(() => {}),
+        execAsync(`rm -f "${path.join(sessionDir, 'step2.png')}"`).catch(() => {}),
+        execAsync(`rm -f "${path.join(sessionDir, 'step3.png')}"`).catch(() => {})
+      ]);
+      
+      if (fs.existsSync(preprocessedPath)) {
+        logger.info('Successfully preprocessed image for enhanced highlight detection');
+        return preprocessedPath;
+      } else {
+        logger.warn('Enhanced preprocessing failed, using original image');
+        return imagePath;
+      }
+      
+    } catch (error) {
+      logger.warn(`Enhanced preprocessing for highlight detection failed: ${error}`);
+      return imagePath;
+    }
+  }
+
+  /**
    * Enhanced highlight region detection with improved algorithms and adaptive contrast
    */
   private async detectHighlightRegionsEnhanced(
@@ -257,9 +359,9 @@ export class HighlightDetector {
       adaptiveContrast?: boolean;
     }
   ): Promise<HighlightRegion[]> {
-    // Apply adaptive contrast enhancement
+    // Apply adaptive contrast enhancement  
     const contrastEnhancedPath = options.adaptiveContrast 
-      ? await this.enhanceContrastAdaptive(imagePath, path.join(sessionDir, 'contrast_enhanced.png'))
+      ? await enhanceContrastAdaptive(imagePath, path.join(sessionDir, 'contrast_enhanced.png'))
       : imagePath;
 
     // Helper function for adaptive contrast
@@ -386,11 +488,10 @@ export class HighlightDetector {
         const colorspaceImagePath = path.join(sessionDir, `${colorspace.toLowerCase()}_converted.png`);
         await execAsync(`convert "${imagePath}" -colorspace ${colorspace} "${colorspaceImagePath}"`);
         
-        const regions = await this.detectColorRegionsInColorspace(
+        const regions = await this.detectColorRegionsEnhanced(
           colorspaceImagePath,
           sessionDir,
           color,
-          colorspace,
           options
         );
         
@@ -744,23 +845,29 @@ export class HighlightDetector {
         const region = regions[i];
         const cropPath = path.join(sessionDir, `highlight_${i}_enhanced.png`);
         
-        // Enhanced cropping with padding and preprocessing
-        const padding = 5; // Add padding around the region
+        // Enhanced cropping with preprocessing
+        const padding = 10;
         const expandedCrop = `${region.width + (padding * 2)}x${region.height + (padding * 2)}+${Math.max(0, region.x - padding)}+${Math.max(0, region.y - padding)}`;
         
-        // Create enhanced crop with preprocessing for better OCR
-        await execAsync(`convert "${imagePath}" -crop ${expandedCrop} -resize 200% -sharpen 0x1 -contrast-stretch 2%x2% "${cropPath}"`);
+        // Create enhanced crop with multiple OCR optimization techniques
+        await execAsync(`convert "${imagePath}" -crop ${expandedCrop} \
+          -colorspace Lab -channel 0 -equalize -channel RG -equalize -colorspace sRGB \
+          -modulate 100,130,100 \
+          -unsharp 0x1+1.3+0.05 \
+          -contrast-stretch 3%x97% \
+          -resize 200% \
+          "${cropPath}"`);
         
         if (fs.existsSync(cropPath)) {
-          // Use enhanced Tesseract settings for highlighted text
+          // Use multiple OCR approaches for better accuracy
           const textOutputPath = path.join(sessionDir, `highlight_${i}_enhanced_text`);
           
-          // Try multiple OCR approaches for better accuracy
           const ocrApproaches = [
             '--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;-()[]{}/" \t\n',
             '--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;-()[]{}/" \t\n',
             '--psm 6',
-            '--psm 13' // Raw line for single text lines
+            '--psm 13',
+            '--psm 11 -c tessedit_do_invert=1'
           ];
           
           let bestText = '';
@@ -771,11 +878,11 @@ export class HighlightDetector {
               await execAsync(`tesseract "${cropPath}" "${textOutputPath}_temp" -l eng ${approach} 2>/dev/null`);
               
               const textFilePath = `${textOutputPath}_temp.txt`;
+              
               if (fs.existsSync(textFilePath)) {
                 const text = fs.readFileSync(textFilePath, 'utf-8').trim();
                 
                 if (text.length > 0) {
-                  // Calculate text quality score
                   const textQuality = this.calculateTextQuality(text);
                   
                   if (textQuality > bestConfidence) {
@@ -794,12 +901,10 @@ export class HighlightDetector {
           
           if (bestText.length > 0) {
             region.text = this.cleanExtractedText(bestText);
-            region.confidence = Math.min(region.confidence + (bestConfidence * 0.3), 1.0);
-            
+            region.confidence = Math.min(region.confidence + (bestConfidence * 0.5), 1.0);
             logger.info(`Enhanced text extraction for region ${i}: "${region.text.substring(0, 50)}..."`);
           }
         }
-        
       } catch (error) {
         logger.warn(`Enhanced text extraction failed for region ${i}: ${error}`);
       }
@@ -810,41 +915,32 @@ export class HighlightDetector {
    * Calculate text quality score for OCR results
    */
   private calculateTextQuality(text: string): number {
-    let score = 0;
+    if (!text || text.length === 0) return 0;
     
-    // Length score (longer text usually indicates better extraction)
-    const lengthScore = Math.min(text.length / 50, 1.0) * 0.3;
-    score += lengthScore;
+    let score = 0.5; // Base score
     
-    // Word ratio score (higher ratio of valid words)
-    const words = text.split(/\s+/);
-    const validWords = words.filter(word => 
-      word.length > 1 && 
-      /^[a-zA-Z0-9.,!?:;\-()[\]{}/"'\s]+$/.test(word)
-    );
-    const wordRatio = validWords.length / words.length;
-    score += wordRatio * 0.4;
+    // Check for complete words
+    const words = text.split(/\s+/).filter(Boolean);
+    const validWords = words.filter(word => /^[A-Za-z0-9.,!?:;\-()[\]{}/"']+$/.test(word));
+    const wordRatio = words.length > 0 ? validWords.length / words.length : 0;
+    score += wordRatio * 0.3;
     
-    // Character diversity score
-    const uniqueChars = new Set(text.toLowerCase().replace(/\s/g, '')).size;
-    const diversityScore = Math.min(uniqueChars / 10, 1.0) * 0.2;
-    score += diversityScore;
-    
-    // No strange artifacts score
-    const hasStrangeChars = /[^\w\s.,!?:;\-()[\]{}/"']/.test(text);
-    if (!hasStrangeChars) score += 0.1;
+    // Check for reasonable character distribution
+    const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
+    const totalChars = text.length;
+    const alphaRatio = totalChars > 0 ? alphaCount / totalChars : 0;
+    if (alphaRatio > 0.5) score += 0.2;
     
     return Math.min(score, 1.0);
   }
 
   /**
-   * Clean extracted text by removing OCR artifacts
+   * Clean extracted text from highlighted regions
    */
   private cleanExtractedText(text: string): string {
     return text
-      .replace(/[^\w\s.,!?:;\-()[\]{}/"']/g, '') // Remove strange artifacts
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .replace(/([.!?])\s*([a-z])/g, '$1 $2') // Fix spacing after punctuation
+      .replace(/\s+/g, ' ')
+      .replace(/[^\w\s.,!?:;\-()[\]{}/"']/g, '')
       .trim();
   }
 

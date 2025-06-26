@@ -128,6 +128,41 @@ export const config: AppConfig = {
   },
 };
 
+/**
+ * Enhanced preprocessing configuration from environment variables
+ */
+export function getEnhancedPreprocessingConfig(): any {
+  return {
+    applyCLAHE: getEnvBool('OCR_ENABLE_CLAHE', true),
+    claheClipLimit: getEnvNumber('OCR_CLAHE_CLIP_LIMIT', 2.5),
+    enhanceEdges: getEnvBool('OCR_ENABLE_EDGE_ENHANCEMENT', true),
+    edgeStrength: getEnvNumber('OCR_EDGE_STRENGTH', 1.2),
+    deskew: getEnvBool('OCR_ENABLE_DESKEW', true),
+    perspectiveCorrection: getEnvBool('OCR_ENABLE_PERSPECTIVE_CORRECTION', false),
+    optimizeHighlightedText: getEnvBool('OCR_OPTIMIZE_HIGHLIGHTED_TEXT', true),
+    normalize: getEnvBool('OCR_ENABLE_NORMALIZATION', true)
+  };
+}
+
+/**
+ * Get environment boolean value
+ */
+function getEnvBool(key: string, defaultValue: boolean): boolean {
+  const val = process.env[key];
+  if (val === undefined) return defaultValue;
+  return val.toLowerCase() === 'true';
+}
+
+/**
+ * Get environment number value
+ */
+function getEnvNumber(key: string, defaultValue: number): number {
+  const val = process.env[key];
+  if (val === undefined) return defaultValue;
+  const num = parseFloat(val);
+  return isNaN(num) ? defaultValue : num;
+}
+
 // Validate critical configuration
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];

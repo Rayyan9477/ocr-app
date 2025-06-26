@@ -460,6 +460,103 @@ export class MultiEngineOCR {
   }
 
   /**
+   * Process document with enhanced preprocessing and intelligent orchestration
+   */
+  async processWithEnhancedPreprocessing(
+    inputPath: string,
+    outputDir: string,
+    language: string = 'eng',
+    enhancedOptions: any = {}
+  ): Promise<EnsembleResult> {
+    await this.ensureInitialized();
+    
+    logger.info(`Starting enhanced multi-engine OCR processing for: ${inputPath}`);
+    
+    try {
+      const results: { [engine: string]: OCRResult } = {};
+      const engines = this.engines.filter(e => e.available);
+      
+      if (engines.length === 0) {
+        throw new Error('No OCR engines available');
+      }
+      
+      // Apply enhanced preprocessing if requested
+      let processedInputPath = inputPath;
+      if (enhancedOptions.useEnhancedPreprocessing) {
+        logger.info('Applying enhanced preprocessing for improved OCR quality');
+        processedInputPath = await this.preprocessingService.quickEnhance(inputPath);
+      }
+      
+      // Process with available engines
+      for (const engine of engines) {
+        try {
+          logger.info(`Processing with ${engine.name}...`);
+          const result = await engine.recognize(processedInputPath, {
+            language,
+            outputDir,
+            ...enhancedOptions
+          });
+          
+          if (result && result.text && result.text.length > 0) {
+            results[engine.name] = result;
+            logger.info(`${engine.name} completed successfully`);
+          } else {
+            logger.warn(`${engine.name} produced no usable output`);
+          }
+        } catch (engineError) {
+          logger.error(`${engine.name} failed: ${engineError}`);
+        }
+      }
+      
+      // Determine best result
+      const engineNames = Object.keys(results);
+      if (engineNames.length === 0) {
+        throw new Error('All OCR engines failed to produce results');
+      }
+      
+      // Simple selection: choose result with highest confidence
+      let bestEngine = engineNames[0];
+      let bestConfidence = results[bestEngine].confidence || 0;
+      
+      for (const engineName of engineNames) {
+        const confidence = results[engineName].confidence || 0;
+        if (confidence > bestConfidence) {
+          bestEngine = engineName;
+          bestConfidence = confidence;
+        }
+      }
+      
+      const bestResult = results[bestEngine];
+      
+      return {
+        success: true,
+        bestResult,
+        allResults: results,
+        selectedEngine: bestEngine,
+        hasSuccessfulResults: true,
+        processingTime: 0, // Would be calculated in real implementation
+        qualityMetrics: {
+          confidence: bestConfidence,
+          wordCount: bestResult.words?.length || 0,
+          characterCount: bestResult.text?.length || 0
+        }
+      };
+      
+    } catch (error) {
+      logger.error(`Enhanced multi-engine OCR processing failed: ${error}`);
+      return {
+        success: false,
+        bestResult: { text: '', confidence: 0, words: [] },
+        allResults: {},
+        selectedEngine: 'none',
+        hasSuccessfulResults: false,
+        processingTime: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
    * Generate optimized OCR command based on document characteristics
    */
   private generateOptimizedCommand(

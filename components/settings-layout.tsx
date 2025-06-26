@@ -1,7 +1,7 @@
 import React from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle } from "lucide-react";
+import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SettingsLayoutProps {
@@ -33,7 +33,7 @@ export function SettingsLayout({
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/70 cursor-help" />
+                      <Info className="h-3.5 w-3.5 text-muted-foreground/70 cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       <p className="text-xs">{tooltip}</p>

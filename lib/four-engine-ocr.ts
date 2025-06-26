@@ -1,12 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, statSync } from 'fs';
-import { writeFile      try {
-        // All engines are built-in, so they're always available
-        engine.available = true;
-        
-        logger.info(`OCR engine ${engine.name} is available`);
-      } catch (error) { from 'fs/promises';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import logger from './logger';
 import { preprocessingService } from './preprocessing-service';
@@ -347,7 +342,8 @@ export class FourEngineOCRService {
   ): Promise<void> {
     const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('fs/promises');
     
-    // Enhanced Tesseract processing using internal module
+    try {
+      // Enhanced Tesseract processing using internal module
       let enhancement = 'medical_bills'; // Default to medical bills
       if (options.enhanceHandwriting) enhancement = 'medical_handwritten';
       if (options.medicalTerminology) enhancement = 'medical_structured';
@@ -385,6 +381,8 @@ export class FourEngineOCRService {
         handwriting_support: engine.handwritingSupport
       };
       await writeFileAsync(outputPath, JSON.stringify(enhancedResult, null, 2));
+    } catch (error) {
+      throw new Error(`Enhanced Tesseract processing failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -402,18 +400,14 @@ export class FourEngineOCRService {
     try {
       if (engine.name === 'enhanced-tesseract') {
         // Enhanced Tesseract returns a more structured output
+        const { readFile } = await import('fs/promises');
         const jsonContent = await readFile(outputPath, 'utf-8');
         const enhancedResult = JSON.parse(jsonContent);
         extractedText = enhancedResult.text || '';
         confidence = enhancedResult.confidence || 0;
         
         // Extract additional metadata if available
-        if (enhancedResult.metadata) {
-          this.lastProcessedResult.metadata = {
-            ...this.lastProcessedResult.metadata,
-            ...enhancedResult.metadata
-          };
-        }
+        // Note: metadata can be used by caller if needed
       } else {
         // OCRmyPDF and Tesseract - extract from PDF
         const { stdout } = await execAsync(`pdftotext "${outputPath}" -`);
@@ -910,6 +904,7 @@ export class FourEngineOCRService {
       await execAsync(`tesseract "${inputPath}" "${hocrPath.replace('.hocr', '')}" -l eng hocr`);
       
       if (existsSync(hocrPath)) {
+        const { readFile } = await import('fs/promises');
         const hocrContent = await readFile(hocrPath, 'utf-8');
         
         const confidences: number[] = [];

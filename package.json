@@ -13,7 +13,11 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "remove-python": "chmod +x ./remove-python-dependencies.sh && ./remove-python-dependencies.sh",
-    "clean": "rm -rf .next node_modules"
+    "clean": "rm -rf .next node_modules",
+    "enhanced-ocr": "npx ts-node bin/enhanced-ocr.ts",
+    "test:enhanced-ocr": "chmod +x ./test-enhanced-preprocessing.sh && ./test-enhanced-preprocessing.sh",
+    "setup:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').createDefaultEnvConfig()\"",
+    "validate:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').initializeEnhancedOCR()\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

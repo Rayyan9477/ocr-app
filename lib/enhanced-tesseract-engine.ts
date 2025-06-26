@@ -1,6 +1,6 @@
 import { createWorker, PSM, OEM, Worker } from 'tesseract.js';
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 import logger from './logger';
 import { OCREngine } from './multi-engine-ocr';
 import { generateOutputFilename } from './utils';

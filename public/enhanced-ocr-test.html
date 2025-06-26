@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced OCR Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 200px;
+            margin-bottom: 5px;
+        }
+        input[type="file"], input[type="checkbox"] {
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .results {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Enhanced OCR Pipeline Test</h1>
+    
+    <form id="ocrForm">
+        <div class="form-group">
+            <label for="file">Select Image or PDF:</label>
+            <input type="file" id="file" name="file" accept="image/*,application/pdf" required>
+        </div>
+        
+        <div class="form-group">
+            <label>Enhancement Options:</label>
+            <div class="checkbox-group">
+                <div class="checkbox-item">
+                    <input type="checkbox" id="applyCLAHE" name="applyCLAHE" checked>
+                    <label for="applyCLAHE">Apply CLAHE</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="deskew" name="deskew" checked>
+                    <label for="deskew">Deskew</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="enhanceEdges" name="enhanceEdges">
+                    <label for="enhanceEdges">Enhance Edges</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="normalize" name="normalize">
+                    <label for="normalize">Normalize</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="perspectiveCorrection" name="perspectiveCorrection">
+                    <label for="perspectiveCorrection">Perspective Correction</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="optimizeHighlightedText" name="optimizeHighlightedText">
+                    <label for="optimizeHighlightedText">Optimize Highlighted Text</label>
+                </div>
+            </div>
+        </div>
+        
+        <button type="submit">Process with Enhanced OCR</button>
+    </form>
+    
+    <div id="loading" style="display: none;">
+        <p>Processing... Please wait.</p>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        document.getElementById('ocrForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const fileInput = document.getElementById('file');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            
+            formData.append('file', file);
+            
+            // Add enhancement options
+            const checkboxes = ['applyCLAHE', 'deskew', 'enhanceEdges', 'normalize', 'perspectiveCorrection', 'optimizeHighlightedText'];
+            checkboxes.forEach(name => {
+                const checkbox = document.getElementById(name);
+                formData.append(name, checkbox.checked ? 'true' : 'false');
+            });
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').innerHTML = '';
+            
+            try {
+                const response = await fetch('/api/enhanced-ocr-test', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                let resultsHtml = '';
+                if (result.success) {
+                    resultsHtml = `
+                        <div class="results success">
+                            <h3>✅ Processing Successful</h3>
+                            <p><strong>Confidence:</strong> ${result.confidence}%</p>
+                            <p><strong>Processing Time:</strong> ${result.processingTime}ms</p>
+                            <p><strong>Word Count:</strong> ${result.wordCount}</p>
+                            <p><strong>Preprocessing Operations:</strong> ${result.preprocessingOperations.join(', ')}</p>
+                            <p><strong>Highlighted Regions:</strong> ${result.highlightedRegions}</p>
+                            <h4>Extracted Text:</h4>
+                            <pre style="white-space: pre-wrap; background: #f1f1f1; padding: 10px; border-radius: 4px;">${result.text}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultsHtml = `
+                        <div class="results error">
+                            <h3>❌ Processing Failed</h3>
+                            <p><strong>Error:</strong> ${result.error}</p>
+                            <p><strong>Details:</strong> ${result.details || 'No additional details'}</p>
+                        </div>
+                    `;
+                }
+                
+                document.getElementById('results').innerHTML = resultsHtml;
+                
+            } catch (error) {
+                document.getElementById('results').innerHTML = `
+                    <div class="results error">
+                        <h3>❌ Request Failed</h3>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
