@@ -244,267 +244,160 @@ export default function Home() {
       
       clearTimeout(timeoutId);
       
-      // Clone the response so we can read it multiple times
-      const responseForText = response.clone();
-      const responseForJson = response.clone();
-      
-      // Try to parse as JSON first, regardless of status code
+      // Get response text regardless of status first, to ensure we can always see the content
+      let responseText = '';
       try {
-        const data: OcrResponse = await responseForJson.json();
+        // Clone the response so we can read it multiple times if needed
+        const responseForText = response.clone();
+        responseText = await responseForText.text();
         
-        // Check if the response was successful or has a structured error
+        // Log raw response for debugging critical errors
+        if (!response.ok) {
+          console.warn(`Server returned status ${response.status}. Raw response:`, responseText);
+          appendOutput(`⚠️ Server returned status ${response.status}. Checking if processing continued...`);
+        }
+      } catch (textError) {
+        console.error("Failed to read response text:", textError);
+        appendOutput("⚠️ Failed to read server response text");
+      }
+      
+      // Try to parse as JSON, with careful error handling
+      try {
+        // Attempt to parse the responseText as JSON
+        let data: OcrResponse;
+        
+        try {
+          data = JSON.parse(responseText) as OcrResponse;
+        } catch (jsonError) {
+          appendOutput(`❌ Error: Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
+          throw new Error(`Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
+        }
+        
+        // Check if the response status was an error
         if (!response.ok) {
           // Handle error responses with valid JSON structure
           appendOutput(`⚠️ Server responded with status ${response.status}: ${data.error || 'Unknown error'}`);
           
           // Even with an error status, the file might have been processed successfully
           if (data.outputFile) {
-            appendOutput(`✅ Despite error, server indicates file was processed: ${data.outputFile}`);
+            appendOutput(`✅ Despite error status, server returned an output file: ${data.outputFile}`);
             return data; // Return data with outputFile info
           }
 
-          // If details is an array of engine failures, summarise failures
+          // If details is an array of engine failures, summarize failures
           if (Array.isArray(data.details)) {
             const summary = data.details.map((d: any) => `${d.engine}: ${d.error}`).join('; ');
             appendOutput(`⚠️ All OCR engines failed: ${summary}`);
-            return data;
           }
 
           // If there's an error about file containing text, retry with force option
-          if (typeof data.details === 'string' && data.details.toLowerCase().includes('already contains text') && !retry) {
+          const details = data.details?.toString().toLowerCase() || '';
+          if (details.includes('already contains text') && !retry) {
             appendOutput("Attempting retry with force-ocr option...");
-            return await handleSuccessResponse(data, fileName, retry);
+            return await handleRetryWithForce(formData, fileName);
           }
 
-          // Just return the data - it contains structured error information
+          // Return the error data
           return data;
         }
         
-        const result = await handleSuccessResponse(data, fileName, retry);
-        return result;
+        // Handle successful response
+        return await handleSuccessResponse(data, fileName, retry);
       } catch (jsonError) {
-        console.error("JSON parse error:", jsonError);
+        // JSON parsing or handling failed
+        console.error("Error handling response:", jsonError);
         
-        // If the response status is not OK, we should handle that first
-        if (!response.ok) {
-          appendOutput(`⚠️ Server returned status ${response.status}. Checking if processing continued...`);
-        } else {
-          appendOutput(`⚠️ Server response couldn't be parsed as JSON despite status ${response.status}.`);
-        }
-        
-        // If JSON parsing fails, read as text
-        const responseText = await responseForText.text();
-        appendOutput(`Raw response: ${responseText.substring(0, 200)}...`);
-        
-        // Check if file was actually processed despite the JSON error or HTTP status
-        // Extract the base filename without extension
-        const baseFileName = fileName.split('.').slice(0, -1).join('.');
-        // Try potential filename formats (with and without timestamp)
-        const timestamp = fileName.match(/(\d{13})\.pdf$/)?.[1] || '';
-        
-        // Try with timestamp first (server adds timestamps)
-        const potentialOutputFiles = [
-          // If filename already includes timestamp: baseFileName_ocr.pdf
-          `${baseFileName}_ocr.pdf`,
-          // If the server generated timestamp: baseFileName_timestamp_ocr.pdf
-          timestamp ? `${baseFileName}_ocr.pdf` : null,
-          // General case with pattern based on logs: baseFileName_timestamp_ocr.pdf 
-          // (get latest files from filesystem)
-        ].filter(Boolean);
-        
-        // Try each potential filename
-        let checkResponse = null;
-        let foundFile = null;
-        
-        for (const file of potentialOutputFiles) {
-          if (!file) continue;
-          checkResponse = await fetch(`/api/download?file=${encodeURIComponent(file)}`);
-          if (checkResponse.ok) {
-            foundFile = file;
-            break;
-          }
-        }
-        
-        // If still not found, try checking processed directory for any matching files
-        if (!checkResponse?.ok) {
-          const statusResponse = await fetch('/api/status');
-          if (statusResponse.ok) {
-            const statusData = await statusResponse.json();
-            const matchingFiles = statusData.files?.filter((f: any) => 
-              f.name.includes(baseFileName.replace(/\d+$/, '')) && f.name.includes('_ocr.pdf')
-            );
-            
-            if (matchingFiles?.length > 0) {
-              foundFile = matchingFiles[0].name;
-              checkResponse = await fetch(`/api/download?file=${encodeURIComponent(foundFile)}`);
-            }
-          }
-        }
-        
-        if (checkResponse?.ok && foundFile) {
-          appendOutput("✅ File was processed successfully despite response issues");
-          appendOutput(`📄 Output file available: ${foundFile}`);
-          
-          // Add to processed files even if we had a JSON parsing error
-        addProcessedFile({
-          name: foundFile,
-          path: `/api/download?file=${encodeURIComponent(foundFile)}`,
-        });
-          
-          return {
-            success: true,
-            outputFile: foundFile
-          };
-        }
-        
-        throw new Error(`Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
+        // Try to recover by checking if a file was processed despite the error
+        return await attemptRecoveryAfterError(fileName, responseText);
       }
     } catch (error) {
-      console.error("Error during OCR execution:", error);
+      console.error("Fatal error during OCR execution:", error);
+      
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           appendOutput(`❌ OCR process timed out for ${fileName}`);
-        } else if (!error.message.includes('HTTP error')) {
+        } else {
           // Only log non-HTTP errors as they were already handled
-          appendOutput(`❌ Error: ${error.message}`);
+          appendOutput(`❌ Error processing ${fileName}: ${error.message}`);
         }
-        throw error;
       }
-      throw new Error('Unknown error during OCR execution');
+      
+      throw error;
     }
   };
 
-  // Helper function to handle successful JSON response
-  const handleSuccessResponse = async (data: OcrResponse, fileName: string, retry: boolean): Promise<OcrResponse> => {
-    if (!data.success) {
-      // Handle error cases with retry if needed
-      if (data.details?.toLowerCase().includes('already contains text') && !retry) {
-        appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr...");
-        const newFormData = new FormData();
-        newFormData.append("file", files[currentFileIndex]);
-        newFormData.append("force", "true");
-        
-        // Copy other form data properties from commandOptions
-        if (lastSubmittedFormData) {
-          for (const [key, value] of Array.from(lastSubmittedFormData.entries())) {
-            if (key !== "file" && key !== "force") {
-              newFormData.append(key, value as string);
-            }
-          }
-        } else {
-          // Fallback to command options
-          const opts = commandOptions;
-          newFormData.append("language", opts.language);
-          newFormData.append("deskew", opts.deskew.toString());
-          newFormData.append("skipText", opts.skipText.toString());
-          newFormData.append("redoOcr", opts.redoOcr.toString());
-          newFormData.append("removeBackground", opts.removeBackground.toString());
-          newFormData.append("clean", opts.clean.toString());
-          newFormData.append("optimize", opts.optimize.toString());
-          newFormData.append("rotate", opts.rotate);
-          newFormData.append("pdfRenderer", opts.pdfRenderer);
+  // Helper function to handle retry with force option
+  const handleRetryWithForce = async (formData: FormData, fileName: string): Promise<OcrResponse> => {
+    appendOutput("⚠️ Detected prior OCR layer. Retrying with --force-ocr...");
+    const newFormData = new FormData();
+    newFormData.append("file", files[currentFileIndex]);
+    newFormData.append("force", "true");
+    
+    // Copy other form data properties
+    if (lastSubmittedFormData) {
+      for (const [key, value] of Array.from(lastSubmittedFormData.entries())) {
+        if (key !== "file" && key !== "force") {
+          newFormData.append(key, value as string);
         }
-        
-        return await executeOcrWithRetry(newFormData, fileName, true, "/api/ocr"); // Use regular OCR for retry
-      } else if (data.details?.toLowerCase().includes('tagged pdf')) {
-        appendOutput(`⚠️ ${data.error || 'PDF is a tagged PDF'}: ${data.details || ''}`);
-        throw new Error(data.error || "PDF is a tagged PDF");
-      } else {
-        // For other error types, display the error and throw
-        appendOutput(`❌ OCR process failed: ${data.error || 'Unknown error'}`);
-        if (data.details) {
-          appendOutput(`Details: ${data.details}`);
-        }
-        throw new Error(data.error || "OCR process failed");
       }
+    } else {
+      // Fallback to command options
+      const opts = commandOptions;
+      newFormData.append("language", opts.language);
+      newFormData.append("deskew", opts.deskew.toString());
+      newFormData.append("skipText", opts.skipText.toString());
+      newFormData.append("redoOcr", opts.redoOcr.toString());
+      newFormData.append("removeBackground", opts.removeBackground.toString());
+      newFormData.append("clean", opts.clean.toString());
+      newFormData.append("optimize", opts.optimize.toString());
+      newFormData.append("rotate", opts.rotate);
+      newFormData.append("pdfRenderer", opts.pdfRenderer);
     }
+    
+    return await executeOcrWithRetry(newFormData, fileName, true, "/api/ocr");
+  };
 
-    // Process successful response
-    if (data.details) {
-      appendOutput(`📋 Process details: ${data.details}`);
-    }
-    if (data.warning) {
-      appendOutput(`⚠️ Warning: ${data.warning}`);
-    }
+  // Helper function to attempt recovery after error
+  const attemptRecoveryAfterError = async (fileName: string, responseText: string): Promise<OcrResponse> => {
+    appendOutput(`Raw response: ${responseText.substring(0, 200)}...`);
     
-    console.log("Processing successful response data:", JSON.stringify(data, null, 2));
+    // Extract the base filename without extension
+    const baseFileName = fileName.split('.').slice(0, -1).join('.');
     
-    if (!data.outputFile) {
-      appendOutput("⚠️ Warning: No output file path received from server");
-      
-      // Attempt to check if file was processed despite missing path
-      const baseFileName = fileName.split('.')[0];
-      const potentialFilename = `${baseFileName}_ocr.pdf`;
-      
-      appendOutput(`Attempting to look for potential output file: ${potentialFilename}`);
-      
+    // Try potential filename formats
+    const timestamp = new Date().getTime();
+    const potentialOutputFiles = [
+      `${baseFileName}_ocr.pdf`,
+      `${baseFileName}_${timestamp}_ocr.pdf`,
+      `${baseFileName.replace(/\s+/g, '_')}_ocr.pdf`
+    ];
+    
+    // Try each potential filename
+    for (const file of potentialOutputFiles) {
       try {
-        // Check if file exists via download endpoint
-        const checkResponse = await fetch(`/api/download?file=${encodeURIComponent(potentialFilename)}`);
+        const checkResponse = await fetch(`/api/download?file=${encodeURIComponent(file)}`);
         if (checkResponse.ok) {
-          appendOutput(`✅ Found processed file with name: ${potentialFilename}`);
-          data.outputFile = potentialFilename;
-        } else {
-          throw new Error("No output file path received from server and couldn't find alternative");
+          appendOutput("✅ File was processed successfully despite response issues");
+          appendOutput(`📄 Output file available: ${file}`);
+          
+          // Add to processed files
+          addProcessedFile({
+            name: file,
+            path: `/api/download?file=${encodeURIComponent(file)}`,
+          });
+          
+          return {
+            success: true,
+            outputFile: file
+          };
         }
-      } catch (error) {
-        throw new Error("No output file path received from server");
+      } catch (checkError) {
+        console.warn(`Failed to check for potential output file ${file}:`, checkError);
       }
     }
     
-    appendOutput(`✅ Successfully processed ${fileName}`);
-    appendOutput(`📄 Output file: ${data.outputFile}`);
-    
-    // Display confidence information if available
-    if (data.confidence) {
-      const conf = data.confidence;
-      appendOutput(`📊 Confidence Analysis:`);
-      appendOutput(`   Average confidence: ${conf.averageConfidence.toFixed(1)}%`);
-      appendOutput(`   Pages processed: ${conf.pageCount}`);
-      
-      if (conf.hasLowConfidencePages) {
-        if (conf.errorPages.length > 0) {
-          appendOutput(`   ⚠️  Error pages (<70%): ${conf.errorPages.join(', ')}`);
-        }
-        if (conf.warningPages.length > 0) {
-          appendOutput(`   ⚠️  Warning pages (70-85%): ${conf.warningPages.join(', ')}`);
-        }
-        appendOutput(`   📝 Manual review recommended for low confidence pages`);
-      } else {
-        appendOutput(`   ✅ All pages processed with good confidence (>85%)`);
-      }
-    }
-    
-    // Display smart OCR specific information if available
-    if (data.smartOcrInfo) {
-      const smartInfo = data.smartOcrInfo;
-      appendOutput(`🧠 Smart OCR Results:`);
-      
-      if (smartInfo.preprocessingApplied) {
-        appendOutput(`   📸 Preprocessing: ${smartInfo.preprocessingLevel} enhancement applied`);
-      }
-      
-      if (smartInfo.multiEngineUsed) {
-        appendOutput(`   🔧 Multi-engine processing used`);
-        if (smartInfo.enginesUsed && smartInfo.enginesUsed.length > 0) {
-          appendOutput(`   📋 Engines: ${smartInfo.enginesUsed.join(', ')}`);
-        }
-        if (smartInfo.bestEngine) {
-          appendOutput(`   🏆 Best result from: ${smartInfo.bestEngine}`);
-        }
-      }
-      
-      if (smartInfo.processingTime) {
-        appendOutput(`   ⏱️  Total processing time: ${smartInfo.processingTime}s`);
-      }
-    }
-    
-    addProcessedFile({
-      name: data.outputFile,
-      path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
-    });
-    
-    return data;
+    // If all recovery attempts fail, throw original error
+    throw new Error(`Error processing ${fileName}: Server returned invalid JSON. Raw response: ${responseText.substring(0, 200)}...`);
   };
 
   // Check directory permissions before starting OCR

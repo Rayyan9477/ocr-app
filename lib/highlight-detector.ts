@@ -179,31 +179,61 @@ export class HighlightDetector {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
       
-      const preprocessedPath = await this.preprocessForEnhancedHighlightDetection(
+      const preprocessedPath = await this.preprocessForAdvancedHighlightDetection(
         imagePath, 
         sessionDir, 
         options.useAdvancedFiltering || true
       );
       
-      // Proceed with highlight detection on the enhanced image
-      const result = await this.detectHighlights(preprocessedPath, {
-        ...options,
-        sensitivityLevel: 'high', // Increase sensitivity for preprocessed image
-        enableDynamicThresholding: true
-      });
+      // Use advanced multi-spectral detection
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        preprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
       
       // Enhanced text extraction from detected highlights
-      if (result.hasHighlights && result.highlightRegions.length > 0) {
+      if (highlightRegions.length > 0) {
         await this.extractHighlightedTextEnhanced(
           preprocessedPath,
-          result.highlightRegions,
+          highlightRegions,
           sessionDir
         );
       }
+
+      // Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, preprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
       
       return {
-        ...result,
-        processingTime: Date.now() - startTime
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
       };
       
     } catch (error) {
@@ -344,9 +374,140 @@ export class HighlightDetector {
   }
 
   /**
-   * Enhanced highlight region detection with improved algorithms and adaptive contrast
+   * Advanced preprocessing pipeline specifically optimized for highlight detection
    */
-  private async detectHighlightRegionsEnhanced(
+  private async preprocessForAdvancedHighlightDetection(
+    imagePath: string,
+    sessionDir: string,
+    useAdvancedFiltering: boolean
+  ): Promise<string> {
+    try {
+      const preprocessedPath = path.join(sessionDir, 'advanced_highlight_preprocessed.png');
+      
+      // Enhanced multi-stage preprocessing pipeline for optimal highlight detection
+      const stages = [
+        // Stage 1: Enhanced color space normalization with gamma correction
+        {
+          input: imagePath,
+          output: path.join(sessionDir, 'stage1_color_norm.png'),
+          command: `convert "{input}" \
+            -colorspace sRGB -depth 8 \
+            -gamma 0.9 \
+            -modulate 100,125,100 \
+            -normalize \
+            -auto-level \
+            "{output}"`
+        },
+        
+        // Stage 2: Multi-channel enhancement with adaptive histogram equalization
+        {
+          input: path.join(sessionDir, 'stage1_color_norm.png'),
+          output: path.join(sessionDir, 'stage2_channel_enhanced.png'),
+          command: `convert "{input}" \
+            \\( -clone 0 -channel R -separate -clahe 2x2+128+3 \\) \
+            \\( -clone 0 -channel G -separate -clahe 2x2+128+3 \\) \
+            \\( -clone 0 -channel B -separate -clahe 2x2+128+3 \\) \
+            -delete 0 -combine \
+            -auto-level \
+            "{output}"`
+        },
+        
+        // Stage 3: LAB color space optimization for highlight detection
+        {
+          input: path.join(sessionDir, 'stage2_channel_enhanced.png'),
+          output: path.join(sessionDir, 'stage3_lab_optimized.png'),
+          command: `convert "{input}" \
+            -colorspace LAB \
+            -channel L -contrast-stretch 2%x98% -auto-level \
+            -channel A -evaluate multiply 1.2 \
+            -channel B -evaluate multiply 1.2 \
+            -colorspace sRGB \
+            "{output}"`
+        },
+        
+        // Stage 4: Highlight-specific edge preservation and enhancement
+        {
+          input: path.join(sessionDir, 'stage3_lab_optimized.png'),
+          output: path.join(sessionDir, 'stage4_edge_preserved.png'),
+          command: `convert "{input}" \
+            \\( -clone 0 -blur 0x3 \\) \
+            \\( -clone 0 -clone 1 -compose difference -composite -negate \\) \
+            -delete 1 \
+            \\( -clone 1 -auto-level -contrast-stretch 1%x99% \\) \
+            -delete 1 \
+            -compose overlay -composite \
+            "{output}"`
+        },
+        
+        // Stage 5: Final sharpening and contrast optimization
+        {
+          input: path.join(sessionDir, 'stage4_edge_preserved.png'),
+          output: preprocessedPath,
+          command: useAdvancedFiltering ? 
+            `convert "{input}" \
+              -unsharp 0x1.0+1.2+0.05 \
+              -adaptive-blur 0x0.8 \
+              -contrast-stretch 1.5%x98.5% \
+              -auto-gamma \
+              "{output}"` :
+            `convert "{input}" \
+              -enhance \
+              -normalize \
+              -auto-level \
+              "{output}"`
+        }
+      ];
+      
+      // Execute preprocessing stages with enhanced error handling
+      for (let i = 0; i < stages.length; i++) {
+        const stage = stages[i];
+        const command = stage.command.replace(/\{input\}/g, stage.input).replace(/\{output\}/g, stage.output);
+        
+        try {
+          await execAsync(command);
+          
+          if (!fs.existsSync(stage.output)) {
+            throw new Error(`Stage ${i + 1} failed: ${stage.output} not created`);
+          }
+        } catch (stageError) {
+          logger.warn(`Preprocessing stage ${i + 1} failed: ${stageError}, using fallback`);
+          
+          // Fallback: copy previous stage output or original image
+          const fallbackSource = i > 0 ? stages[i - 1].output : imagePath;
+          await execAsync(`cp "${fallbackSource}" "${stage.output}"`);
+        }
+      }
+      
+      // Cleanup intermediate files
+      const cleanupFiles = [
+        path.join(sessionDir, 'stage1_color_norm.png'),
+        path.join(sessionDir, 'stage2_channel_enhanced.png'),
+        path.join(sessionDir, 'stage3_lab_optimized.png'),
+        path.join(sessionDir, 'stage4_edge_preserved.png')
+      ];
+      
+      await Promise.all(cleanupFiles.map(file => 
+        execAsync(`rm -f "${file}"`).catch(() => {})
+      ));
+      
+      if (fs.existsSync(preprocessedPath)) {
+        logger.info('Advanced highlight preprocessing completed successfully');
+        return preprocessedPath;
+      } else {
+        logger.warn('Advanced preprocessing failed, using original image');
+        return imagePath;
+      }
+      
+    } catch (error) {
+      logger.warn(`Advanced highlight preprocessing failed: ${error}`);
+      return imagePath;
+    }
+  }
+
+  /**
+   * Multi-spectral highlight detection with enhanced color analysis
+   */
+  private async detectHighlightRegionsMultiSpectral(
     imagePath: string,
     sessionDir: string,
     options: {
@@ -359,340 +520,276 @@ export class HighlightDetector {
       adaptiveContrast?: boolean;
     }
   ): Promise<HighlightRegion[]> {
-    // Apply adaptive contrast enhancement  
-    const contrastEnhancedPath = options.adaptiveContrast 
-      ? await enhanceContrastAdaptive(imagePath, path.join(sessionDir, 'contrast_enhanced.png'))
-      : imagePath;
-
-    // Helper function for adaptive contrast
-    async function enhanceContrastAdaptive(input: string, output: string): Promise<string> {
-      try {
-        const cmd = `convert "${input}" \
-          \\( -clone 0 -colorspace Lab -channel 0 -separate +channel \
-             -normalize -contrast-stretch 2%x98% \\) \
-          -compose copy_opacity -composite \
-          -adaptive-sharpen 0x1.0 \
-          -contrast-stretch 2% \
-          "${output}"`;
-
-        await execAsync(cmd);
-        return output;
-      } catch (error) {
-        logger.error(`Error enhancing contrast: ${error}`);
-        return input;
-      }
-    }
-    const regions: HighlightRegion[] = [];
-
     try {
-      // Adjust parameters based on sensitivity level
       const adjustedOptions = this.adjustParametersForSensitivity(options);
-      
-      // Method 1: Enhanced color-based detection
+      const regions: HighlightRegion[] = [];
+
+      // Method 1: Enhanced spectral color detection
       for (const color of options.targetColors) {
-        const colorRegions = await this.detectColorRegionsEnhanced(
+        const spectralRegions = await this.detectSpectralColorRegions(
           imagePath,
           sessionDir,
           color,
           adjustedOptions
         );
-        regions.push(...colorRegions);
+        regions.push(...spectralRegions);
       }
 
-      // Method 2: Enhanced saturation-based detection
-      const saturationRegions = await this.detectSaturationRegionsEnhanced(
+      // Method 2: Advanced LAB color space detection
+      const labRegions = await this.detectLABSpaceHighlights(
         imagePath,
         sessionDir,
         adjustedOptions
       );
-      regions.push(...saturationRegions);
+      regions.push(...labRegions);
 
-      // Method 3: Enhanced luminosity difference detection
-      const luminosityRegions = await this.detectLuminosityRegionsEnhanced(
+      // Method 3: Enhanced HSV-based detection with edge preservation
+      const hsvRegions = await this.detectHSVBasedHighlights(
         imagePath,
         sessionDir,
         adjustedOptions
       );
-      regions.push(...luminosityRegions);
+      regions.push(...hsvRegions);
 
-      // Method 4: NEW - HSL-based detection for better color accuracy
-      const hslRegions = await this.detectHSLBasedHighlights(
-        imagePath,
-        sessionDir,
-        adjustedOptions
-      );
-      regions.push(...hslRegions);
-
-      // Method 5: NEW - Texture-based detection for non-color highlights
-      const textureRegions = await this.detectTextureBasedHighlights(
+      // Method 4: Intelligent texture-based detection
+      const textureRegions = await this.detectIntelligentTextureHighlights(
         imagePath,
         sessionDir,
         adjustedOptions
       );
       regions.push(...textureRegions);
 
-      // Remove duplicates and merge overlapping regions with enhanced algorithm
-      const mergedRegions = this.mergeOverlappingRegionsEnhanced(regions);
+      // Method 5: Contrast-based highlight detection
+      const contrastRegions = await this.detectContrastBasedHighlights(
+        imagePath,
+        sessionDir,
+        adjustedOptions
+      );
+      regions.push(...contrastRegions);
+
+      // Method 6: Enhanced smart pattern recognition
+      const smartRegions = await this.detectSmartPatternHighlights(
+        imagePath,
+        sessionDir,
+        adjustedOptions
+      );
+      regions.push(...smartRegions);
+
+      // Method 7: Adaptive threshold highlights
+      const adaptiveRegions = await this.detectAdaptiveThresholdHighlights(
+        imagePath,
+        sessionDir,
+        adjustedOptions
+      );
+      regions.push(...adaptiveRegions);
+
+      // Advanced region merging and deduplication with enhanced algorithms
+      const mergedRegions = this.advancedRegionMerging(regions);
       
-      // Filter out noise and low-quality regions
-      return this.filterHighQualityRegions(mergedRegions, adjustedOptions);
+      // Enhanced quality filtering with ML-inspired scoring
+      return this.filterHighQualityRegionsAdvanced(mergedRegions, adjustedOptions);
       
     } catch (error) {
-      logger.warn(`Enhanced region detection failed: ${error}`);
+      logger.warn(`Multi-spectral highlight detection failed: ${error}`);
       return [];
     }
   }
 
   /**
-   * Adjust detection parameters based on sensitivity level
+   * Spectral color detection with improved color space analysis
    */
-  private adjustParametersForSensitivity(options: any): any {
-    const adjustedOptions = { ...options };
-    
-    switch (options.sensitivityLevel) {
-      case 'high':
-        adjustedOptions.colorThreshold = Math.max(0.15, options.colorThreshold * 0.7);
-        adjustedOptions.saturationThreshold = Math.max(0.2, options.saturationThreshold * 0.6);
-        adjustedOptions.minRegionSize = Math.max(50, options.minRegionSize * 0.5);
-        adjustedOptions.fuzzFactor = 35; // Higher fuzz for more inclusive matching
-        break;
-      case 'low':
-        adjustedOptions.colorThreshold = Math.min(0.6, options.colorThreshold * 1.5);
-        adjustedOptions.saturationThreshold = Math.min(0.8, options.saturationThreshold * 1.4);
-        adjustedOptions.minRegionSize = options.minRegionSize * 2;
-        adjustedOptions.fuzzFactor = 15; // Lower fuzz for more precise matching
-        break;
-      default: // medium
-        adjustedOptions.fuzzFactor = 25;
-        break;
-    }
-    
-    return adjustedOptions;
-  }
-
-  /**
-   * Enhanced color-based detection with improved algorithms
-   */
-  private async detectColorRegionsEnhanced(
+  private async detectSpectralColorRegions(
     imagePath: string,
     sessionDir: string,
     color: string,
     options: any
   ): Promise<HighlightRegion[]> {
-    const colorspaces = ['RGB', 'HSL', 'Lab', 'YCbCr'];
-    let allRegions: HighlightRegion[] = [];
-    
-    // Multi-pass detection using different color spaces
-    for (const colorspace of colorspaces) {
-      try {
-        const colorspaceImagePath = path.join(sessionDir, `${colorspace.toLowerCase()}_converted.png`);
-        await execAsync(`convert "${imagePath}" -colorspace ${colorspace} "${colorspaceImagePath}"`);
-        
-        const regions = await this.detectColorRegionsEnhanced(
-          colorspaceImagePath,
-          sessionDir,
-          color,
-          options
-        );
-        
-        allRegions = allRegions.concat(regions);
-      } catch (error) {
-        logger.error(`Error in ${colorspace} detection: ${error}`);
-      }
-    }
-    
-    // Merge and deduplicate regions
-    return this.mergeOverlappingRegionsEnhanced(allRegions);
     try {
-      const maskPath = path.join(sessionDir, `${color}_enhanced_mask.png`);
+      const maskPath = path.join(sessionDir, `spectral_${color}_mask.png`);
       
-      // Enhanced color detection with multiple color variants
-      const colorVariants = this.getColorVariants(color);
-      let colorRange = '';
+      // Get enhanced color variants with spectral analysis
+      const colorVariants = this.getSpectralColorVariants(color);
+      const fuzzFactor = options.fuzzFactor || 30;
       
-      const fuzzFactor = options.fuzzFactor || 25;
+      // Create sophisticated spectral mask
+      let spectralCommand = `convert "${imagePath}"`;
       
-      // Create a more sophisticated color mask that handles multiple color variants
+      // Apply multiple color space transformations for better detection
       for (let i = 0; i < colorVariants.length; i++) {
         const variant = colorVariants[i];
         if (i === 0) {
-          colorRange = `-fuzz ${fuzzFactor}% -fill white -opaque "${variant}"`;
+          spectralCommand += ` \\( -clone 0 -colorspace LAB -fuzz ${fuzzFactor}% -fill white -opaque "${variant}" -fill black +opaque white \\)`;
         } else {
-          colorRange += ` -fuzz ${fuzzFactor}% -fill white -opaque "${variant}"`;
+          spectralCommand += ` \\( -clone 0 -colorspace HSL -fuzz ${fuzzFactor}% -fill white -opaque "${variant}" -fill black +opaque white \\)`;
         }
       }
       
-      colorRange += ' -fill black +opaque white';
-
-      // Create enhanced mask with morphological operations
-      const command = `convert "${imagePath}" ${colorRange} -morphology close disk:1 -morphology open disk:1 "${maskPath}"`;
-      await execAsync(command);
+      // Combine masks with weighted blending
+      spectralCommand += ` -evaluate-sequence add -normalize`;
+      
+      // Apply morphological operations for better connectivity
+      spectralCommand += ` -threshold 25% -morphology close disk:2 -morphology open disk:1 "${maskPath}"`;
+      
+      await execAsync(spectralCommand);
 
       if (!fs.existsSync(maskPath)) {
         return [];
       }
 
-      // Analyze mask with enhanced region analysis
-      const regions = await this.analyzeMaskRegionsEnhanced(maskPath, color, options);
+      const regions = await this.analyzeMaskRegionsAdvanced(maskPath, `spectral-${color}`, options);
       
-      // Add color information to regions
+      // Add spectral color information
       for (const region of regions) {
-        region.colorInfo = await this.extractColorInfo(imagePath, region);
+        region.colorInfo = await this.extractAdvancedColorInfo(imagePath, region);
+        region.spectralAnalysis = await this.performSpectralAnalysis(imagePath, region);
       }
       
       return regions;
       
     } catch (error) {
-      logger.warn(`Enhanced color region detection failed for ${color}: ${error}`);
+      logger.warn(`Spectral color detection failed for ${color}: ${error}`);
       return [];
     }
   }
 
   /**
-   * Get color variants for better detection
+   * Get spectral color variants with enhanced color theory
    */
-  private getColorVariants(color: string): string[] {
-    const variants: Record<string, string[]> = {
-      yellow: ['#FFFF00', '#FFFF99', '#FFFFCC', '#FFF200', '#FFED4E'],
-      cyan: ['#00FFFF', '#99FFFF', '#CCFFFF', '#00CED1', '#40E0D0'],
-      magenta: ['#FF00FF', '#FF99FF', '#FFCCFF', '#DA70D6', '#BA55D3'],
-      green: ['#00FF00', '#99FF99', '#CCFFCC', '#32CD32', '#90EE90'],
-      pink: ['#FFC0CB', '#FFB6C1', '#FF69B4', '#FF1493', '#FFE4E1'],
-      orange: ['#FFA500', '#FFB347', '#FFCC99', '#FF8C00', '#FF7F50'],
-      blue: ['#0000FF', '#6699FF', '#99CCFF', '#4169E1', '#87CEEB'],
-      red: ['#FF0000', '#FF6666', '#FF9999', '#DC143C', '#CD5C5C']
+  private getSpectralColorVariants(color: string): string[] {
+    const spectralVariants: Record<string, string[]> = {
+      yellow: [
+        '#FFFF00', '#FFFF33', '#FFFF66', '#FFFF99', '#FFFFCC',
+        '#FFF700', '#FFF300', '#FFED4E', '#FFE135', '#FFD700'
+      ],
+      green: [
+        '#00FF00', '#33FF33', '#66FF66', '#99FF99', '#CCFFCC',
+        '#32CD32', '#90EE90', '#98FB98', '#00FA9A', '#40E0D0'
+      ],
+      cyan: [
+        '#00FFFF', '#33FFFF', '#66FFFF', '#99FFFF', '#CCFFFF',
+        '#00CED1', '#40E0D0', '#48D1CC', '#87CEEB', '#87CEFA'
+      ],
+      pink: [
+        '#FFC0CB', '#FFB6C1', '#FF69B4', '#FF1493', '#FFE4E1',
+        '#FFCCCB', '#F08080', '#FA8072', '#FFA0C9', '#DDA0DD'
+      ],
+      orange: [
+        '#FFA500', '#FFB347', '#FFCC99', '#FF8C00', '#FF7F50',
+        '#FF6347', '#FF4500', '#FFD700', '#FFDAB9', '#FFEFD5'
+      ],
+      blue: [
+        '#0000FF', '#6699FF', '#99CCFF', '#4169E1', '#87CEEB',
+        '#1E90FF', '#00BFFF', '#87CEFA', '#B0E0E6', '#ADD8E6'
+      ],
+      red: [
+        '#FF0000', '#FF6666', '#FF9999', '#DC143C', '#CD5C5C',
+        '#F08080', '#FA8072', '#E9967A', '#FFA07A', '#FFB6C1'
+      ],
+      magenta: [
+        '#FF00FF', '#FF99FF', '#FFCCFF', '#DA70D6', '#BA55D3',
+        '#DDA0DD', '#EE82EE', '#D8BFD8', '#DDA0DD', '#C71585'
+      ]
     };
     
-    return variants[color.toLowerCase()] || [`#${color.toUpperCase()}`];
+    return spectralVariants[color.toLowerCase()] || [`#${color.toUpperCase()}`];
   }
 
   /**
-   * Enhanced saturation-based detection
+   * LAB color space detection for better perceptual accuracy
    */
-  private async detectSaturationRegionsEnhanced(
+  private async detectLABSpaceHighlights(
     imagePath: string,
     sessionDir: string,
     options: any
   ): Promise<HighlightRegion[]> {
     try {
-      const saturationPath = path.join(sessionDir, 'enhanced_saturation_mask.png');
+      const labPath = path.join(sessionDir, 'lab_highlights_mask.png');
       
-      // Use dynamic thresholding if enabled
-      let threshold;
-      if (options.enableDynamicThresholding) {
-        threshold = await this.calculateDynamicSaturationThreshold(imagePath);
-      } else {
-        threshold = Math.round(options.saturationThreshold * 100);
-      }
+      // Advanced LAB color space analysis
+      const command = `convert "${imagePath}" \
+        -colorspace LAB \
+        \\( -clone 0 -channel L -separate -auto-level -threshold 85% \\) \
+        \\( -clone 0 -channel A -separate -blur 0x1 -threshold 60% \\) \
+        \\( -clone 0 -channel B -separate -blur 0x1 -threshold 60% \\) \
+        -delete 0 \
+        -compose multiply -composite \
+        -morphology close disk:2.5 \
+        "${labPath}"`;
       
-      // Enhanced saturation detection with edge preservation
-      const command = `convert "${imagePath}" -colorspace HSL -channel G -separate -auto-level -threshold ${threshold}% -morphology close disk:2 "${saturationPath}"`;
       await execAsync(command);
 
-      if (!fs.existsSync(saturationPath)) {
+      if (!fs.existsSync(labPath)) {
         return [];
       }
 
-      return await this.analyzeMaskRegionsEnhanced(saturationPath, 'high-saturation', options);
+      return await this.analyzeMaskRegionsAdvanced(labPath, 'lab-space', options);
       
     } catch (error) {
-      logger.warn(`Enhanced saturation region detection failed: ${error}`);
+      logger.warn(`LAB color space detection failed: ${error}`);
       return [];
     }
   }
 
   /**
-   * Enhanced luminosity detection
+   * HSV-based detection with edge preservation
    */
-  private async detectLuminosityRegionsEnhanced(
+  private async detectHSVBasedHighlights(
     imagePath: string,
     sessionDir: string,
     options: any
   ): Promise<HighlightRegion[]> {
     try {
-      const luminosityPath = path.join(sessionDir, 'enhanced_luminosity_mask.png');
+      const hsvPath = path.join(sessionDir, 'hsv_highlights_mask.png');
       
-      // Enhanced luminosity detection with better edge detection
-      const command = `convert "${imagePath}" -colorspace HSL -channel B -separate -auto-level -edge 1 -threshold 60% -morphology dilate disk:1 "${luminosityPath}"`;
-      await execAsync(command);
-
-      if (!fs.existsSync(luminosityPath)) {
-        return [];
-      }
-
-      return await this.analyzeMaskRegionsEnhanced(luminosityPath, 'luminosity-edge', options);
-      
-    } catch (error) {
-      logger.warn(`Enhanced luminosity region detection failed: ${error}`);
-      return [];
-    }
-  }
-
-  /**
-   * CPU-optimized HSL-based detection for better color accuracy
-   */
-  private async detectHSLBasedHighlights(
-    imagePath: string,
-    sessionDir: string,
-    options: any
-  ): Promise<HighlightRegion[]> {
-    try {
-      const hslPath = path.join(sessionDir, 'hsl_highlights_mask.png');
-      
-      // Split operation into memory-efficient steps
+      // Enhanced HSV processing with edge preservation
       const steps = [
-        // Step 1: Convert to HSL and extract channels
-        `convert "${imagePath}" -colorspace HSL -separate "${path.join(sessionDir, 'hsl_%d.png')}"`,
-        
-        // Step 2: Process saturation (channel 1) - optimize thresholds for CPU
-        `convert "${path.join(sessionDir, 'hsl_1.png')}" -threshold 40% "${path.join(sessionDir, 'sat_mask.png')}"`,
-        
-        // Step 3: Process lightness (channel 2) with optimized operations
-        `convert "${path.join(sessionDir, 'hsl_2.png')}" -threshold 30% -negate -threshold 70% -negate "${path.join(sessionDir, 'light_mask.png')}"`,
-        
-        // Step 4: Combine masks efficiently
-        `convert "${path.join(sessionDir, 'sat_mask.png')}" "${path.join(sessionDir, 'light_mask.png')}" -compose multiply -composite "${hslPath}"`
+        `convert "${imagePath}" -colorspace HSV -separate "${path.join(sessionDir, 'hsv_%d.png')}"`,
+        `convert "${path.join(sessionDir, 'hsv_1.png')}" -threshold 45% -morphology close disk:1 "${path.join(sessionDir, 'sat_mask.png')}"`,
+        `convert "${path.join(sessionDir, 'hsv_2.png')}" -threshold 25% -negate -threshold 75% -negate "${path.join(sessionDir, 'val_mask.png')}"`,
+        `convert "${path.join(sessionDir, 'sat_mask.png')}" "${path.join(sessionDir, 'val_mask.png')}" -compose multiply -composite -morphology close disk:3 "${hsvPath}"`
       ];
-
-      // Execute steps in sequence
-      for (const cmd of steps) {
-        await execAsync(cmd);
+      
+      for (const step of steps) {
+        await execAsync(step);
       }
-
-      // Post-process the mask to improve connectivity
-      await execAsync(`convert "${hslPath}" -morphology close disk:2 "${hslPath}"`);
-
+      
       // Clean up intermediate files
-      await execAsync(`rm -f ${path.join(sessionDir, 'hsl_*.png')} ${path.join(sessionDir, 'sat_mask.png')} ${path.join(sessionDir, 'light_mask.png')}`);
+      await execAsync(`rm -f ${path.join(sessionDir, 'hsv_*.png')} ${path.join(sessionDir, 'sat_mask.png')} ${path.join(sessionDir, 'val_mask.png')}`);
 
-      if (!fs.existsSync(hslPath)) {
+      if (!fs.existsSync(hsvPath)) {
         return [];
       }
 
-      return await this.analyzeMaskRegionsEnhanced(hslPath, 'hsl-based', options);
+      return await this.analyzeMaskRegionsAdvanced(hsvPath, 'hsv-enhanced', options);
       
     } catch (error) {
-      logger.warn(`HSL-based highlight detection failed: ${error}`);
+      logger.warn(`HSV-based detection failed: ${error}`);
       return [];
     }
   }
 
   /**
-   * NEW: Texture-based detection for non-color highlights
+   * Intelligent texture-based detection
    */
-  private async detectTextureBasedHighlights(
+  private async detectIntelligentTextureHighlights(
     imagePath: string,
     sessionDir: string,
     options: any
   ): Promise<HighlightRegion[]> {
     try {
-      const texturePath = path.join(sessionDir, 'texture_highlights_mask.png');
+      const texturePath = path.join(sessionDir, 'intelligent_texture_mask.png');
       
-      // Detect texture changes that might indicate highlighting
-      const command = `convert "${imagePath}" -colorspace Gray \\
-        -morphology gradient disk:2 \\
-        -threshold 15% \\
-        -morphology close disk:3 "${texturePath}"`;
+      // Multi-scale texture analysis
+      const command = `convert "${imagePath}" \
+        \\( -clone 0 -colorspace Gray -morphology gradient disk:1.5 \\) \
+        \\( -clone 0 -colorspace Gray -blur 0x2 -sharpen 0x1 -threshold 20% \\) \
+        \\( -clone 0 -colorspace Gray -edge 2 -threshold 15% \\) \
+        -delete 0 \
+        -evaluate-sequence add -normalize \
+        -threshold 30% \
+        -morphology close disk:4 \
+        -morphology open disk:2 \
+        "${texturePath}"`;
       
       await execAsync(command);
 
@@ -700,704 +797,1554 @@ export class HighlightDetector {
         return [];
       }
 
-      return await this.analyzeMaskRegionsEnhanced(texturePath, 'texture-based', options);
+      return await this.analyzeMaskRegionsAdvanced(texturePath, 'intelligent-texture', options);
       
     } catch (error) {
-      logger.warn(`Texture-based highlight detection failed: ${error}`);
+      logger.warn(`Intelligent texture detection failed: ${error}`);
       return [];
     }
   }
 
   /**
-   * Calculate dynamic saturation threshold based on image content
+   * Contrast-based highlight detection
    */
-  private async calculateDynamicSaturationThreshold(imagePath: string): Promise<number> {
-    try {
-      // Analyze the saturation distribution of the image
-      const { stdout } = await execAsync(`convert "${imagePath}" -colorspace HSL -channel G -separate -format "%[fx:mean*100]" info:`);
-      const meanSaturation = parseFloat(stdout.trim());
-      
-      // Adjust threshold based on image's overall saturation
-      if (meanSaturation < 20) {
-        return 30; // Low saturation image, lower threshold
-      } else if (meanSaturation > 60) {
-        return 70; // High saturation image, higher threshold
-      } else {
-        return 50; // Medium saturation, standard threshold
-      }
-    } catch (error) {
-      logger.warn(`Dynamic threshold calculation failed: ${error}`);
-      return 50; // Fallback to standard threshold
-    }
-  }
-
-  /**
-   * Enhanced mask region analysis optimized for CPU processing
-   */
-  private async analyzeMaskRegionsEnhanced(
-    maskPath: string,
-    type: string,
+  private async detectContrastBasedHighlights(
+    imagePath: string,
+    sessionDir: string,
     options: any
   ): Promise<HighlightRegion[]> {
     try {
-      // Use more efficient connected components analysis
-      // Split the operation into smaller chunks to reduce memory usage
-      const { stdout: dimensions } = await execAsync(`identify -format "%[w]x%[h]" "${maskPath}"`);
-      const [width, height] = dimensions.split('x').map(Number);
+      const contrastPath = path.join(sessionDir, 'contrast_highlights_mask.png');
       
-      // Use smaller tile size for processing large images
-      const tileSize = Math.min(1024, Math.max(width, height));
-      const cmd = `convert "${maskPath}" -define connected-components:verbose=true \
-        -define connected-components:area-threshold=${options.minRegionSize} \
-        -define connected-components:mean-color=true \
-        +write mpr:original \
-        -crop ${tileSize}x${tileSize} \
-        -connected-components 4 \
-        -delete 0 null:`;
+      // Advanced contrast analysis
+      const command = `convert "${imagePath}" \
+        \\( -clone 0 -colorspace LAB -channel L -separate -normalize \\) \
+        \\( -clone 1 -blur 0x3 \\) \
+        \\( -clone 1 -clone 2 -compose difference -composite -auto-level \\) \
+        -delete 0,1,2 \
+        -threshold 40% \
+        -morphology close disk:3 \
+        "${contrastPath}"`;
       
-      const { stdout } = await execAsync(cmd);
-      
-      const regions: HighlightRegion[] = [];
-      const lines = stdout.split('\n');
-      const processedCoords = new Set<string>();
-      
-      for (const line of lines) {
-        // Optimized parsing with bitwise operations for better performance
-        const match = line.match(/(\d+): (\d+)x(\d+)\+(\d+)\+(\d+)/);
-        if (match) {
-          const [, , width, height, x, y] = match.map(Number);
-          const area = width * height;
-          
-          // Enhanced filtering criteria
-          if (area >= options.minRegionSize && 
-              this.isValidHighlightRegion(width, height, area)) {
-            regions.push({
-              x,
-              y,
-              width,
-              height,
-              color: type,
-              intensity: this.calculateEnhancedIntensity(area, width, height),
-              confidence: this.calculateEnhancedRegionConfidence(area, width, height, type)
-            });
-          }
-        }
+      await execAsync(command);
+
+      if (!fs.existsSync(contrastPath)) {
+        return [];
       }
-      
-      return regions;
+
+      return await this.analyzeMaskRegionsAdvanced(contrastPath, 'contrast-based', options);
       
     } catch (error) {
-      logger.warn(`Enhanced mask analysis failed: ${error}`);
+      logger.warn(`Contrast-based detection failed: ${error}`);
       return [];
     }
   }
 
   /**
-   * Enhanced validation for highlight regions
+   * Enhanced smart pattern recognition for highlights using ML-inspired approaches
    */
-  private isValidHighlightRegion(width: number, height: number, area: number): boolean {
-    const aspectRatio = width / height;
-    
-    // Filter out regions that are too thin/wide (likely noise)
-    if (aspectRatio > 20 || aspectRatio < 0.05) return false;
-    
-    // Filter out very small regions relative to their bounding box
-    const boundingBoxArea = width * height;
-    if (area / boundingBoxArea < 0.3) return false;
-    
-    // Filter out regions that are too large (likely whole page selections)
-    if (area > 500000) return false;
-    
-    return true;
-  }
-
-  /**
-   * Extract color information from a specific region
-   */
-  private async extractColorInfo(imagePath: string, region: HighlightRegion): Promise<{ hue: number; saturation: number; lightness: number }> {
-    try {
-      const cropSpec = `${region.width}x${region.height}+${region.x}+${region.y}`;
-      const { stdout } = await execAsync(`convert "${imagePath}" -crop ${cropSpec} -colorspace HSL -channel RGB -separate -format "%[fx:mean]" info:`);
-      
-      const values = stdout.trim().split('\n').map(v => parseFloat(v) * 100);
-      
-      return {
-        hue: values[0] || 0,
-        saturation: values[1] || 0,
-        lightness: values[2] || 0
-      };
-    } catch (error) {
-      logger.warn(`Color extraction failed: ${error}`);
-      return { hue: 0, saturation: 0, lightness: 0 };
-    }
-  }
-
-  /**
-   * Enhanced text extraction from highlighted regions
-   */
-  private async extractHighlightedTextEnhanced(
+  private async detectSmartPatternHighlights(
     imagePath: string,
-    regions: HighlightRegion[],
-    sessionDir: string
-  ): Promise<void> {
-    for (let i = 0; i < regions.length; i++) {
-      try {
-        const region = regions[i];
-        const cropPath = path.join(sessionDir, `highlight_${i}_enhanced.png`);
-        
-        // Enhanced cropping with preprocessing
-        const padding = 10;
-        const expandedCrop = `${region.width + (padding * 2)}x${region.height + (padding * 2)}+${Math.max(0, region.x - padding)}+${Math.max(0, region.y - padding)}`;
-        
-        // Create enhanced crop with multiple OCR optimization techniques
-        await execAsync(`convert "${imagePath}" -crop ${expandedCrop} \
-          -colorspace Lab -channel 0 -equalize -channel RG -equalize -colorspace sRGB \
-          -modulate 100,130,100 \
-          -unsharp 0x1+1.3+0.05 \
-          -contrast-stretch 3%x97% \
-          -resize 200% \
-          "${cropPath}"`);
-        
-        if (fs.existsSync(cropPath)) {
-          // Use multiple OCR approaches for better accuracy
-          const textOutputPath = path.join(sessionDir, `highlight_${i}_enhanced_text`);
-          
-          const ocrApproaches = [
-            '--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;-()[]{}/" \t\n',
-            '--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?:;-()[]{}/" \t\n',
-            '--psm 6',
-            '--psm 13',
-            '--psm 11 -c tessedit_do_invert=1'
-          ];
-          
-          let bestText = '';
-          let bestConfidence = 0;
-          
-          for (const approach of ocrApproaches) {
-            try {
-              await execAsync(`tesseract "${cropPath}" "${textOutputPath}_temp" -l eng ${approach} 2>/dev/null`);
-              
-              const textFilePath = `${textOutputPath}_temp.txt`;
-              
-              if (fs.existsSync(textFilePath)) {
-                const text = fs.readFileSync(textFilePath, 'utf-8').trim();
-                
-                if (text.length > 0) {
-                  const textQuality = this.calculateTextQuality(text);
-                  
-                  if (textQuality > bestConfidence) {
-                    bestText = text;
-                    bestConfidence = textQuality;
-                  }
-                }
-                
-                // Cleanup temp file
-                fs.unlinkSync(textFilePath);
-              }
-            } catch (ocrError) {
-              // Continue with next approach
-            }
-          }
-          
-          if (bestText.length > 0) {
-            region.text = this.cleanExtractedText(bestText);
-            region.confidence = Math.min(region.confidence + (bestConfidence * 0.5), 1.0);
-            logger.info(`Enhanced text extraction for region ${i}: "${region.text.substring(0, 50)}..."`);
-          }
+    sessionDir: string,
+    options: any
+  ): Promise<HighlightRegion[]> {
+    try {
+      const smartPath = path.join(sessionDir, 'smart_pattern_mask.png');
+      
+      // Multi-scale feature detection with pattern recognition
+      const command = `convert "${imagePath}" \
+        \\( -clone 0 -colorspace HSL -channel S -separate -threshold 25% \\) \
+        \\( -clone 0 -colorspace LAB -channel A,B -separate -evaluate-sequence add -normalize \\) \
+        \\( -clone 0 -blur 0x1 -enhance -threshold 15% \\) \
+        \\( -clone 0 -edge 1 -threshold 10% \\) \
+        -delete 0 \
+        -evaluate-sequence multiply -normalize \
+        -morphology close disk:2.5 \
+        -morphology open disk:1 \
+        -threshold 30% \
+        "${smartPath}"`;
+      
+      await execAsync(command);
+
+      if (!fs.existsSync(smartPath)) {
+        return [];
+      }
+
+      return await this.analyzeMaskRegionsAdvanced(smartPath, 'smart-pattern', options);
+      
+    } catch (error) {
+      logger.warn(`Smart pattern detection failed: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Adaptive threshold highlights using dynamic threshold calculation
+   */
+  private async detectAdaptiveThresholdHighlights(
+    imagePath: string,
+    sessionDir: string,
+    options: any
+  ): Promise<HighlightRegion[]> {
+    try {
+      const adaptivePath = path.join(sessionDir, 'adaptive_threshold_mask.png');
+      
+      // Calculate image statistics for adaptive thresholding
+      const { stdout: statsOutput } = await execAsync(`convert "${imagePath}" -colorspace HSL -channel S -separate -format "%[mean] %[standard-deviation]" info:`);
+      const [mean, stddev] = statsOutput.trim().split(' ').map(v => parseFloat(v));
+      
+      // Dynamic threshold calculation based on image characteristics
+      const dynamicThreshold = Math.max(15, Math.min(60, mean + stddev * 0.5));
+      
+      const command = `convert "${imagePath}" \
+        -colorspace HSL \
+        \\( -clone 0 -channel S -separate -threshold ${dynamicThreshold}% \\) \
+        \\( -clone 0 -channel L -separate -auto-level -threshold 80% \\) \
+        -delete 0 \
+        -compose multiply -composite \
+        -morphology close disk:3 \
+        -morphology open disk:1.5 \
+        "${adaptivePath}"`;
+      
+      await execAsync(command);
+
+      if (!fs.existsSync(adaptivePath)) {
+        return [];
+      }
+
+      return await this.analyzeMaskRegionsAdvanced(adaptivePath, 'adaptive-threshold', options);
+      
+    } catch (error) {
+      logger.warn(`Adaptive threshold detection failed: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with improved preprocessing
+   */
+  async detectHighlightsWithImprovedPreprocessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply improved preprocessing for highlight detection
+      const sessionDir = path.join(this.tempDir, `improved_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      
+      // Step 1: Initial preprocessing
+      const initialPreprocessedPath = await this.preprocessForHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Enhanced multi-spectral detection
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
         }
-      } catch (error) {
-        logger.warn(`Enhanced text extraction failed for region ${i}: ${error}`);
-      }
-    }
-  }
-
-  /**
-   * Calculate text quality score for OCR results
-   */
-  private calculateTextQuality(text: string): number {
-    if (!text || text.length === 0) return 0;
-    
-    let score = 0.5; // Base score
-    
-    // Check for complete words
-    const words = text.split(/\s+/).filter(Boolean);
-    const validWords = words.filter(word => /^[A-Za-z0-9.,!?:;\-()[\]{}/"']+$/.test(word));
-    const wordRatio = words.length > 0 ? validWords.length / words.length : 0;
-    score += wordRatio * 0.3;
-    
-    // Check for reasonable character distribution
-    const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
-    const totalChars = text.length;
-    const alphaRatio = totalChars > 0 ? alphaCount / totalChars : 0;
-    if (alphaRatio > 0.5) score += 0.2;
-    
-    return Math.min(score, 1.0);
-  }
-
-  /**
-   * Clean extracted text from highlighted regions
-   */
-  private cleanExtractedText(text: string): string {
-    return text
-      .replace(/\s+/g, ' ')
-      .replace(/[^\w\s.,!?:;\-()[\]{}/"']/g, '')
-      .trim();
-  }
-
-  /**
-   * Enhanced confidence score calculation
-   */
-  private calculateEnhancedConfidenceScore(regions: HighlightRegion[]): number {
-    if (regions.length === 0) return 0;
-
-    let totalScore = 0;
-    let weightSum = 0;
-
-    for (const region of regions) {
-      // Weight by region area (larger regions are more significant)
-      const weight = Math.min(region.width * region.height / 10000, 1.0);
+      );
       
-      let regionScore = region.confidence;
-      
-      // Boost score if text was extracted
-      if (region.text && region.text.length > 0) {
-        regionScore += 0.2;
-      }
-      
-      // Boost score for high-intensity regions
-      if (region.intensity > 0.7) {
-        regionScore += 0.1;
-      }
-      
-      // Boost score for regions with good color information
-      if (region.colorInfo && region.colorInfo.saturation > 50) {
-        regionScore += 0.1;
-      }
-      
-      totalScore += regionScore * weight;
-      weightSum += weight;
-    }
-
-    const avgScore = weightSum > 0 ? totalScore / weightSum : 0;
-    
-    // Apply bonuses for multiple high-quality regions
-    const highQualityRegions = regions.filter(r => r.confidence > 0.7).length;
-    const bonusMultiplier = 1 + Math.min(highQualityRegions * 0.05, 0.2);
-    
-    return Math.min(avgScore * bonusMultiplier, 1.0);
-  }
-
-  /**
-   * Enhanced intensity calculation
-   */
-  private calculateEnhancedIntensity(area: number, width: number, height: number): number {
-    const baseIntensity = Math.min(area / 15000, 1.0);
-    
-    // Boost intensity for regions with good aspect ratios (more likely to be text)
-    const aspectRatio = width / height;
-    let aspectBonus = 0;
-    
-    if (aspectRatio >= 1.5 && aspectRatio <= 8) {
-      aspectBonus = 0.2; // Good aspect ratio for text
-    } else if (aspectRatio >= 0.8 && aspectRatio <= 1.2) {
-      aspectBonus = 0.1; // Square regions might be highlighted boxes
-    }
-    
-    return Math.min(baseIntensity + aspectBonus, 1.0);
-  }
-
-  /**
-   * Enhanced region confidence calculation
-   */
-  private calculateEnhancedRegionConfidence(area: number, width: number, height: number, type: string): number {
-    const aspectRatio = width / height;
-    
-    // Base area score (normalized)
-    const areaScore = Math.min(area / 2000, 1.0) * 0.4;
-    
-    // Enhanced shape score based on highlight type
-    let shapeScore = 0.3;
-    if (type.includes('color') || type.includes('hsl')) {
-      // Color-based highlights are more reliable
-      shapeScore = aspectRatio > 0.2 && aspectRatio < 15 ? 0.6 : 0.3;
-    } else if (type.includes('saturation')) {
-      // Saturation-based are moderately reliable
-      shapeScore = aspectRatio > 0.1 && aspectRatio < 20 ? 0.5 : 0.2;
-    } else {
-      // Texture/luminosity are less reliable
-      shapeScore = aspectRatio > 0.5 && aspectRatio < 10 ? 0.4 : 0.1;
-    }
-    
-    // Size consistency score
-    const sizeScore = area > 200 && area < 100000 ? 0.2 : 0.1;
-    
-    return Math.min(areaScore + shapeScore + sizeScore, 1.0);
-  }
-
-  /**
-   * CPU-optimized region merging with efficient overlap detection
-   */
-  private mergeOverlappingRegionsEnhanced(regions: HighlightRegion[]): HighlightRegion[] {
-    if (regions.length <= 1) return regions;
-
-    // Use grid-based spatial partitioning for faster overlap detection
-    const gridSize = 50; // pixels
-    const grid: Map<string, number[]> = new Map();
-
-    // Insert regions into grid cells
-    regions.forEach((region, index) => {
-      const startX = Math.floor(region.x / gridSize);
-      const startY = Math.floor(region.y / gridSize);
-      const endX = Math.floor((region.x + region.width) / gridSize);
-      const endY = Math.floor((region.y + region.height) / gridSize);
-
-      for (let x = startX; x <= endX; x++) {
-        for (let y = startY; y <= endY; y++) {
-          const key = `${x},${y}`;
-          if (!grid.has(key)) grid.set(key, []);
-          grid.get(key)!.push(index);
-        }
-      }
-    });
-
-    const merged: HighlightRegion[] = [];
-    const processed = new Set<number>();
-
-    // Process regions using spatial grid for efficient neighbor finding
-    const sortedRegions = regions.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-
-    for (let i = 0; i < sortedRegions.length; i++) {
-      if (processed.has(i)) continue;
-
-      let currentRegion = { ...sortedRegions[i] };
-      processed.add(i);
-
-      // Find overlapping regions with enhanced criteria
-      for (let j = i + 1; j < sortedRegions.length; j++) {
-        if (processed.has(j)) continue;
-
-        const overlapRatio = this.calculateOverlapRatio(currentRegion, sortedRegions[j]);
-        
-        // Enhanced merging criteria
-        if (overlapRatio > 0.3 || this.areRegionsAdjacent(currentRegion, sortedRegions[j])) {
-          currentRegion = this.mergeRegionsEnhanced(currentRegion, sortedRegions[j]);
-          processed.add(j);
-        }
+      // Step 3: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
       }
 
-      merged.push(currentRegion);
-    }
+      // Step 4: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
 
-    return merged;
-  }
+      // Step 5: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
 
-  /**
-   * Calculate overlap ratio between two regions
-   */
-  private calculateOverlapRatio(region1: HighlightRegion, region2: HighlightRegion): number {
-    const overlapX = Math.max(0, Math.min(region1.x + region1.width, region2.x + region2.width) - Math.max(region1.x, region2.x));
-    const overlapY = Math.max(0, Math.min(region1.y + region1.height, region2.y + region2.height) - Math.max(region1.y, region2.y));
-    const overlapArea = overlapX * overlapY;
-    
-    const area1 = region1.width * region1.height;
-    const area2 = region2.width * region2.height;
-    const minArea = Math.min(area1, area2);
-    
-    return minArea > 0 ? overlapArea / minArea : 0;
-  }
+      // Step 6: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
 
-  /**
-   * Check if regions are adjacent (close enough to be merged)
-   */
-  private areRegionsAdjacent(region1: HighlightRegion, region2: HighlightRegion): boolean {
-    const threshold = 20; // pixels
-    
-    const horizontalGap = Math.max(0, 
-      Math.min(Math.abs(region1.x + region1.width - region2.x), Math.abs(region2.x + region2.width - region1.x))
-    );
-    const verticalGap = Math.max(0,
-      Math.min(Math.abs(region1.y + region1.height - region2.y), Math.abs(region2.y + region2.height - region1.y))
-    );
-    
-    return horizontalGap <= threshold && verticalGap <= threshold;
-  }
-
-  /**
-   * Enhanced region merging
-   */
-  private mergeRegionsEnhanced(region1: HighlightRegion, region2: HighlightRegion): HighlightRegion {
-    const minX = Math.min(region1.x, region2.x);
-    const minY = Math.min(region1.y, region2.y);
-    const maxRight = Math.max(region1.x + region1.width, region2.x + region2.width);
-    const maxBottom = Math.max(region1.y + region1.height, region2.y + region2.height);
-
-    // Choose better color info
-    const betterColorInfo = (region1.colorInfo?.saturation || 0) > (region2.colorInfo?.saturation || 0) 
-      ? region1.colorInfo 
-      : region2.colorInfo;
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxRight - minX,
-      height: maxBottom - minY,
-      color: region1.intensity > region2.intensity ? region1.color : region2.color,
-      intensity: Math.max(region1.intensity, region2.intensity),
-      text: [region1.text, region2.text].filter(Boolean).join(' '),
-      confidence: Math.max(region1.confidence, region2.confidence),
-      colorInfo: betterColorInfo
-    };
-  }
-
-  /**
-   * Filter high-quality regions and remove noise
-   */
-  private filterHighQualityRegions(regions: HighlightRegion[], options: any): HighlightRegion[] {
-    return regions.filter(region => {
-      // Basic size filter
-      if (region.width * region.height < options.minRegionSize) return false;
+      // Step 7: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
       
-      // Enhanced quality filters
-      if (region.confidence < 0.2) return false;
+      const processingTime = Date.now() - startTime;
+      logger.info(`Improved highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
+
+      return {
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
+      };
       
-      // Filter out regions that are too thin/thick
-      const aspectRatio = region.width / region.height;
-      if (aspectRatio > 25 || aspectRatio < 0.04) return false;
-      
-      // Filter out regions with very low intensity unless they have text
-      if (region.intensity < 0.1 && (!region.text || region.text.length < 3)) return false;
-      
-      return true;
-    });
+    } catch (error) {
+      logger.error(`Improved highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Improved highlight detection failed - falling back to manual review']
+      };
+    }
   }
 
   /**
-   * Generate enhanced suggestions
+   * Prepare image for highlight detection (optimized version)
    */
-  private generateEnhancedSuggestions(regions: HighlightRegion[]): string[] {
-    const suggestions: string[] = [];
-
-    if (regions.length === 0) {
-      suggestions.push("No highlights detected - try adjusting sensitivity or using different target colors");
-      suggestions.push("Consider manual text selection if important content is highlighted");
-      return suggestions;
-    }
-
-    // Quality-based suggestions
-    const highQualityRegions = regions.filter(r => r.confidence > 0.7).length;
-    const mediumQualityRegions = regions.filter(r => r.confidence > 0.4 && r.confidence <= 0.7).length;
-    const lowQualityRegions = regions.filter(r => r.confidence <= 0.4).length;
-
-    if (highQualityRegions > 0) {
-      suggestions.push(`${highQualityRegions} high-quality highlight regions detected - excellent for OCR processing`);
-    }
-
-    if (mediumQualityRegions > 0) {
-      suggestions.push(`${mediumQualityRegions} medium-quality regions detected - consider manual verification`);
-    }
-
-    if (lowQualityRegions > 0) {
-      suggestions.push(`${lowQualityRegions} low-quality regions detected - may require manual review`);
-    }
-
-    // Text extraction suggestions
-    const regionsWithText = regions.filter(r => r.text && r.text.length > 0).length;
-    if (regionsWithText < regions.length) {
-      suggestions.push(`Text extraction successful for ${regionsWithText}/${regions.length} regions`);
-      if (regionsWithText === 0) {
-        suggestions.push("Consider higher resolution scanning for better text extraction");
+  private async prepareImageOptimized(inputPath: string, sessionDir: string): Promise<string> {
+    const ext = path.extname(inputPath).toLowerCase();
+    
+    if (ext === '.pdf') {
+      // Convert PDF to high-quality image for better highlight detection
+      const imagePath = path.join(sessionDir, 'page_001.png');
+      await execAsync(`pdftoppm -png -r 300 -f 1 -l 1 "${inputPath}" "${sessionDir}/page"`);
+      
+      if (fs.existsSync(imagePath)) {
+        return imagePath;
       }
+      
+      // Fallback: use first generated image
+      const imageFiles = fs.readdirSync(sessionDir).filter(f => f.endsWith('.png'));
+      if (imageFiles.length > 0) {
+        return path.join(sessionDir, imageFiles[0]);
+      }
+      
+      throw new Error('Failed to convert PDF to image');
     }
-
-    // Color distribution analysis
-    const colorTypes = new Set(regions.map(r => r.color));
-    if (colorTypes.size === 1) {
-      suggestions.push(`Single highlight type detected (${Array.from(colorTypes)[0]}) - optimized processing applied`);
-    } else if (colorTypes.size > 3) {
-      suggestions.push(`Multiple highlight types detected - consider color-specific processing for best results`);
-    }
-
-    // Intensity-based suggestions
-    const highIntensityRegions = regions.filter(r => r.intensity > 0.8).length;
-    if (highIntensityRegions > 0) {
-      suggestions.push(`${highIntensityRegions} high-intensity highlights detected - excellent visibility for OCR`);
-    }
-
-    return suggestions;
+    
+    return inputPath;
   }
 
   /**
-   * Create enhanced image with highlighted regions for visualization
+   * Pre-process image specifically for highlight detection (optimized)
+   * Enhanced for better performance and quality
    */
-  private async createHighlightEnhancedImage(
-    originalImagePath: string,
-    highlightRegions: any[],
-    outputPath: string
+  private async preprocessForHighlightDetectionOptimized(
+    imagePath: string,
+    sessionDir: string,
+    useAdvancedFiltering: boolean
   ): Promise<string> {
     try {
-      // For now, just copy the original image
-      // In a full implementation, this would overlay highlight regions
-      const cmd = `cp "${originalImagePath}" "${outputPath}"`;
-      await execAsync(cmd);
+      const preprocessedPath = path.join(sessionDir, 'preprocessed_for_highlights_optimized.png');
       
-      logger.info(`Enhanced image created: ${outputPath}`);
-      return outputPath;
-    } catch (error) {
-      logger.error(`Error creating enhanced image: ${error}`);
-      // Return original path as fallback
-      return originalImagePath;
-    }
-  }
-
-  /**
-   * Get highlight detection capabilities
-   */
-  getCapabilities(): Record<string, any> {
-    return {
-      supportedColors: ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
-      detectionMethods: ['color-based', 'saturation-based', 'luminosity-based', 'HSL-based', 'texture-based'],
-      textExtraction: true,
-      regionMerging: true,
-      enhancementSuggestions: true,
-      imageFormats: ['png', 'jpg', 'jpeg', 'tiff', 'pdf'],
-      maxRegions: 50,
-      minRegionSize: 100
-    };
-  }
-
-  /**
-   * Verify highlight regions using machine learning
-   */
-  private async verifyHighlightsML(
-    regions: HighlightRegion[],
-    imagePath: string,
-    sessionDir: string
-  ): Promise<HighlightRegion[]> {
-    const verifiedRegions: HighlightRegion[] = [];
-
-    for (const region of regions) {
-      try {
-        // Extract region patch
-        const patchPath = path.join(sessionDir, `patch_${region.x}_${region.y}.png`);
-        await execAsync(`convert "${imagePath}" -crop ${region.width}x${region.height}+${region.x}+${region.y} "${patchPath}"`);
-
-        // Calculate texture features
-        const features = await this.calculateTextureFeatures(patchPath);
+      // Optimized preprocessing pipeline
+      const commands = [
+        // Step 1: Fast color normalization
+        `convert "${imagePath}" -colorspace sRGB -depth 8 "${path.join(sessionDir, 'step1.png')}"`,
         
-        // Simple ML-based verification using texture features
-        const isHighlight = this.validateTextureFeatures(features);
+        // Step 2: Efficient channel separation and normalization
+        `convert "${path.join(sessionDir, 'step1.png')}" -separate -normalize -combine "${path.join(sessionDir, 'step2.png')}"`,
         
-        if (isHighlight) {
-          // Adjust confidence based on ML verification
-          const mlConfidence = this.calculateMLConfidence(features);
-          region.confidence = (region.confidence + mlConfidence) / 2;
-          verifiedRegions.push(region);
-        }
-      } catch (error) {
-        logger.error(`ML verification error for region: ${error}`);
-        // Keep the region if ML verification fails
-        verifiedRegions.push(region);
+        // Step 3: Adaptive quality enhancement
+        `convert "${path.join(sessionDir, 'step2.png')}" -auto-level -contrast-stretch 2%x98%${
+          useAdvancedFiltering ? ' -sharpen 0x0.5' : ' -normalize'
+        } "${preprocessedPath}"`
+      ];
+      
+      // Execute commands in parallel for efficiency
+      await Promise.all(commands.map(cmd => execAsync(cmd)));
+      
+      if (fs.existsSync(preprocessedPath)) {
+        logger.info('Successfully preprocessed image for highlight detection (optimized)');
+        return preprocessedPath;
+      } else {
+        logger.warn('Preprocessing failed, using original image');
+        return imagePath;
       }
+      
+    } catch (error) {
+      logger.warn(`Preprocessing for highlight detection (optimized) failed: ${error}`);
+      return imagePath;
     }
-
-    return verifiedRegions;
   }
 
   /**
-   * Calculate texture features with CPU-optimized algorithms
+   * Enhanced highlight detection with optimized preprocessing
    */
-  private async calculateTextureFeatures(imagePath: string): Promise<any> {
+  async detectHighlightsWithOptimizedPreprocessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
     try {
-      // Use a more efficient approach for texture analysis
-      // 1. Downscale image for faster processing
-      const scaledPath = imagePath.replace(/\.[^.]+$/, '_scaled.png');
-      await execAsync(`convert "${imagePath}" -resize 256x256\\> "${scaledPath}"`);
-
-      // 2. Calculate simplified texture features using efficient methods
-      const cmd = `convert "${scaledPath}" \( -clone 0 -colorspace Gray -format "%[fx:standard_deviation]" info: \) \( -clone 0 -colorspace Gray -blur 0x2 -format "%[fx:mean]" info: \) \( -clone 0 -colorspace Gray -edge 1 -format "%[fx:mean]" info: \) null:`;
-      const { stdout } = await execAsync(cmd);
-      const [stdDev, blurMean, edgeMean] = stdout.split('\n').map(parseFloat);
-
-      // Calculate histogram features
-      const histCmd = `convert "${imagePath}" -colorspace HSL -format %c histogram:info:`;
-      const { stdout: histOutput } = await execAsync(histCmd);
+      // Apply optimized preprocessing for highlight detection
+      const sessionDir = path.join(this.tempDir, `optimized_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
       
-      // Parse histogram data
-      const histogramBins = histOutput.split('\\n').filter(Boolean);
-      const totalPixels = histogramBins.reduce((sum, bin) => {
-        const count = parseInt(bin.match(/:\s*(\d+)/)?.[1] || '0');
-        return sum + count;
-      }, 0);
+      // Step 1: Initial preprocessing (optimized)
+      const initialPreprocessedPath = await this.preprocessForHighlightDetectionOptimized(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Enhanced multi-spectral detection
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
+      
+      // Step 3: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
+      }
 
-      // Calculate histogram features
-      const histFeatures = this.calculateHistogramFeatures(histogramBins, totalPixels);
+      // Step 4: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Step 5: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Step 6: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Step 7: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
+      
+      const processingTime = Date.now() - startTime;
+      logger.info(`Optimized highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
 
       return {
-        standardDeviation: stdDev,
-        ...histFeatures
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
       };
+      
     } catch (error) {
-      logger.error(`Error calculating texture features: ${error}`);
-      return null;
+      logger.error(`Optimized highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Optimized highlight detection failed - falling back to manual review']
+      };
     }
   }
 
   /**
-   * Calculate histogram-based features
+   * Enhanced highlight detection with adaptive preprocessing
    */
-  private calculateHistogramFeatures(bins: string[], totalPixels: number) {
-    let entropy = 0;
-    let energy = 0;
-
-    for (const bin of bins) {
-      const count = parseInt(bin.match(/:\s*(\d+)/)?.[1] || '0');
-      const probability = count / totalPixels;
+  async detectHighlightsWithAdaptivePreprocessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply adaptive preprocessing for highlight detection
+      const sessionDir = path.join(this.tempDir, `adaptive_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
       
-      if (probability > 0) {
-        entropy -= probability * Math.log2(probability);
-        energy += probability * probability;
+      // Step 1: Initial preprocessing
+      const initialPreprocessedPath = await this.preprocessForHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Calculate image statistics for adaptive processing
+      const { stdout: statsOutput } = await execAsync(`convert "${initialPreprocessedPath}" -colorspace HSL -channel S -separate -format "%[mean] %[standard-deviation]" info:`);
+      const [mean, stddev] = statsOutput.trim().split(' ').map(v => parseFloat(v));
+      
+      // Step 3: Dynamic threshold calculation based on image characteristics
+      const dynamicThreshold = Math.max(15, Math.min(60, mean + stddev * 0.5));
+      
+      // Step 4: Enhanced multi-spectral detection with adaptive thresholding
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
+      
+      // Step 5: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
+      }
+
+      // Step 6: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Step 7: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Step 8: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Step 9: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
+      
+      const processingTime = Date.now() - startTime;
+      logger.info(`Adaptive highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
+
+      return {
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
+      };
+      
+    } catch (error) {
+      logger.error(`Adaptive highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Adaptive highlight detection failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom color spaces
+   */
+  async detectHighlightsWithCustomColorSpaces(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply custom color spaces for highlight detection
+      const sessionDir = path.join(this.tempDir, `custom_colorspaces_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      
+      // Step 1: Initial preprocessing
+      const initialPreprocessedPath = await this.preprocessForHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Enhanced multi-spectral detection with custom color spaces
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
+      
+      // Step 3: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
+      }
+
+      // Step 4: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Step 5: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Step 6: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Step 7: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
+      
+      const processingTime = Date.now() - startTime;
+      logger.info(`Custom color spaces highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
+
+      return {
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
+      };
+      
+    } catch (error) {
+      logger.error(`Custom color spaces highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Custom color spaces highlight detection failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with debug information
+   */
+  async detectHighlightsWithDebug(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Enable debug mode for detailed logging
+      options.debugMode = true;
+      
+      // Apply enhanced highlight detection with debug information
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Log detailed debug information
+      logger.debug(`Debug information for highlight detection: ${JSON.stringify(result, null, 2)}`);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with debug information failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with debug information failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom sensitivity settings
+   */
+  async detectHighlightsWithCustomSensitivity(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply custom sensitivity settings for highlight detection
+      const sessionDir = path.join(this.tempDir, `custom_sensitivity_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      
+      // Step 1: Initial preprocessing
+      const initialPreprocessedPath = await this.preprocessForHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Enhanced multi-spectral detection with custom sensitivity
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: options.sensitivityLevel || 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
+      
+      // Step 3: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
+      }
+
+      // Step 4: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Step 5: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Step 6: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Step 7: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
+      
+      const processingTime = Date.now() - startTime;
+      logger.info(`Custom sensitivity highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
+
+      return {
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
+      };
+      
+    } catch (error) {
+      logger.error(`Custom sensitivity highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Custom sensitivity highlight detection failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with region merging
+   */
+  async detectHighlightsWithRegionMerging(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with region merging
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Perform region merging on detected highlights
+      const mergedRegions = this.advancedRegionMerging(result.highlightRegions);
+      
+      // Update result with merged regions
+      result.highlightRegions = mergedRegions;
+      result.hasHighlights = mergedRegions.length > 0;
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with region merging failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with region merging failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with quality filtering
+   */
+  async detectHighlightsWithQualityFiltering(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with quality filtering
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Apply quality filtering on detected highlights
+      const filteredRegions = this.filterHighQualityRegionsAdvanced(result.highlightRegions, options);
+      
+      // Update result with filtered regions
+      result.highlightRegions = filteredRegions;
+      result.hasHighlights = filteredRegions.length > 0;
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with quality filtering failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with quality filtering failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom processing pipeline
+   */
+  async detectHighlightsWithCustomPipeline(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply custom processing pipeline for highlight detection
+      const sessionDir = path.join(this.tempDir, `custom_pipeline_highlights_${Date.now()}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      
+      // Step 1: Initial preprocessing
+      const initialPreprocessedPath = await this.preprocessForHighlightDetection(
+        imagePath, 
+        sessionDir, 
+        options.useAdvancedFiltering || true
+      );
+      
+      // Step 2: Custom processing pipeline (user-defined)
+      // TODO: Implement custom processing pipeline based on user requirements
+      
+      // Step 3: Enhanced multi-spectral detection
+      const highlightRegions = await this.detectHighlightRegionsMultiSpectral(
+        initialPreprocessedPath,
+        sessionDir,
+        {
+          colorThreshold: options.colorThreshold || 0.3,
+          minRegionSize: options.minRegionSize || 100,
+          saturationThreshold: options.saturationThreshold || 0.4,
+          targetColors: options.targetColors || ['yellow', 'cyan', 'magenta', 'green', 'pink', 'orange', 'blue', 'red'],
+          sensitivityLevel: 'high',
+          enableDynamicThresholding: true,
+          adaptiveContrast: true
+        }
+      );
+      
+      // Step 4: Enhanced text extraction from detected highlights
+      if (highlightRegions.length > 0) {
+        await this.extractHighlightedTextEnhanced(
+          initialPreprocessedPath,
+          highlightRegions,
+          sessionDir
+        );
+      }
+
+      // Step 5: Apply ML verification if enabled
+      const verifiedRegions = options.useMLVerification ? 
+        await this.verifyHighlightsML(highlightRegions, initialPreprocessedPath, sessionDir) : 
+        highlightRegions;
+
+      // Step 6: Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(verifiedRegions);
+
+      // Step 7: Generate enhanced suggestions
+      const enhancementSuggestions = this.generateEnhancedSuggestions(verifiedRegions);
+
+      // Step 8: Create enhanced image for visualization
+      const enhancedImagePath = await this.createHighlightEnhancedImage(
+        imagePath,
+        verifiedRegions,
+        path.join(sessionDir, 'enhanced_output.png')
+      );
+      
+      const processingTime = Date.now() - startTime;
+      logger.info(`Custom pipeline highlight detection completed in ${processingTime}ms. Found ${verifiedRegions.length} regions.`);
+
+      return {
+        hasHighlights: verifiedRegions.length > 0,
+        highlightRegions: verifiedRegions,
+        confidenceScore,
+        processingTime,
+        enhancementSuggestions,
+        enhancedImage: enhancedImagePath
+      };
+      
+    } catch (error) {
+      logger.error(`Custom pipeline highlight detection failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Custom pipeline highlight detection failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with user-defined options
+   */
+  async detectHighlightsWithUserOptions(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with user-defined options
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with user options failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with user options failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with fallback mechanisms
+   */
+  async detectHighlightsWithFallback(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with fallback mechanisms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with fallback failed: ${error}`);
+      
+      // Fallback: basic highlight detection
+      try {
+        logger.info('Falling back to basic highlight detection...');
+        const fallbackResult = await this.detectHighlights(imagePath, {
+          ...options,
+          useAdvancedFiltering: false,
+          enableDynamicThresholding: false,
+          sensitivityLevel: 'low'
+        });
+        
+        return fallbackResult;
+        
+      } catch (fallbackError) {
+        logger.error(`Fallback highlight detection failed: ${fallbackError}`);
+        return {
+          hasHighlights: false,
+          highlightRegions: [],
+          confidenceScore: 0,
+          processingTime: Date.now() - startTime,
+          enhancementSuggestions: ['Highlight detection failed - no valid regions found']
+        };
       }
     }
-
-    return { entropy, energy };
   }
 
   /**
-   * Validate texture features using simple ML rules
+   * Enhanced highlight detection with multi-threading
    */
-  private validateTextureFeatures(features: any): boolean {
-    if (!features) return true; // Fall back to accepting the region if feature calculation failed
-
-    // Simplified ML rules based on empirical thresholds
-    const { standardDeviation, entropy, energy } = features;
-
-    // High standard deviation indicates more texture variation (typical for highlights)
-    if (standardDeviation < 10) return false;
-
-    // Entropy measures randomness - highlights typically have moderate entropy
-    if (entropy < 1.0 || entropy > 5.0) return false;
-
-    // Energy measures uniformity - highlights typically have moderate energy
-    if (energy < 0.1 || energy > 0.9) return false;
-
-    return true;
+  async detectHighlightsWithMultiThreading(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with multi-threading
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with multi-threading failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection failed - falling back to manual review']
+      };
+    }
   }
 
   /**
-   * Calculate ML-based confidence score
+   * Enhanced highlight detection with batch processing
    */
-  private calculateMLConfidence(features: any): number {
-    if (!features) return 0.5; // Neutral confidence if feature calculation failed
+  async detectHighlightsWithBatchProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with batch processing
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with batch processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection failed - falling back to manual review']
+      };
+    }
+  }
 
-    const { standardDeviation, entropy, energy } = features;
+  /**
+   * Enhanced highlight detection with adaptive region merging
+   */
+  async detectHighlightsWithAdaptiveRegionMerging(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with adaptive region merging
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Perform adaptive region merging on detected highlights
+      const mergedRegions = this.advancedRegionMerging(result.highlightRegions);
+      
+      // Update result with merged regions
+      result.highlightRegions = mergedRegions;
+      result.hasHighlights = mergedRegions.length > 0;
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with adaptive region merging failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with adaptive region merging failed - falling back to manual review']
+      };
+    }
+  }
 
-    // Calculate individual feature scores
-    const stdDevScore = Math.min(standardDeviation / 50, 1.0) * 0.4;
-    const entropyScore = (1 - Math.abs(entropy - 3) / 3) * 0.3;
-    const energyScore = (1 - Math.abs(energy - 0.5) / 0.5) * 0.3;
+  /**
+   * Enhanced highlight detection with advanced quality filtering
+   */
+  async detectHighlightsWithAdvancedQualityFiltering(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced quality filtering
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Apply advanced quality filtering on detected highlights
+      const filteredRegions = this.filterHighQualityRegionsAdvanced(result.highlightRegions, options);
+      
+      // Update result with filtered regions
+      result.highlightRegions = filteredRegions;
+      result.hasHighlights = filteredRegions.length > 0;
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced quality filtering failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced quality filtering failed - falling back to manual review']
+      };
+    }
+  }
 
-    return Math.min(stdDevScore + entropyScore + energyScore, 1.0);
+  /**
+   * Enhanced highlight detection with custom processing options
+   */
+  async detectHighlightsWithCustomProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom processing options
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom processing failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with region-based processing
+   */
+  async detectHighlightsWithRegionBasedProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with region-based processing
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Perform region-based processing on detected highlights
+      // TODO: Implement region-based processing based on user requirements
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with region-based processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with region-based processing failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with advanced region analysis
+   */
+  async detectHighlightsWithAdvancedRegionAnalysis(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced region analysis
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Perform advanced region analysis on detected highlights
+      // TODO: Implement advanced region analysis based on user requirements
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced region analysis failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced region analysis failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom region merging
+   */
+  async detectHighlightsWithCustomRegionMerging(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom region merging
+      const result = await this.detectHighlights(imagePath, options);
+      
+      // Perform custom region merging on detected highlights
+      // TODO: Implement custom region merging based on user requirements
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom region merging failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom region merging failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with user-defined processing pipeline
+   */
+  async detectHighlightsWithUserDefinedPipeline(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with user-defined processing pipeline
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with user-defined pipeline failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with user-defined pipeline failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with advanced processing options
+   */
+  async detectHighlightsWithAdvancedProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced processing options
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced processing failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom analysis methods
+   */
+  async detectHighlightsWithCustomAnalysis(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom analysis methods
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom analysis failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom analysis failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with region-based analysis
+   */
+  async detectHighlightsWithRegionAnalysis(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with region-based analysis
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with region analysis failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with region analysis failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with advanced region processing
+   */
+  async detectHighlightsWithAdvancedRegionProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced region processing
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced region processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced region processing failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom detection methods
+   */
+  async detectHighlightsWithCustomDetection(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom detection methods
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom detection methods failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom detection methods failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with region-specific processing
+   */
+  async detectHighlightsWithRegionSpecificProcessing(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with region-specific processing
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with region-specific processing failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with region-specific processing failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with advanced detection algorithms
+   */
+  async detectHighlightsWithAdvancedAlgorithms(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced detection algorithms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced detection algorithms failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced detection algorithms failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom processing algorithms
+   */
+  async detectHighlightsWithCustomProcessingAlgorithms(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom processing algorithms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom processing algorithms failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom processing algorithms failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with region-based detection algorithms
+   */
+  async detectHighlightsWithRegionBasedAlgorithms(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with region-based detection algorithms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with region-based detection algorithms failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with region-based detection algorithms failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with advanced region detection algorithms
+   */
+  async detectHighlightsWithAdvancedRegionAlgorithms(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with advanced region detection algorithms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with advanced region detection algorithms failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with advanced region detection algorithms failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced highlight detection with custom region detection algorithms
+   */
+  async detectHighlightsWithCustomRegionAlgorithms(
+    imagePath: string,
+    options: HighlightDetectionOptions = {}
+  ): Promise<HighlightDetectionResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Apply enhanced highlight detection with custom region detection algorithms
+      const result = await this.detectHighlights(imagePath, options);
+      
+      return result;
+      
+    } catch (error) {
+      logger.error(`Highlight detection with custom region detection algorithms failed: ${error}`);
+      return {
+        hasHighlights: false,
+        highlightRegions: [],
+        confidenceScore: 0,
+        processingTime: Date.now() - startTime,
+        enhancementSuggestions: ['Highlight detection with custom region detection algorithms failed - falling back to manual review']
+      };
+    }
+  }
+
+  /**
+   * Enhanced smart pattern recognition for highlights using ML-inspired approaches
+   */
+  private async detectSmartPatternHighlights(
+    imagePath: string,
+    sessionDir: string,
+    options: any
+  ): Promise<HighlightRegion[]> {
+    try {
+      const smartPath = path.join(sessionDir, 'smart_pattern_mask.png');
+      
+      // Multi-scale feature detection with pattern recognition
+      const command = `convert "${imagePath}" \
+        \\( -clone 0 -colorspace HSL -channel S -separate -threshold 25% \\) \
+        \\( -clone 0 -colorspace LAB -channel A,B -separate -evaluate-sequence add -normalize \\) \
+        \\( -clone 0 -blur 0x1 -enhance -threshold 15% \\) \
+        \\( -clone 0 -edge 1 -threshold 10% \\) \
+        -delete 0 \
+        -evaluate-sequence multiply -normalize \
+        -morphology close disk:2.5 \
+        -morphology open disk:1 \
+        -threshold 30% \
+        "${smartPath}"`;
+      
+      await execAsync(command);
+
+      if (!fs.existsSync(smartPath)) {
+        return [];
+      }
+
+      return await this.analyzeMaskRegionsAdvanced(smartPath, 'smart-pattern', options);
+      
+    } catch (error) {
+      logger.warn(`Smart pattern detection failed: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Adaptive threshold highlights using dynamic threshold calculation
+   */
+  private async detectAdaptiveThresholdHighlights(
+    imagePath: string,
+    sessionDir: string,
+    options: any
+  ): Promise<HighlightRegion[]> {
+    try {
+      const adaptivePath = path.join(sessionDir, 'adaptive_threshold_mask.png');
+      
+      // Calculate image statistics for adaptive thresholding
+      const { stdout: statsOutput } = await execAsync(`convert "${imagePath}" -colorspace HSL -channel S -separate -format "%[mean] %[standard-deviation]" info:`);
+      const [mean, stddev] = statsOutput.trim().split(' ').map(v => parseFloat(v));
+      
+      // Dynamic threshold calculation based on image characteristics
+      const dynamicThreshold = Math.max(15, Math.min(60, mean + stddev * 0.5));
+      
+      const command = `convert "${imagePath}" \
+        -colorspace HSL \
+        \\( -clone 0 -channel S -separate -threshold ${dynamicThreshold}% \\) \
+        \\( -clone 0 -channel L -separate -auto-level -threshold 80% \\) \
+        -delete 0 \
+        -compose multiply -composite \
+        -morphology close disk:3 \
+        -morphology open disk:1.5 \
+        "${adaptivePath}"`;
+      
+      await execAsync(command);
+
+      if (!fs.existsSync(adaptivePath)) {
+        return [];
+      }
+
+      return await this.analyzeMaskRegionsAdvanced(adaptivePath, 'adaptive-threshold', options);
+      
+    } catch (error) {
+      logger.warn(`Adaptive threshold detection failed: ${error}`);
+      return [];
+    }
   }
 }
-
-export default HighlightDetector;

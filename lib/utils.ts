@@ -10,12 +10,68 @@ export function cn(...inputs: ClassValue[]) {
  * Create a standardized JSON response for API endpoints
  */
 export function createJsonResponse(data: any, status: number = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  try {
+    // Sanitize data to ensure JSON safety
+    const sanitizedData = sanitizeDataForJson(data);
+    
+    // Validate the data can be properly stringified
+    let responseString: string;
+    try {
+      responseString = JSON.stringify(sanitizedData);
+      // Verify it can be parsed back
+      JSON.parse(responseString);
+    } catch (jsonError) {
+      console.error('JSON stringify failed:', jsonError);
+      // Fallback to a safe minimal response
+      responseString = JSON.stringify({
+        success: false,
+        error: 'Internal server error - invalid JSON response',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return new Response(responseString, {
+      status,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  } catch (error) {
+    console.error('Critical error in createJsonResponse:', error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Critical server error',
+        timestamp: new Date().toISOString()
+      }),
+      { 
+        status: 500, 
+        headers: { "Content-Type": "application/json" } 
+      }
+    );
+  }
+}
+
+function sanitizeDataForJson(data: any): any {
+  if (data === null || data === undefined) return null;
+  
+  if (typeof data === 'string') {
+    return data.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '');
+  }
+  
+  if (Array.isArray(data)) {
+    return data.map(item => sanitizeDataForJson(item));
+  }
+  
+  if (typeof data === 'object') {
+    const clean: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      clean[key] = sanitizeDataForJson(value);
+    }
+    return clean;
+  }
+  
+  return data;
 }
 
 /**

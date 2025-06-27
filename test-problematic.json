@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "testTime": "2025-06-27T09:43:40.617Z",
+  "testCases": [
+    {
+      "name": "Simple text",
+      "text": "This is a normal text"
+    },
+    {
+      "name": "Newlines and tabs",
+      "text": "Text with\nnewlines\nand\ttabs\t\t"
+    },
+    {
+      "name": "Backslashes",
+      "text": "Text with backslashes \\\\ and more \\\\\\\\"
+    },
+    {
+      "name": "Double escaped sequences",
+      "text": "Double escaped \\\\n \\\\t \\\\r sequences"
+    },
+    {
+      "name": "Triple escaped sequences",
+      "text": "Triple escaped \\\\\\n \\\\\\t \\\\\\r sequences"
+    },
+    {
+      "name": "JSON control characters",
+      "text": "Text with quotes \" and apostrophes ' and backslashes \\"
+    },
+    {
+      "name": "Unicode quotes",
+      "text": "Unicode \"quotes\" and 'quotes'"
+    },
+    {
+      "name": "Control characters",
+      "text": "Control chars: \u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\u000b\f\u000e\u000f"
+    },
+    {
+      "name": "Emojis and special characters",
+      "text": "Emojis 😀 🚀 💯 and special characters ☺ ♥ ♦ ♣ ♠"
+    },
+    {
+      "name": "Very long text",
+      "text": "This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. This is a repeating text. "
+    }
+  ]
+}

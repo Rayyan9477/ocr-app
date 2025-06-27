@@ -1,0 +1,9 @@
+This is a test file with problematic characters:
+- Newlines \n and \r\n
+- Tabs \t
+- Backslashes \\\\
+- Unicode quotes "quotes" and 'quotes'
+- Special Unicode characters: ☺ ♥ ♦ ♣ ♠
+- Control characters: 
+- Long text repeating: This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test This is a test
+- Deeply nested backslash sequences: \\\\\\n \\\\\\r \\\\\\t \\\\\\\\ \\\\\\\"

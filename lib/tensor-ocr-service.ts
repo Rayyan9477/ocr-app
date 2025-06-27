@@ -288,7 +288,8 @@ export class TensorOCRService {
   private async recognizeTextWithTesseract(
     imagePath: string,
     language: string,
-    isHandwriting: boolean
+    isHandwriting: boolean,
+    customPSM?: number
   ): Promise<{
     text: string;
     confidence: number;
@@ -302,7 +303,7 @@ export class TensorOCRService {
       const outputBasePath = path.join(this.tempDir, `ocr_output_${Date.now()}`);
 
       // Set optimal Tesseract parameters based on text type
-      const psm = isHandwriting ? 13 : 6; // 13 for raw line, 6 for uniform block
+      const psm = customPSM || (isHandwriting ? 13 : 6); // Allow custom PSM override
       const oem = 3; // LSTM only
 
       // Additional parameters for highlighted text
@@ -398,9 +399,9 @@ export class TensorOCRService {
   }
 
   /**
-   * Post-process OCR text to improve quality
+   * Post-process OCR text to improve quality for highlighted regions
    */
-  private postProcessText(text: string): string {
+  private postProcessText(text: string, isHighlighted: boolean = false): string {
     if (!text) return '';
 
     // Fix common OCR errors
@@ -409,7 +410,7 @@ export class TensorOCRService {
     // Remove excessive newlines
     processed = processed.replace(/\n{3,}/g, '\n\n');
 
-    // Fix common OCR errors
+    // Enhanced corrections for highlighted text
     const corrections: [RegExp, string][] = [
       [/\b1\b/g, 'I'],                 // Isolated 1 to I
       [/\b0\b/g, 'O'],                 // Isolated 0 to O
@@ -420,6 +421,21 @@ export class TensorOCRService {
       [/([a-z])(\s+)([.,;:])/g, '$1$3'], // Remove space before punctuation
       [/\s+([\])}])/g, '$1'],         // Remove space before closing brackets
       [/([\[({])\s+/g, '$1'],         // Remove space after opening brackets
+      
+      // Additional corrections for highlighted text
+      ...(isHighlighted ? [
+        [/[|]([a-z])/g, 'I$1'],       // | to I at start of words
+        [/([a-z])[|]/g, '$1l'],       // | to l at end of words
+        [/\bm([A-Z])/g, 'M$1'],       // lowercase m before uppercase
+        [/\b([A-Z])m\b/g, '$1'],      // Isolated m after uppercase
+        [/\b5([a-z])/g, 'S$1'],       // 5 to S before lowercase
+        [/([a-z])5\b/g, '$1s'],       // 5 to s after lowercase
+        [/\b8([a-z])/g, 'B$1'],       // 8 to B before lowercase
+        [/\bcl([A-Z])/g, 'CI$1'],      // cl to CI before uppercase
+        [/\bii([A-Z])/g, 'il$1'],      // ii to il before uppercase
+        [/\brn([a-z])/g, 'm$1'],       // rn to m before lowercase
+      ] as [RegExp, string][] : []),
+      
       [/\s+/g, ' ']                   // Normalize whitespace
     ];
 
@@ -449,5 +465,268 @@ export class TensorOCRService {
       enhancementOptions: ['neural', 'traditional', 'none'],
       postProcessingOptions: ['spelling', 'grammar', 'none']
     };
+  }
+
+  /**
+   * Process highlighted region with advanced enhancement techniques
+   */
+  async processHighlightedRegion(
+    imagePath: string,
+    region: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      color?: string;
+      enhancementMethod?: string;
+    }
+  ): Promise<{ text: string; confidence: number }> {
+    try {
+      const regionPath = path.join(this.tempDir, `highlight_region_${Date.now()}.png`);
+      const padding = 12; // Increased padding for better context
+      
+      // Extract region with padding
+      const expandedCrop = `${region.width + padding * 2}x${region.height + padding * 2}+${Math.max(0, region.x - padding)}+${Math.max(0, region.y - padding)}`;
+      
+      // Apply color-specific enhancement first
+      const colorEnhancedPath = await this.enhanceByHighlightColor(imagePath, region.color || 'yellow');
+      
+      // Create multiple enhanced versions for ensemble processing
+      const enhancedVersions = await this.createMultipleEnhancements(colorEnhancedPath, expandedCrop, region);
+      
+      let bestResult = { text: '', confidence: 0 };
+      
+      // Process each enhanced version
+      for (const { path: enhancedPath, method } of enhancedVersions) {
+        try {
+          const result = await this.processImage(enhancedPath, {
+            enhanceText: true,
+            usePostProcessing: true,
+            useHandwritingModel: false
+          });
+          
+          if (result.confidence > bestResult.confidence && result.text.trim().length > 0) {
+            bestResult = {
+              text: this.postProcessHighlightedText(result.text, region),
+              confidence: result.confidence * this.getMethodConfidenceMultiplier(method)
+            };
+          }
+        } catch (error) {
+          logger.warn(`Enhancement method ${method} failed: ${error}`);
+        }
+      }
+      
+      // Cleanup enhanced versions
+      await Promise.all(enhancedVersions.map(version => 
+        execAsync(`rm -f "${version.path}"`).catch(() => {})
+      ));
+      
+      return bestResult;
+      
+    } catch (error) {
+      logger.error(`Highlighted region processing failed: ${error}`);
+      return { text: '', confidence: 0 };
+    }
+  }
+
+  /**
+   * Create multiple enhanced versions of highlighted region
+   */
+  private async createMultipleEnhancements(
+    imagePath: string,
+    cropSpec: string,
+    region: any
+  ): Promise<{ path: string; method: string }[]> {
+    const enhancements = [];
+    const baseDir = this.tempDir;
+    
+    // Method 1: High contrast with adaptive thresholding
+    const contrastPath = path.join(baseDir, `contrast_${Date.now()}.png`);
+    await execAsync(`convert "${imagePath}" -crop ${cropSpec} \
+      -colorspace LAB -channel L -auto-level -contrast-stretch 1%x99% \
+      -colorspace sRGB -resize 400% \
+      -unsharp 0x2.0+2.0+0.1 \
+      -threshold 85% \
+      "${contrastPath}"`);
+    enhancements.push({ path: contrastPath, method: 'high_contrast' });
+    
+    // Method 2: Color space optimization for highlighted text
+    const colorOptimizedPath = path.join(baseDir, `color_opt_${Date.now()}.png`);
+    const colorCommand = this.getAdvancedColorOptimization(region.color);
+    await execAsync(`convert "${imagePath}" -crop ${cropSpec} \
+      ${colorCommand} \
+      -resize 350% \
+      -unsharp 0x1.5+1.8+0.08 \
+      -contrast-stretch 2%x98% \
+      "${colorOptimizedPath}"`);
+    enhancements.push({ path: colorOptimizedPath, method: 'color_optimized' });
+    
+    // Method 3: Edge-preserving enhancement
+    const edgePath = path.join(baseDir, `edge_${Date.now()}.png`);
+    await execAsync(`convert "${imagePath}" -crop ${cropSpec} \
+      -colorspace LAB \
+      \\( -clone 0 -channel L -normalize -unsharp 0x1.0+1.5+0 \\) \
+      \\( -clone 0 -channel A,B -blur 0x0.5 \\) \
+      -delete 0 -compose copy_opacity -composite \
+      -colorspace sRGB -resize 300% \
+      -enhance \
+      "${edgePath}"`);
+    enhancements.push({ path: edgePath, method: 'edge_preserving' });
+    
+    // Method 4: Morphological enhancement for text structure
+    const morphPath = path.join(baseDir, `morph_${Date.now()}.png`);
+    await execAsync(`convert "${imagePath}" -crop ${cropSpec} \
+      -colorspace Gray -normalize \
+      -resize 450% \
+      -morphology close disk:1.5 \
+      -morphology open disk:0.5 \
+      -unsharp 0x1.0+1.2+0.05 \
+      -contrast-stretch 3%x97% \
+      "${morphPath}"`);
+    enhancements.push({ path: morphPath, method: 'morphological' });
+    
+    return enhancements;
+  }
+
+  /**
+   * Get advanced color optimization based on highlight color
+   */
+  private getAdvancedColorOptimization(color?: string): string {
+    const optimizations: Record<string, string> = {
+      'yellow': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel B -evaluate subtract 20% 
+        -colorspace sRGB`,
+      'green': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel A -evaluate subtract 25% 
+        -colorspace sRGB`,
+      'cyan': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel B -evaluate add 15% 
+        -colorspace sRGB`,
+      'pink': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel A -evaluate add 12% -channel B -evaluate subtract 8% 
+        -colorspace sRGB`,
+      'orange': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel A -evaluate add 18% -channel B -evaluate add 12% 
+        -colorspace sRGB`,
+      'blue': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel B -evaluate subtract 30% 
+        -colorspace sRGB`,
+      'red': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel A -evaluate add 22% 
+        -colorspace sRGB`,
+      'magenta': `
+        -colorspace LAB 
+        -channel L -auto-level -contrast-stretch 2%x98% 
+        -channel A -evaluate add 18% -channel B -evaluate subtract 12% 
+        -colorspace sRGB`
+    };
+    
+    return optimizations[color?.toLowerCase() || 'yellow'] || optimizations['yellow'];
+  }
+
+  /**
+   * Get confidence multiplier based on enhancement method
+   */
+  private getMethodConfidenceMultiplier(method: string): number {
+    const multipliers: Record<string, number> = {
+      'high_contrast': 1.0,
+      'color_optimized': 1.15,
+      'edge_preserving': 1.05,
+      'morphological': 0.95
+    };
+    
+    return multipliers[method] || 1.0;
+  }
+
+  /**
+   * Post-process text extracted from highlighted regions
+   */
+  private postProcessHighlightedText(text: string, region: any): string {
+    if (!text) return '';
+
+    let processed = text;
+
+    // Remove excessive newlines and normalize whitespace
+    processed = processed.replace(/\n{3,}/g, '\n\n').replace(/\s+/g, ' ');
+
+    // Enhanced corrections for highlighted text with color-specific patterns
+    const colorSpecificCorrections = this.getColorSpecificCorrections(region.color);
+    
+    const generalCorrections: [RegExp, string][] = [
+      [/\b1\b/g, 'I'],                 // Isolated 1 to I
+      [/\b0\b/g, 'O'],                 // Isolated 0 to O
+      [/([a-z])l\b/g, '$1!'],         // ending l to !
+      [/\bl([A-Z])/g, 'I$1'],         // starting l to I
+      [/\bcl([A-Z])/g, 'CI$1'],       // cl to CI before uppercase
+      [/\bii([A-Z])/g, 'il$1'],       // ii to il before uppercase
+      [/\brn([a-z])/g, 'm$1'],        // rn to m before lowercase
+      [/([A-Z])1([a-z])/g, '$1l$2'],  // 1 to l between uppercase and lowercase
+      [/\b([A-Z]+)1([A-Z]+)\b/g, '$1I$2'], // 1 to I in all caps words
+      [/\s+/g, ' ']                   // Normalize whitespace
+    ];
+
+    // Apply color-specific corrections first
+    for (const [pattern, replacement] of colorSpecificCorrections) {
+      processed = processed.replace(pattern, replacement);
+    }
+
+    // Apply general corrections
+    for (const [pattern, replacement] of generalCorrections) {
+      processed = processed.replace(pattern, replacement);
+    }
+
+    return processed.trim();
+  }
+
+  /**
+   * Get color-specific OCR corrections
+   */
+  private getColorSpecificCorrections(color?: string): [RegExp, string][] {
+    const corrections: Record<string, [RegExp, string][]> = {
+      'yellow': [
+        [/\bl\b/g, 'I'],           // Yellow highlights often cause l/I confusion
+        [/\b0\b(?=\s*[a-z])/g, 'O'], // 0 to O before lowercase
+        [/rn/gi, 'm'],             // rn to m is common in yellow highlights
+        [/\bm\b(?=\s*[A-Z])/g, 'in'] // m to in before uppercase words
+      ],
+      'green': [
+        [/\b1\b(?=\s*[a-z])/g, 'l'], // 1 to l in green highlights
+        [/\bcl\b/g, 'cl'],          // Keep cl as is
+        [/\bvv\b/g, 'w'],           // vv to w
+        [/\bii\b/g, 'n']            // ii to n
+      ],
+      'cyan': [
+        [/\bii\b/g, 'n'],           // ii to n common in cyan
+        [/\bvv\b/g, 'w'],           // vv to w
+        [/\b6\b(?=\s*[a-z])/g, 'G'], // 6 to G
+        [/\b9\b(?=\s*[a-z])/g, 'g']  // 9 to g
+      ],
+      'pink': [
+        [/\bo\b(?=\s*[A-Z])/g, 'O'], // o to O before uppercase
+        [/\bc\b(?=\s*[A-Z])/g, 'C'], // c to C before uppercase
+        [/\bfi\b/g, 'h']             // fi to h ligature issue
+      ],
+      'orange': [
+        [/\b8\b(?=\s*[a-z])/g, 'B'], // 8 to B
+        [/\b3\b(?=\s*[a-z])/g, 'E'], // 3 to E
+        [/\b5\b(?=\s*[a-z])/g, 'S']  // 5 to S
+      ]
+    };
+    
+    return corrections[color?.toLowerCase()] || [];
   }
 }

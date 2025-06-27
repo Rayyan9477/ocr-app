@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import logger from './logger';
-import HighlightDetector, { HighlightDetectionResult, HighlightDetectionOptions, HighlightRegion } from './highlight-detector';
+import { HighlightDetector, HighlightDetectionResult, HighlightDetectionOptions, HighlightRegion } from './highlight-detector';
 import { 
   EnhancedPreprocessingOptions, 
   EnhancedPreprocessingResult,
@@ -124,65 +124,118 @@ export class PreprocessingService {
         const imageDir = path.join(sessionDir, 'pages');
         await execAsync(`mkdir -p "${imageDir}"`);
         
-        // Convert with high DPI for better quality
-        await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
-        operations.push('PDF to high-quality PNG conversion (300 DPI)');
-
-        // Get all pages for processing
-        const { readdir } = await import('fs/promises');
-        const imageFiles = (await readdir(imageDir)).filter(f => f.endsWith('.png')).sort();
-        
-        if (imageFiles.length === 0) {
-          throw new Error('No images generated from PDF');
-        }
-
-        logger.info(`Processing ${imageFiles.length} pages from PDF`);
-        
-        // Process each page individually
-        const processedPages: string[] = [];
-        for (let i = 0; i < imageFiles.length; i++) {
-          const pagePath = path.join(imageDir, imageFiles[i]);
-          const processedPagePath = path.join(sessionDir, `processed_page_${i + 1}.png`);
-          
-          // Apply preprocessing to this page
-          if (magickOps.length > 0) {
-            const magickCommand = `convert "${pagePath}" ${magickOps.join(' ')} "${processedPagePath}"`;
-            logger.info(`Processing page ${i + 1}: ${magickCommand}`);
-            await execAsync(magickCommand);
-            
-            if (fs.existsSync(processedPagePath)) {
-              processedPages.push(processedPagePath);
-            } else {
-              logger.warn(`Failed to process page ${i + 1}, using original`);
-              await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
-              processedPages.push(processedPagePath);
-            }
-          } else {
-            // No preprocessing, just copy the page
-            await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
-            processedPages.push(processedPagePath);
-          }
-        }
-        
-        // Convert all processed pages back to a multi-page PDF
-        finalOutputPath = path.join(sessionDir, 'enhanced.pdf');
-        
         try {
-          // Use img2pdf to combine all pages into a single PDF
-          const pagesList = processedPages.map(p => `"${p}"`).join(' ');
-          await execAsync(`img2pdf ${pagesList} -o "${finalOutputPath}"`);
-          operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using img2pdf`);
-        } catch (img2pdfError) {
-          logger.warn('img2pdf not available, using ImageMagick convert as fallback');
+          // Convert with high DPI for better quality
+          await execAsync(`pdftoppm -png -r 300 "${inputPath}" "${imageDir}/page"`);
+          operations.push('PDF to high-quality PNG conversion (300 DPI)');
+
+          // Get all pages for processing
+          const { readdir } = await import('fs/promises');
+          let imageFiles: string[] = [];
+          
           try {
-            const pagesList = processedPages.map(p => `"${p}"`).join(' ');
-            await execAsync(`convert ${pagesList} "${finalOutputPath}"`);
-            operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using convert`);
-          } catch (convertError) {
-            logger.error('Multi-page PDF conversion failed, falling back to first page only');
-            finalOutputPath = processedPages[0];
-            operations.push('Keeping first enhanced page only (multi-page PDF conversion failed)');
+            imageFiles = (await readdir(imageDir)).filter(f => f.endsWith('.png')).sort();
+          } catch (readdirError) {
+            logger.error(`Failed to read image directory: ${readdirError}`);
+            errors.push(`Failed to read converted images: ${readdirError instanceof Error ? readdirError.message : String(readdirError)}`);
           }
+          
+          if (imageFiles.length === 0) {
+            throw new Error('No images generated from PDF');
+          }
+
+          logger.info(`Processing ${imageFiles.length} pages from PDF`);
+          
+          // Process each page individually
+          const processedPages: string[] = [];
+          for (let i = 0; i < imageFiles.length; i++) {
+            const pagePath = path.join(imageDir, imageFiles[i]);
+            const processedPagePath = path.join(sessionDir, `processed_page_${i + 1}.png`);
+            
+            // Apply preprocessing to this page
+            if (magickOps.length > 0) {
+              try {
+                const magickCommand = `convert "${pagePath}" ${magickOps.join(' ')} "${processedPagePath}"`;
+                logger.info(`Processing page ${i + 1}: ${magickCommand}`);
+                await execAsync(magickCommand);
+                
+                if (fs.existsSync(processedPagePath)) {
+                  processedPages.push(processedPagePath);
+                } else {
+                  logger.warn(`Failed to process page ${i + 1}, using original`);
+                  await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
+                  processedPages.push(processedPagePath);
+                }
+              } catch (pageProcessError) {
+                // Handle page processing errors gracefully
+                logger.error(`Error processing page ${i + 1}: ${pageProcessError}`);
+                errors.push(`Error processing page ${i + 1}: ${pageProcessError instanceof Error ? pageProcessError.message : String(pageProcessError)}`);
+                
+                // Fall back to using the original page
+                try {
+                  await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
+                  processedPages.push(processedPagePath);
+                } catch (copyError) {
+                  logger.error(`Failed to copy original page: ${copyError}`);
+                }
+              }
+            } else {
+              // No preprocessing, just copy the page
+              try {
+                await execAsync(`cp "${pagePath}" "${processedPagePath}"`);
+                processedPages.push(processedPagePath);
+              } catch (copyError) {
+                logger.error(`Failed to copy page ${i + 1}: ${copyError}`);
+                errors.push(`Failed to copy page ${i + 1}: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+              }
+            }
+          }
+          
+          // Convert all processed pages back to a multi-page PDF
+          finalOutputPath = path.join(sessionDir, 'enhanced.pdf');
+          
+          // Try multiple approaches for PDF conversion
+          let pdfConversionSuccess = false;
+          
+          // First try with img2pdf
+          try {
+            // Use img2pdf to combine all pages into a single PDF
+            const pagesList = processedPages.map(p => `"${p}"`).join(' ');
+            await execAsync(`img2pdf ${pagesList} -o "${finalOutputPath}"`);
+            operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using img2pdf`);
+            pdfConversionSuccess = true;
+          } catch (img2pdfError) {
+            logger.warn(`img2pdf conversion failed: ${img2pdfError}`);
+            // First attempt failed, try with ImageMagick
+            try {
+              logger.warn('img2pdf not available, using ImageMagick convert as fallback');
+              const pagesList = processedPages.map(p => `"${p}"`).join(' ');
+              await execAsync(`convert ${pagesList} "${finalOutputPath}"`);
+              operations.push(`Combined ${processedPages.length} enhanced pages back to PDF using convert`);
+              pdfConversionSuccess = true;
+            } catch (convertError) {
+              logger.error(`ImageMagick conversion failed: ${convertError}`);
+              // Both conversion methods failed
+              errors.push('PDF conversion failed with both img2pdf and ImageMagick');
+            }
+          }
+          
+          // If all PDF conversion methods failed, fallback to using just the first page
+          if (!pdfConversionSuccess) {
+            if (processedPages.length > 0) {
+              logger.error('Multi-page PDF conversion failed, falling back to first page only');
+              finalOutputPath = processedPages[0];
+              operations.push('Keeping first enhanced page only (multi-page PDF conversion failed)');
+            } else {
+              // No processed pages available at all - this is a critical failure
+              throw new Error('No processed pages available after PDF conversion');
+            }
+          }
+        } catch (pdfError) {
+          logger.error(`PDF processing failed: ${pdfError}`);
+          errors.push(`PDF processing failed: ${pdfError instanceof Error ? pdfError.message : String(pdfError)}`);
+          // Return original path on failure
+          finalOutputPath = inputPath;
         }
       } else {
         // Handle image input
@@ -190,21 +243,33 @@ export class PreprocessingService {
         
         // Apply preprocessing operations using ImageMagick
         if (magickOps.length > 0) {
-          const magickCommand = `convert "${inputPath}" ${magickOps.join(' ')} "${workingPath}"`;
-          
-          logger.info(`Applying preprocessing: ${magickCommand}`);
-          await execAsync(magickCommand);
-          
-          if (fs.existsSync(workingPath)) {
-            finalOutputPath = workingPath;
-          } else {
-            errors.push('ImageMagick processing failed');
+          try {
+            const magickCommand = `convert "${inputPath}" ${magickOps.join(' ')} "${workingPath}"`;
+            
+            logger.info(`Applying preprocessing: ${magickCommand}`);
+            await execAsync(magickCommand);
+            
+            if (fs.existsSync(workingPath)) {
+              finalOutputPath = workingPath;
+            } else {
+              errors.push('ImageMagick processing failed to create output file');
+              finalOutputPath = inputPath;
+            }
+          } catch (magickError) {
+            logger.error(`ImageMagick processing failed: ${magickError}`);
+            errors.push(`ImageMagick processing failed: ${magickError instanceof Error ? magickError.message : String(magickError)}`);
             finalOutputPath = inputPath;
           }
         } else {
           // No preprocessing, just copy the file
-          await execAsync(`cp "${inputPath}" "${workingPath}"`);
-          finalOutputPath = workingPath;
+          try {
+            await execAsync(`cp "${inputPath}" "${workingPath}"`);
+            finalOutputPath = workingPath;
+          } catch (copyError) {
+            logger.error(`Failed to copy input file: ${copyError}`);
+            errors.push(`Failed to copy input file: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+            finalOutputPath = inputPath;
+          }
         }
       }
 
@@ -232,15 +297,20 @@ export class PreprocessingService {
             
             // Enhance highlighted regions if requested
             if (options.enhanceHighlights) {
-              const enhancedPath = await this.enhanceHighlightedRegions(
-                finalOutputPath, 
-                highlightResults.highlightRegions,
-                sessionDir
-              );
-              
-              if (enhancedPath && enhancedPath !== finalOutputPath) {
-                finalOutputPath = enhancedPath;
-                operations.push('Enhanced highlighted regions for better OCR');
+              try {
+                const enhancedPath = await this.enhanceHighlightedRegions(
+                  finalOutputPath, 
+                  highlightResults.highlightRegions,
+                  sessionDir
+                );
+                
+                if (enhancedPath && enhancedPath !== finalOutputPath) {
+                  finalOutputPath = enhancedPath;
+                  operations.push('Enhanced highlighted regions for better OCR');
+                }
+              } catch (enhanceError) {
+                logger.error(`Failed to enhance highlighted regions: ${enhanceError}`);
+                errors.push(`Highlight enhancement failed: ${enhanceError instanceof Error ? enhanceError.message : String(enhanceError)}`);
               }
             }
           } else {
@@ -253,8 +323,14 @@ export class PreprocessingService {
         }
       }
 
+      // Check if we have a valid output path
+      if (!finalOutputPath || finalOutputPath === inputPath) {
+        operations.push('Using original file (preprocessing failed)');
+        finalOutputPath = inputPath;
+      }
+
       return {
-        success: true,
+        success: errors.length === 0,
         outputPath: finalOutputPath,
         operations,
         errors: errors.length > 0 ? errors : undefined,
