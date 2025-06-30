@@ -18,6 +18,7 @@ import { BrandedNotification } from "@/components/branded-notification"
 import { DependencyStatus } from "@/components/dependency-status"
 import { SmartSearch } from "@/components/smart-search"
 import { cn } from "@/lib/utils"
+import { FloatingActionButton } from "@/components/floating-action-button"
 
 const MAX_FILE_SIZE_MB = 100; // Maximum file size in MB
 
@@ -33,16 +34,16 @@ export default function Home() {
     force: false,
     redoOcr: false,
     removeBackground: false,
-    clean: false,
-    optimize: 3,
+    clean: true,
+    optimize: 4,
     outputFormat: "pdf",
     rotate: "auto",
     pdfRenderer: "auto",
     // Smart OCR options
-    useSmartOCR: false,
-    usePreprocessing: false,
-    useMultiEngine: false,
-    confidenceThreshold: 70
+    useSmartOCR: true,
+    usePreprocessing: true,
+    useMultiEngine: true,
+    confidenceThreshold: 85
   })
   const [lastSubmittedFormData, setLastSubmittedFormData] = useState<FormData | null>(null)
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
@@ -99,6 +100,164 @@ export default function Home() {
       setShowNotification(true);
     }
   }
+
+  const handleDownloadZip = async () => {
+    try {
+      setLoadingMessage("Preparing ZIP archive...");
+      setShowLoadingScreen(true);
+      
+      // Create query string with all file paths
+      const fileParams = processedFiles.map(file => `files=${encodeURIComponent(file.path)}`).join('&');
+      const response = await fetch(`/api/download/zip?${fileParams}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create ZIP archive');
+      }
+
+      // Create a blob from the response
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'processed-files.zip';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setNotificationProps({
+        title: "Download Ready",
+        description: "Your ZIP archive has been prepared and downloaded.",
+        variant: "success"
+      });
+      setShowNotification(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create ZIP archive';
+      setNotificationProps({
+        title: "Download Error",
+        description: errorMessage,
+        variant: "error"
+      });
+      setShowNotification(true);
+    } finally {
+      setShowLoadingScreen(false);
+      setLoadingMessage("Processing...");
+    }
+  };
+
+  // Update handleStartProcessing to include terminal logging
+  const handleStartProcessing = async () => {
+    if (files.length === 0) return;
+
+    setIsProcessing(true);
+    setError(null);
+    setCurrentFileIndex(0);
+    setProcessingStep(0);
+    setShowLoadingScreen(true);
+    setLoadingProgress(0);
+    setOverallProgress(0);
+    setOutput(""); // Clear previous output
+
+    try {
+      // Process each file
+      for (let i = 0; i < files.length; i++) {
+        setCurrentFileIndex(i);
+        const file = files[i];
+        
+        // Update terminal output
+        const newOutput = `Processing file ${i + 1} of ${files.length}: ${file.name}\n`;
+        setOutput(prev => prev + newOutput);
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append("file", file);
+        
+        // Add all options to formData
+        Object.entries(commandOptions).forEach(([key, value]) => {
+          if (typeof value === "boolean") {
+            formData.append(key, value.toString());
+          } else {
+            formData.append(key, String(value));
+          }
+        });
+
+        setLoadingMessage(`Processing file ${i + 1} of ${files.length}: ${file.name}`);
+        
+        // Process with smart OCR if enabled, otherwise use standard OCR
+        const endpoint = commandOptions.useSmartOCR ? '/api/smart-ocr' : '/api/ocr';
+        const response = await fetch(endpoint, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorMsg = `Failed to process ${file.name}: ${response.statusText}\n`;
+          setOutput(prev => prev + errorMsg);
+          throw new Error(errorMsg);
+        }
+
+        const result = await response.json();
+        
+        if (!result.success) {
+          const errorMsg = `Error processing ${file.name}: ${result.error || 'Unknown error'}\n`;
+          setOutput(prev => prev + errorMsg);
+          throw new Error(result.error || `Failed to process ${file.name}`);
+        }
+
+        // Add success message to terminal
+        const successMsg = `Successfully processed ${file.name}\n`;
+        setOutput(prev => prev + successMsg);
+
+        // Add to processed files
+        addProcessedFile({
+          name: result.outputFile || file.name,
+          path: result.outputPath || result.outputFile,
+          processedAt: new Date().toISOString(),
+          size: file.size
+        });
+
+        // Update progress
+        const progress = ((i + 1) / files.length) * 100;
+        setLoadingProgress(progress);
+        setOverallProgress(progress);
+      }
+
+      // Add completion message to terminal
+      const completionMsg = `\nAll files processed successfully!\n`;
+      setOutput(prev => prev + completionMsg);
+
+      // Show success notification
+      setNotificationProps({
+        title: "Processing Complete",
+        description: `Successfully processed ${files.length} file${files.length > 1 ? 's' : ''}.`,
+        variant: "success"
+      });
+      setShowNotification(true);
+
+      // Clear files after successful processing
+      setFiles([]);
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(errorMessage);
+      setOutput(prev => prev + `\nError: ${errorMessage}\n`);
+      setNotificationProps({
+        title: "Processing Error",
+        description: errorMessage,
+        variant: "error"
+      });
+      setShowNotification(true);
+    } finally {
+      setIsProcessing(false);
+      setShowLoadingScreen(false);
+      setLoadingMessage("Processing...");
+      setLoadingProgress(0);
+    }
+  };
 
   const handleRemoveFile = (index: number) => {
     setFiles((prevFiles) => prevFiles.filter((_, i) => i !== index))
@@ -934,40 +1093,6 @@ export default function Home() {
                 files.length > 0 && !isProcessing ? "animate-pulse-glow" : ""
               )}>
                 <CommandBuilder options={commandOptions} onChange={handleCommandChange} />
-
-                <Button
-                  className="w-full mt-4 group relative overflow-hidden transition-all duration-300 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary"
-                  onClick={processFiles}
-                  disabled={isProcessing || files.length === 0}
-                >
-                  <div className="absolute inset-0 w-full h-full transition-all duration-300 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full opacity-30"></div>
-                  <div className="flex items-center justify-center gap-2">
-                    {isProcessing ? (
-                      <>
-                        <div className="h-5 w-5 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
-                        <span>Processing...</span>
-                      </>
-                    ) : (
-                      <>
-                        {files.length > 0 ? (
-                          <div className="flex items-center gap-2">
-                            <svg 
-                              className="h-5 w-5 animate-pulse-glow" 
-                              viewBox="0 0 24 24" 
-                              fill="none" 
-                              xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                            <span>Start OCR Process</span>
-                          </div>
-                        ) : (
-                          <span>Upload Files First</span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </Button>
               </CardContent>
             </Card>
           </div>
@@ -1003,7 +1128,19 @@ export default function Home() {
               </TabsContent>
 
               <TabsContent value="status">
-                <ProcessStatus files={processedFiles} isProcessing={isProcessing} />
+                <div className="space-y-4">
+                  {processedFiles.length > 0 && (
+                    <Button
+                      onClick={handleDownloadZip}
+                      className="mb-4 bg-primary hover:bg-primary/90"
+                      disabled={isProcessing}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download All as ZIP
+                    </Button>
+                  )}
+                  <ProcessStatus files={processedFiles} isProcessing={isProcessing} />
+                </div>
               </TabsContent>
 
               <TabsContent value="search">
@@ -1024,6 +1161,12 @@ export default function Home() {
             </Tabs>
           </div>
         </div>
+
+        <FloatingActionButton 
+          onClick={handleStartProcessing}
+          isProcessing={isProcessing}
+          filesCount={files.length}
+        />
       </div>
     </main>
   )
