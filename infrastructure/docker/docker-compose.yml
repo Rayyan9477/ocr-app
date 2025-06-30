@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  ocr-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Set target architecture if needed (amd64, arm64)
+        TARGETARCH: ${TARGETARCH:-amd64}
+    image: ocr-application:${APP_VERSION:-1.0.0}
+    container_name: ocr-app
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      # Mount persistent volumes for uploads, processed files, and outputs
+      - ${UPLOADS_DIR:-./uploads}:/app/uploads
+      - ${PROCESSED_DIR:-./processed}:/app/processed
+      - ${OUTPUT_DIR:-./output}:/app/output
+    environment:
+      # Application configuration
+      - NODE_ENV=production
+      - PORT=${PORT:-3000}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-100}
+      # Directories
+      - UPLOADS_DIR=/app/uploads
+      - PROCESSED_DIR=/app/processed
+      - OUTPUT_DIR=/app/output
+      # Performance & debugging
+      - DEBUG=${DEBUG:-false}
+      - NEXT_TELEMETRY_DISABLED=1
+      - NODE_OPTIONS=--max-old-space-size=${NODE_MEMORY:-4096}
+      # OCR configuration
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-eng}
+      - ENABLE_OPTIMIZATION=${ENABLE_OPTIMIZATION:-true}
+      - USE_HANDWRITING_OPTIMIZATION=${USE_HANDWRITING_OPTIMIZATION:-true}
+    # Increase memory limits to handle large file uploads and processing
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-4G}
+          cpus: ${CONTAINER_CPUS:-2}
+        reservations:
+          memory: ${CONTAINER_MEMORY_RESERVATION:-2G}
+    # Ensure proper file permissions
+    user: "${CONTAINER_USER:-node}"
+    # Add healthcheck to monitor the application
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-3000}/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
