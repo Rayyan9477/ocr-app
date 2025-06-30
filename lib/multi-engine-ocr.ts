@@ -68,13 +68,13 @@ export interface ExtendedOCRResult extends OCRResult {
 const execAsync = promisify(exec);
 
 // Helper function to truncate and sanitize text for JSON responses
-function truncateTextForResponse(text: string, maxLength: number = 300): string {
+function truncateTextForResponse(text: string, maxLength: number = 200): string {
   if (!text) {
     return '';
   }
   
   try {
-    // Handle excessively large text content
+    // Handle excessively large text content - use a very conservative limit
     const truncated = text.length <= maxLength
       ? text
       : text.substring(0, maxLength) + '... [truncated - full text available in output file]';
@@ -174,10 +174,10 @@ function generateOutputFilename(inputPath: string, engineName: string, suffix: s
   // Remove timestamp prefix if it exists (for uploaded files)
   const cleanName = nameWithoutExt.replace(/^\d+_/, '');
   
-  // Generate timestamp for unique naming
-  const timestamp = Date.now();
+  // Sanitize the filename to be URL-friendly
+  const sanitizedName = cleanName.replace(/[^a-zA-Z0-9_.-]/g, '_');
   
-  return `${cleanName}_${timestamp}_${suffix}.pdf`;
+  return `${sanitizedName}_${suffix}.pdf`;
 }
 
 export interface OCREngine {
@@ -578,39 +578,39 @@ export class MultiEngineOCR {
           processedInputPath = inputPath; // Ensure we have a valid path
         }
       }
-      
+
       const outputPath = join(outputDir, generateOutputFilename(inputPath, engineName, 'smart_ocr'));
-      
+
       // Ensure output directory exists
       const fs = require('fs');
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
-      
-      // Handle service-based engines
+
       // All engines are now command-line based after removing Python dependencies
       const command = this.generateOptimizedCommand(engine, processedInputPath, outputPath, 'eng', null);
-      
       logger.info(`Executing OCR command: ${command}`);
-      
-      // Execute with timeout and better error handling
+
+      // --- Capture and sanitize stdout/stderr for logs ---
+      let ocrStdout = '';
+      let ocrStderr = '';
       try {
-        const { stdout, stderr } = await execAsync(command, { 
+        const { stdout, stderr } = await execAsync(command, {
           timeout: 300000, // 5 minute timeout
           maxBuffer: 1024 * 1024 * 10 // 10MB buffer
         });
-        
-        if (stderr && stderr.trim()) {
-          logger.warn(`OCR command stderr: ${stderr}`);
+        ocrStdout = stdout || '';
+        ocrStderr = stderr || '';
+        if (ocrStderr.trim()) {
+          logger.warn(`OCR command stderr: ${ocrStderr}`);
         }
-        
-        if (stdout && stdout.trim()) {
-          logger.info(`OCR command stdout: ${stdout.substring(0, 500)}...`);
+        if (ocrStdout.trim()) {
+          logger.info(`OCR command stdout: ${ocrStdout.substring(0, 500)}...`);
         }
-        
       } catch (execError: any) {
+        ocrStdout = execError.stdout || '';
+        ocrStderr = execError.stderr || '';
         logger.error(`OCR command execution failed: ${execError instanceof Error ? execError.message : String(execError)}`);
-        
         // Check if output file was created despite the error
         if (existsSync(outputPath)) {
           logger.info('Output file exists despite command error, proceeding with validation');
@@ -619,27 +619,28 @@ export class MultiEngineOCR {
           return this.createFallbackResult(inputPath, outputDir, `OCR command failed: ${execError.message}`, Date.now() - startTime);
         }
       }
-      
+
       const processingTime = Date.now() - startTime;
-      
+
       // Validate output
       if (!this.validateOCROutput(outputPath)) {
         logger.error('Output validation failed, creating fallback');
         return this.createFallbackResult(inputPath, outputDir, 'Output validation failed - file does not exist or is empty', processingTime);
       }
-      
+
       // Extract text for non-service engines
       let extractedText = '';
       let confidence = 0;
-      
-      // For command-line engines, extract text from PDF
+      let textExtractionStdout = '';
+      let textExtractionStderr = '';
       try {
-        const { stdout } = await execAsync(`pdftotext "${outputPath}" -`, {
+        const { stdout, stderr } = await execAsync(`pdftotext "${outputPath}" -`, {
           timeout: 30000, // 30 second timeout for text extraction
           maxBuffer: 1024 * 1024 * 5 // 5MB buffer
         });
         extractedText = stdout.trim();
-        
+        textExtractionStdout = stdout || '';
+        textExtractionStderr = stderr || '';
         // Get confidence if supported
         if (engine.confidence && engine.name === 'tesseract') {
           try {
@@ -651,12 +652,28 @@ export class MultiEngineOCR {
         } else {
           confidence = 0.8; // Default confidence for other engines
         }
-      } catch (textError) {
+      } catch (textError: any) {
         logger.warn(`Failed to extract text from ${engineName} output: ${textError}`);
         extractedText = '[Content processed successfully but text extraction failed - file is available for download]';
         confidence = 0.5; // Assume moderate confidence if text extraction fails
+        textExtractionStdout = textError.stdout || '';
+        textExtractionStderr = textError.stderr || '';
       }
-      
+
+      // Log the detailed output for debugging but don't include in JSON response to avoid size issues
+      if (ocrStdout.trim()) {
+        logger.info(`OCR stdout (first 500 chars): ${ocrStdout.substring(0, 500)}...`);
+      }
+      if (ocrStderr.trim()) {
+        logger.warn(`OCR stderr (first 500 chars): ${ocrStderr.substring(0, 500)}...`);
+      }
+      if (textExtractionStdout.trim()) {
+        logger.info(`Text extraction stdout (first 500 chars): ${textExtractionStdout.substring(0, 500)}...`);
+      }
+      if (textExtractionStderr.trim()) {
+        logger.warn(`Text extraction stderr (first 500 chars): ${textExtractionStderr.substring(0, 500)}...`);
+      }
+
       return {
         text: truncateTextForResponse(extractedText),
         confidence,
@@ -665,19 +682,19 @@ export class MultiEngineOCR {
         success: true,
         outputPath
       };
-      
+
     } catch (error) {
       const processingTime = Date.now() - startTime;
       logger.error(`Processing failed for engine ${engineName}: ${error instanceof Error ? error.message : String(error)}`);
-      
+
       // Try to create a fallback result instead of complete failure
       const fallbackResult = this.createFallbackResult(
-        inputPath, 
-        outputDir, 
-        error instanceof Error ? error.message : String(error), 
+        inputPath,
+        outputDir,
+        error instanceof Error ? error.message : String(error),
         processingTime
       );
-      
+
       // If even fallback failed, return error result
       if (!fallbackResult.success) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -691,7 +708,7 @@ export class MultiEngineOCR {
           words: []
         } as ExtendedOCRResult;
       }
-      
+
       return fallbackResult;
     } finally {
       // Cleanup preprocessing files if used
@@ -1044,6 +1061,55 @@ export class MultiEngineOCR {
    */
 
   /**
+   * Main OCR processing method
+   */
+  async processDocument(inputPath: string, options: any = {}): Promise<any> {
+    const startTime = Date.now();
+    logger.info('Starting OCR processing for:', inputPath);
+
+    try {
+      // Validate input
+      if (!inputPath) {
+        throw new Error('No input path provided');
+      }
+
+      // Normalize path and ensure it exists
+      const normalizedPath = path.resolve(inputPath);
+      if (!existsSync(normalizedPath)) {
+        throw new Error(`Input file does not exist: ${normalizedPath}`);
+      }
+
+      // Process the document
+      const result = await this.processWithEnsemble(normalizedPath, options);
+      const processingTime = Date.now() - startTime;
+
+      // Ensure we have a valid output file
+      if (!result.outputFile && result.outputPath) {
+        result.outputFile = path.basename(result.outputPath);
+      }
+
+      // Create safe response
+      const safeResult = this.ensureJsonSafety({
+        ...result,
+        inputPath: normalizedPath,
+        processingTime
+      });
+
+      logger.info('OCR processing completed successfully');
+      return safeResult;
+
+    } catch (error) {
+      logger.error('Error in OCR processing:', error);
+      return this.ensureJsonSafety({
+        success: false,
+        error: error.message || 'Unknown error in OCR processing',
+        inputPath,
+        processingTime: Date.now() - startTime
+      });
+    }
+  }
+
+  /**
    * Create a fallback result when all OCR engines fail
    */
   private createFallbackResult(
@@ -1090,7 +1156,143 @@ export class MultiEngineOCR {
       };
     }
   }
+
+  private generateOutputPath(inputFileName: string, engineName: string): string {
+    // Remove file extension and clean base name
+    const baseName = path.parse(inputFileName).name.replace(/[^a-zA-Z0-9-_]/g, '_');
+    const timestamp = Date.now();
+    // Use output directory from config
+    const outputPath = join(
+      appConfig.processedDir,
+      `${baseName}_${timestamp}_smart_ocr.pdf`
+    );
+    logger.debug(`Generated output path: ${outputPath}`);
+    return outputPath;
+  }
+
+  private async saveOutputFile(buffer: Buffer, filePath: string): Promise<void> {
+    try {
+      const dir = path.dirname(filePath);
+      if (!existsSync(dir)) {
+        await fs.promises.mkdir(dir, { recursive: true });
+      }
+      await fs.promises.writeFile(filePath, buffer);
+      logger.debug(`Saved output file: ${filePath}`);
+    } catch (error) {
+      logger.error(`Failed to save output file: ${error}`);
+      throw error;
+    }
+  }
+
+  // Use these methods in the OCR processing functions
+  protected async processAndSaveOutput(inputFile: string, buffer: Buffer, engineName: string): Promise<string> {
+    const outputPath = this.generateOutputPath(inputFile, engineName);
+    await this.saveOutputFile(buffer, outputPath);
+    return outputPath;
+  }
+
+  /**
+   * Sanitize text to prevent JSON parsing errors
+   */
+  private sanitizeText(text: string): string {
+    if (!text) return '';
+    
+    try {
+      // First pass: Handle basic sanitization with more aggressive character filtering
+      let sanitized = text
+        // Remove control characters and non-printable characters
+        .replace(/[\u0000-\u001F\u007F-\u00A0\u2028\u2029]/g, '')
+        // Normalize line endings
+        .replace(/\r\n/g, '\n')
+        // Replace problematic backslashes
+        .replace(/\\/g, '\\\\')
+        // Replace quotes that might break JSON
+        .replace(/"/g, '\\"')
+        // Handle tab characters
+        .replace(/\t/g, '    ')
+        // Replace other potentially harmful characters
+        .replace(/[\u0080-\u009F\u200B-\u200F\uFEFF]/g, '')
+        // Replace multiple spaces with single space
+        .replace(/  +/g, ' ')
+        .trim();
+      
+      // Additional pass: Verify JSON compatibility by testing serialization
+      const testObj = { text: sanitized };
+      JSON.stringify(testObj);
+      
+      return sanitized;
+    } catch (error) {
+      logger.error('Error sanitizing text, using strict fallback method:', error);
+      // Stricter fallback sanitization - only allow basic ASCII and common punctuation
+      return text.replace(/[^\x20-\x7E\n.,!?;:'()-]/g, '')  // Keep ASCII printable chars, newlines, and basic punctuation
+        .replace(/\\/g, '/')     // Replace backslashes with forward slashes
+        .replace(/"/g, "'")      // Replace double quotes with single quotes
+        .trim();
+    }
+  }
+
+  /**
+   * Create a safe output filename
+   */
+  private generateSafeOutputFilename(inputPath: string): string {
+    const timestamp = Date.now();
+    const baseName = path.basename(inputPath)
+      .replace(/\.[^/.]+$/, '') // Remove extension
+      .replace(/[^a-zA-Z0-9-_]/g, '_'); // Replace unsafe chars
+    return `${baseName}_${timestamp}_ocr.pdf`;
+  }
+
+  /**
+   * Ensure a result object is safe for JSON serialization
+   */
+  private ensureJsonSafety(result: any): any {
+    if (!result) return { success: false, error: 'No result available' };
+
+    try {
+      // Create a clean copy with only essential fields
+      const safeResult = {
+        success: result.success === false ? false : true,
+        engine: result.engine || 'unknown',
+        outputFile: result.outputFile || this.generateSafeOutputFilename(result.inputPath || 'unknown'),
+        confidence: result.confidence || 0,
+        processingTime: result.processingTime || 0
+      };
+
+      // Handle text content safely
+      if (result.text) {
+        // Always provide base64 encoded version
+        safeResult.textEncoded = Buffer.from(this.sanitizeText(result.text)).toString('base64');
+        safeResult.encoding = 'base64';
+
+        // Include sanitized plain text if not too large
+        if (result.text.length <= 30000) {
+          safeResult.text = this.sanitizeText(result.text);
+        } else {
+          safeResult.text = this.sanitizeText(result.text.substring(0, 30000) + '... [truncated]');
+          safeResult.truncated = true;
+        }
+      }
+
+      // Include error information if present
+      if (result.error) {
+        safeResult.error = this.sanitizeText(result.error);
+      }
+
+      // Verify JSON safety
+      const serialized = JSON.stringify(safeResult);
+      JSON.parse(serialized); // Validate it can be parsed back
+
+      return safeResult;
+    } catch (error) {
+      logger.error('Failed to create safe result:', error);
+      // Return ultra-safe minimal response
+      return {
+        success: false,
+        error: 'Failed to create safe JSON response',
+        outputFile: this.generateSafeOutputFilename('error')
+      };
+    }
+  }
 }
 
-export const multiEngineOCR = new MultiEngineOCR();
 export const multiEngineOCR = new MultiEngineOCR();

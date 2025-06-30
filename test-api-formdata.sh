@@ -46,7 +46,7 @@ echo "1. Testing medical document detection..."
 curl -X POST http://localhost:3002/api/smart-ocr \
   -F "file=@/tmp/medical_test.txt" \
   -H "Accept: application/json" \
-  2>/dev/null | jq '{success: .success, documentType: .documentType, customizations: .customizations, engines: .availableEngines}' || echo "Response received"
+  2>/dev/null | jq '{success: .success, documentType: .analysis.documentType, customizations: .analysis.customizations}' || echo "Response received"
 
 echo
 echo
@@ -56,7 +56,7 @@ echo "2. Testing handwritten document detection..."
 curl -X POST http://localhost:3002/api/smart-ocr \
   -F "file=@/tmp/handwritten_test.txt" \
   -H "Accept: application/json" \
-  2>/dev/null | jq '{success: .success, documentType: .documentType, customizations: .customizations, engines: .availableEngines}' || echo "Response received"
+  2>/dev/null | jq '{success: .success, documentType: .analysis.documentType, customizations: .analysis.customizations}' || echo "Response received"
 
 echo
 echo
@@ -66,7 +66,7 @@ echo "3. Testing regular document (should not be detected as medical/handwritten
 curl -X POST http://localhost:3002/api/smart-ocr \
   -F "file=@/tmp/regular_test.txt" \
   -H "Accept: application/json" \
-  2>/dev/null | jq '{success: .success, documentType: .documentType, customizations: .customizations, engines: .availableEngines}' || echo "Response received"
+  2>/dev/null | jq '{success: .success, documentType: .analysis.documentType, customizations: .analysis.customizations}' || echo "Response received"
 
 echo
 echo
