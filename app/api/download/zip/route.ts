@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { join } from "path";
 import { createWriteStream } from "fs";
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import * as archiver from "archiver";
+import archiver from "archiver";
 import appConfig from "@/lib/config";
 import logger from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const fileNames = searchParams.getAll("files[]"); // Get multiple file names
+    let fileNames = searchParams.getAll("files"); // Changed from files[] to files
     const processedDir = join(process.cwd(), "processed");
+
+    // Ensure processed directory exists
+    if (!existsSync(processedDir)) {
+      await mkdir(processedDir, { recursive: true });
+    }
 
     // If no files specified, zip all processed files
     if (!fileNames || fileNames.length === 0) {
@@ -28,16 +33,19 @@ export async function GET(request: NextRequest) {
     const zipFileName = `processed_files_${timestamp}.zip`;
     const zipFilePath = join(processedDir, zipFileName);
 
-    // Create a write stream
-    const output = createWriteStream(zipFilePath);
+    // Create and setup archive
     const archive = archiver('zip', {
       zlib: { level: 9 } // Maximum compression
     });
 
-    // Listen for archive errors
-    archive.on('error', (err) => {
-      logger.error('Error creating zip:', err);
-      throw err;
+    // Create write stream and handle events
+    const output = createWriteStream(zipFilePath);
+    
+    // Promise to track the completion of the zip creation
+    const archiveComplete = new Promise((resolve, reject) => {
+      output.on('close', resolve);
+      output.on('error', reject);
+      archive.on('error', reject);
     });
 
     // Pipe archive data to the file
@@ -45,20 +53,34 @@ export async function GET(request: NextRequest) {
 
     // Add each file to the archive
     let totalSize = 0;
+    const filesToArchive = [];
+
+    // First, validate all files exist and collect their info
     for (const fileName of fileNames) {
       const filePath = join(processedDir, fileName);
       if (existsSync(filePath)) {
         const stats = await stat(filePath);
         totalSize += stats.size;
-        archive.file(filePath, { name: fileName });
+        filesToArchive.push({ path: filePath, name: fileName });
+      } else {
+        logger.warn(`File not found: ${fileName}`);
       }
     }
 
-    // Finalize the archive
-    await archive.finalize();
+    if (filesToArchive.length === 0) {
+      return new NextResponse("No valid files found to zip", { status: 400 });
+    }
 
-    // Wait for the output stream to finish
-    await new Promise((resolve) => output.on('close', resolve));
+    // Add files to archive
+    for (const file of filesToArchive) {
+      archive.file(file.path, { name: file.name });
+    }
+
+    // Finalize the archive
+    archive.finalize();
+
+    // Wait for the archive to complete
+    await archiveComplete;
 
     // Read the zip file
     const { readFile } = await import('fs/promises');
@@ -66,7 +88,10 @@ export async function GET(request: NextRequest) {
 
     // Clean up the temporary zip file
     const { unlink } = await import('fs/promises');
-    await unlink(zipFilePath);
+    await unlink(zipFilePath).catch(err => {
+      logger.error("Error deleting temporary zip file:", err);
+      // Don't throw, as we still want to return the zip to the user
+    });
 
     // Return the zip file
     return new NextResponse(zipBuffer, {
@@ -79,6 +104,14 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logger.error("Error creating zip file:", error);
-    return new NextResponse("Error creating zip file", { status: 500 });
+    return new NextResponse(
+      JSON.stringify({ error: "Failed to create ZIP archive", details: error.message }), 
+      { 
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
   }
 }

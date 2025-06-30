@@ -102,19 +102,38 @@ export default function Home() {
   }
 
   const handleDownloadZip = async () => {
+    if (processedFiles.length === 0) {
+      setNotificationProps({
+        title: "Download Error",
+        description: "No files available to download",
+        variant: "error"
+      });
+      setShowNotification(true);
+      return;
+    }
+
     try {
       setLoadingMessage("Preparing ZIP archive...");
       setShowLoadingScreen(true);
       
       // Create query string with all file paths
-      const fileParams = processedFiles.map(file => `files=${encodeURIComponent(file.path)}`).join('&');
-      const response = await fetch(`/api/download/zip?${fileParams}`, {
+      const queryParams = processedFiles
+        .map(file => `files=${encodeURIComponent(file.name)}`)
+        .join('&');
+        
+      const response = await fetch(`/api/download/zip?${queryParams}`, {
         method: 'GET',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create ZIP archive');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error occurred' }));
+        throw new Error(errorData.error || `Failed to create ZIP archive: ${response.statusText}`);
       }
+
+      // Get the filename from the Content-Disposition header if available
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filenameMatch = contentDisposition?.match(/filename="(.+?)"/);
+      const filename = filenameMatch ? filenameMatch[1] : 'processed-files.zip';
 
       // Create a blob from the response
       const blob = await response.blob();
@@ -123,7 +142,7 @@ export default function Home() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'processed-files.zip';
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -134,18 +153,18 @@ export default function Home() {
         description: "Your ZIP archive has been prepared and downloaded.",
         variant: "success"
       });
-      setShowNotification(true);
     } catch (err) {
+      console.error('Download error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to create ZIP archive';
       setNotificationProps({
         title: "Download Error",
         description: errorMessage,
         variant: "error"
       });
-      setShowNotification(true);
     } finally {
       setShowLoadingScreen(false);
       setLoadingMessage("Processing...");
+      setShowNotification(true);
     }
   };
 
