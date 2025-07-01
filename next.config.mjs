@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
+  serverExternalPackages: ['@tensorflow/tfjs-node'],
   experimental: {
     largePageDataBytes: 128 * 1024 * 1024,
   },
@@ -13,9 +15,12 @@ const nextConfig = {
         tls: false,
         child_process: false,
         aws4: false,
-        mock_aws_s3: false,
-        nock: false,
         'aws-sdk': false,
+        'mock-aws-s3': false,
+        nock: false,
+        npm: false,
+        'node-gyp': false,
+        long: false,
       };
     }
 

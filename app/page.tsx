@@ -9,7 +9,7 @@ import { ProcessStatus } from "@/components/process-status"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info, Search } from "lucide-react"
+import { FileIcon, Settings, TerminalIcon, Download, AlertCircle, Info, Search, Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ProgressTracker } from "@/components/progress-tracker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -1009,6 +1009,51 @@ export default function Home() {
   // Update the UI to improve UX
   return (
     <main className="container mx-auto py-6 px-4">
+      {/* Quick Navigation */}
+      <div className="mb-4 flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-900">OCR Processing System</h1>
+        <div className="flex items-center gap-4">
+          <a 
+            href="/auth/login" 
+            className="text-blue-600 hover:text-blue-800 font-medium"
+          >
+            Sign In
+          </a>
+          <a 
+            href="/auth/register" 
+            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+          >
+            Register
+          </a>
+          <a 
+            href="/hipaa" 
+            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center gap-2"
+          >
+            <Shield className="h-4 w-4" />
+            HIPAA Portal
+          </a>
+        </div>
+      </div>
+
+      {/* HIPAA Compliance Notice */}
+      <div className="mb-4">
+        <Alert className="border-blue-200 bg-blue-50">
+          <Shield className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-blue-800">
+            <strong>Healthcare Data?</strong> For HIPAA-compliant processing, use our{" "}
+            <a 
+              href="/hipaa" 
+              className="underline font-medium hover:text-blue-900"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              secure HIPAA interface
+            </a>
+            {" "}with encryption, audit logging, and access controls.
+          </AlertDescription>
+        </Alert>
+      </div>
+
       {/* Loading Screen */}
       {showLoadingScreen && (
         <LoadingScreen 
