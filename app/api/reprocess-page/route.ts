@@ -60,22 +60,64 @@ const PADDLEOCR_SERVICE_URL = process.env.PADDLEOCR_SERVICE_URL || 'http://local
  */
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-    
-    const originalFilePath = formData.get('originalFilePath') as string;
-    const outputFilePath = formData.get('outputFilePath') as string;
-    const pageNumbersStr = formData.get('pageNumbers') as string;
-    const enhancementMode = (formData.get('enhancementMode') as string) || 'enhanced';
-    const reason = formData.get('reason') as string;
+    const contentType = request.headers.get('content-type') || '';
+    let originalFilePath: string;
+    let outputFilePath: string;
+    let pageNumbers: number[];
+    let enhancementMode: string;
+    let reason: string;
 
-    if (!originalFilePath || !outputFilePath || !pageNumbersStr) {
+    if (contentType.includes('multipart/form-data')) {
+      // Handle FormData input
+      const formData = await request.formData();
+      
+      originalFilePath = formData.get('originalFilePath') as string;
+      outputFilePath = formData.get('outputFilePath') as string;
+      const pageNumbersStr = formData.get('pageNumbers') as string;
+      enhancementMode = (formData.get('enhancementMode') as string) || 'enhanced';
+      reason = formData.get('reason') as string;
+
+      if (!pageNumbersStr) {
+        return createJsonResponse({
+          success: false,
+          error: 'Missing required parameters: originalFilePath, outputFilePath, pageNumbers'
+        }, 400);
+      }
+
+      try {
+        pageNumbers = JSON.parse(pageNumbersStr) as number[];
+      } catch (error) {
+        return createJsonResponse({
+          success: false,
+          error: 'Invalid pageNumbers: must be a valid JSON array'
+        }, 400);
+      }
+    } else if (contentType.includes('application/json')) {
+      // Handle JSON input
+      const body = await request.json();
+      
+      originalFilePath = body.originalFilePath;
+      outputFilePath = body.outputFilePath;
+      pageNumbers = body.pageNumbers;
+      enhancementMode = body.enhancementMode || 'enhanced';
+      reason = body.reason;
+    } else {
+      return createJsonResponse({
+        success: false,
+        error: 'Content-Type must be multipart/form-data or application/json',
+        usage: {
+          'formData': 'originalFilePath, outputFilePath, pageNumbers (JSON string), enhancementMode, reason',
+          'json': '{"originalFilePath": "...", "outputFilePath": "...", "pageNumbers": [1,2], "enhancementMode": "enhanced", "reason": "..."}'
+        }
+      }, 400);
+    }
+
+    if (!originalFilePath || !outputFilePath || !pageNumbers) {
       return createJsonResponse({
         success: false,
         error: 'Missing required parameters: originalFilePath, outputFilePath, pageNumbers'
       }, 400);
     }
-
-    const pageNumbers = JSON.parse(pageNumbersStr) as number[];
     
     if (!Array.isArray(pageNumbers) || pageNumbers.length === 0) {
       return createJsonResponse({

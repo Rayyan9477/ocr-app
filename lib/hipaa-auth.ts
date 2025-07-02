@@ -45,6 +45,7 @@ class HIPAAAuthService {
   // In production, store in database
   private users: Map<string, User> = new Map();
   private sessions: Map<string, Session> = new Map();
+  private downloadTokens: Map<string, { fileIds: string[]; expiresAt: Date }> = new Map();
   
   private accessRules: AccessControlRule[] = [
     { resource: 'file', action: 'upload', roles: ['admin', 'user'] },
@@ -491,6 +492,68 @@ class HIPAAAuthService {
     }
     
     return true;
+  }
+
+  /**
+   * Generate a one-time download token for specified files
+   * @param fileIds Array of file IDs to authorize for download
+   * @param expiresInMinutes Token expiration time in minutes
+   * @returns Download token
+   */
+  public async generateDownloadToken(fileIds: string[], expiresInMinutes: number = 5): Promise<string> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+    
+    this.downloadTokens.set(token, {
+      fileIds,
+      expiresAt
+    });
+
+    return token;
+  }
+
+  /**
+   * Validate a download token and return authorized file IDs
+   * @param token Download token to validate
+   * @returns Object with validation status and file IDs if valid
+   */
+  public async validateDownloadToken(token: string): Promise<{ valid: boolean; fileIds?: string[] }> {
+    const tokenData = this.downloadTokens.get(token);
+    
+    if (!tokenData) {
+      return { valid: false };
+    }
+
+    if (tokenData.expiresAt < new Date()) {
+      this.downloadTokens.delete(token);
+      return { valid: false };
+    }
+
+    return {
+      valid: true,
+      fileIds: tokenData.fileIds
+    };
+  }
+
+  /**
+   * Invalidate a download token after use
+   * @param token Token to invalidate
+   */
+  public async invalidateDownloadToken(token: string): Promise<void> {
+    this.downloadTokens.delete(token);
+  }
+
+  /**
+   * Clean up expired download tokens
+   * @private
+   */
+  private cleanupExpiredTokens(): void {
+    const now = new Date();
+    for (const [token, data] of this.downloadTokens.entries()) {
+      if (data.expiresAt < now) {
+        this.downloadTokens.delete(token);
+      }
+    }
   }
 }
 

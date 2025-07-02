@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        role: user.role === 'admin' ? 'user' : user.role, // Hide admin role from client
         mfaEnabled: user.mfaEnabled
       }
     });

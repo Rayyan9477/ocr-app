@@ -7,9 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Users, 
   UserPlus, 
+  Edit, 
+  Trash2, 
+  Shield, 
+  Eye, 
   User,
   Search,
   RefreshCw,
@@ -36,12 +41,14 @@ export function UserManagement({ currentUser }: UserManagementProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedRole, setSelectedRole] = useState<string>("all");
 
   // New user form
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUser, setNewUser] = useState({
     email: "",
-    password: ""
+    password: "",
+    role: "user" as 'admin' | 'user' | 'viewer'
   });
 
   useEffect(() => {
@@ -51,6 +58,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
   const loadUsers = async () => {
     try {
       setLoading(true);
+      // This would need a new API endpoint
       const response = await fetch('/api/admin/users', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('hipaa_token')}`
@@ -78,11 +86,11 @@ export function UserManagement({ currentUser }: UserManagementProps) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('hipaa_token')}`
         },
-        body: JSON.stringify({ ...newUser, role: "user" })
+        body: JSON.stringify(newUser)
       });
 
       if (response.ok) {
-        setNewUser({ email: "", password: "" });
+        setNewUser({ email: "", password: "", role: "user" });
         setShowAddUser(false);
         loadUsers();
       } else {
@@ -136,12 +144,26 @@ export function UserManagement({ currentUser }: UserManagementProps) {
     }
   };
 
-  // Filter out admin users for security and apply search
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const isNotAdmin = user.role !== 'admin'; // Hide admin users
-    return matchesSearch && isNotAdmin;
+    const matchesRole = selectedRole === "all" || user.role === selectedRole;
+    // Hide admin users from the list for security
+    const isNotAdmin = user.role !== 'admin';
+    return matchesSearch && matchesRole && isNotAdmin;
   });
+
+  // Helper functions for UI display
+  function getRoleIcon(role: string) {
+    return <User className="h-4 w-4" />;
+  }
+
+  function getRoleBadgeColor(role: string) {
+    return 'bg-blue-100 text-blue-800';
+  }
+
+  function getDisplayRole(role: string) {
+    return 'User';
+  }
 
   if (currentUser.role !== 'admin') {
     return (
@@ -162,7 +184,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold">User Management</h2>
-          <p className="text-gray-600">Manage user accounts</p>
+          <p className="text-gray-600">Manage HIPAA-compliant user accounts</p>
         </div>
         <Button onClick={() => setShowAddUser(true)} className="flex items-center gap-2">
           <UserPlus className="h-4 w-4" />
@@ -177,10 +199,10 @@ export function UserManagement({ currentUser }: UserManagementProps) {
         </Alert>
       )}
 
-      {/* Search */}
+      {/* Search and Filter */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -192,6 +214,14 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                 />
               </div>
             </div>
+            <select
+              value={selectedRole}
+              onChange={(e) => setSelectedRole(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Users</option>
+              <option value="user">User</option>
+            </select>
             <Button variant="outline" onClick={loadUsers} disabled={loading}>
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
@@ -215,9 +245,8 @@ export function UserManagement({ currentUser }: UserManagementProps) {
             </div>
           ) : filteredUsers.length === 0 ? (
             <div className="text-center py-8">
-              <Users className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <h3 className="text-lg font-semibold mb-2">No users found</h3>
-              <p className="text-gray-600">No users match your search criteria.</p>
+              <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-600">No users found</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -225,7 +254,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                 <div key={user.id} className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <User className="h-4 w-4" />
+                      {getRoleIcon(user.role)}
                       <div>
                         <p className="font-medium">{user.email}</p>
                         <p className="text-sm text-gray-600">
@@ -236,8 +265,8 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-blue-100 text-blue-800">
-                      User
+                    <Badge className={getRoleBadgeColor(user.role)}>
+                      {getDisplayRole(user.role)}
                     </Badge>
                     <Badge variant={user.isActive ? "default" : "secondary"}>
                       {user.isActive ? "Active" : "Inactive"}
@@ -260,9 +289,9 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                         variant="outline"
                         size="sm"
                         onClick={() => deleteUser(user.id)}
-                        disabled={user.id === currentUser.id}
+                        disabled={user.id === currentUser.id || user.role === 'admin'}
                       >
-                        Delete
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
@@ -279,7 +308,7 @@ export function UserManagement({ currentUser }: UserManagementProps) {
           <Card className="w-full max-w-md">
             <CardHeader>
               <CardTitle>Add New User</CardTitle>
-              <CardDescription>Create a new user account</CardDescription>
+              <CardDescription>Create a new HIPAA-compliant user account</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
@@ -302,8 +331,19 @@ export function UserManagement({ currentUser }: UserManagementProps) {
                   placeholder="Enter secure password"
                 />
               </div>
-              <div className="text-xs text-gray-500">
-                All accounts are created as User accounts
+              <div>
+                <Label htmlFor="new-role">Account Type</Label>
+                <select
+                  id="new-role"
+                  value="user"
+                  onChange={(e) => setNewUser(prev => ({ ...prev, role: "user" }))}
+                  className="w-full p-2 border border-gray-300 rounded-md"
+                  disabled
+                >
+                  <option value="user">User</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">All accounts are created as User accounts</p>
+              </div>
               </div>
               <div className="flex gap-2 pt-4">
                 <Button onClick={createUser} className="flex-1">

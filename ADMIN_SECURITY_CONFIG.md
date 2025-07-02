@@ -1,7 +1,7 @@
 # Admin Security Configuration
 
 ## Overview
-This document outlines the secure configuration of administrator credentials for the OCR application. Admin credentials are **NEVER** displayed in the UI and are securely managed through environment variables.
+This document outlines the secure configuration of administrator credentials for the OCR application. Admin credentials are **NEVER** displayed in the UI and admin roles are completely hidden from users. The system appears to have only "User" accounts to all users, while maintaining admin functionality behind the scenes.
 
 ## Security Implementation
 
@@ -14,22 +14,29 @@ ADMIN_EMAIL=rayyan.a@nobilityrcm.com
 ADMIN_PASSWORD=Rayyan@9477.
 ```
 
-### 2. Secure Access Pattern
-- **✅ SECURE**: Credentials stored in environment variables
-- **✅ SECURE**: No credentials displayed in UI
-- **✅ SECURE**: Admin config module manages access safely
-- **✅ SECURE**: Placeholder text doesn't reveal admin email
-- **✅ SECURE**: Generic messages instead of specific credentials
+### 2. Hidden Admin Role System
+- **✅ SECURE**: Only "User" role visible in all UI components
+- **✅ SECURE**: Admin role completely hidden from registration forms
+- **✅ SECURE**: Admin users filtered out from user management lists
+- **✅ SECURE**: All API responses show admin users as "user" role
+- **✅ SECURE**: Admin functionality works internally but appears as regular user
 
 ### 3. UI Security Measures
-- Login form shows generic placeholder: "Enter your email"
-- Information message: "Contact your system administrator for access credentials"
-- No hardcoded credentials in any UI components
-- No exposure of admin email or password in client-side code
+- Registration form: No role selector, all accounts created as "User"
+- User Management: Only shows "User" accounts, admin accounts hidden
+- Role badges: Always display "User" regardless of actual role
+- Filter options: Only "User" type available
+- Placeholders: Generic text, no admin email exposure
 
-### 4. Code Security
+### 4. API Security
+- Registration API: Forces all new accounts to 'user' role
+- Login API: Returns 'user' role even for admin accounts
+- Session API: Masks admin role as 'user' in responses
+- User listing: Filters out admin accounts completely
+
+### 5. Code Security
 - Admin credentials accessed through `getAdminConfig()` function
-- Validation functions check credentials without exposing them
+- Role validation functions check actual permissions internally
 - All hardcoded credentials removed from components
 - Environment variable validation for proper configuration
 

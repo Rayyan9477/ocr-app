@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
           user: {
             id: authResult.user.id,
             email: authResult.user.email,
-            role: authResult.user.role
+            role: authResult.user.role === 'admin' ? 'user' : authResult.user.role // Hide admin role from client
           }
         });
 

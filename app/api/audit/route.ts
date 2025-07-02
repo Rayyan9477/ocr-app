@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { HIPAAAuthService } from '@/lib/hipaa-auth';
-import { HIPAAAuditLogger } from '@/lib/hipaa-audit';
-
-const getJWTSecret = () => {
-  return process.env.HIPAA_SIGNING_KEY || 'default-jwt-secret-change-in-production';
-};
-
-const authService = new HIPAAAuthService(getJWTSecret());
-const auditLogger = new HIPAAAuditLogger();
+import { authService, auditLogger } from '@/lib/hipaa-auth-singleton';
 
 export async function GET(request: NextRequest) {
   try {

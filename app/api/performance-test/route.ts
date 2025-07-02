@@ -11,45 +11,108 @@ export async function POST(request: Request) {
   const startTime = Date.now();
 
   try {
-    // Parse form data
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
+    const contentType = request.headers.get('content-type') || '';
+    let file: File | null = null;
+    let options: EnhancedOCROptions;
+    let useAdvancedImageProcessing = false;
+    let useTensorOCR = false;
+    let multiScaleProcessing = false;
+    let useNeuralEnhancement = false;
+    let applyDenoising = false;
+    let sharpenText = false;
+    let adaptiveContrast = false;
+    let usePostProcessing = false;
+
+    if (contentType.includes('multipart/form-data')) {
+      // Handle FormData input
+      const formData = await request.formData();
+      file = formData.get('file') as File;
+
+      options = {
+        preprocessing: {
+          applyCLAHE: formData.get('applyCLAHE') === 'true',
+          claheClipLimit: parseFloat(formData.get('claheClipLimit') as string) || 2.0,
+          enhanceEdges: formData.get('enhanceEdges') === 'true',
+          edgeStrength: parseFloat(formData.get('edgeStrength') as string) || 1.2,
+          deskew: formData.get('deskew') === 'true',
+          normalize: formData.get('normalize') === 'true',
+        },
+        useVLMRecommendations: formData.get('useVLMRecommendations') === 'true',
+        enhanceWithVLM: formData.get('enhanceWithVLM') === 'true',
+        language: (formData.get('language') as string) || 'eng',
+        outputDir: './tmp/perf-test'
+      };
+
+      useAdvancedImageProcessing = formData.get('useAdvancedImageProcessing') === 'true';
+      useTensorOCR = formData.get('useTensorOCR') === 'true';
+      multiScaleProcessing = formData.get('multiScaleProcessing') === 'true';
+      useNeuralEnhancement = formData.get('useNeuralEnhancement') === 'true';
+      applyDenoising = formData.get('applyDenoising') === 'true';
+      sharpenText = formData.get('sharpenText') === 'true';
+      adaptiveContrast = formData.get('adaptiveContrast') === 'true';
+      usePostProcessing = formData.get('usePostProcessing') === 'true';
+    } else if (contentType.includes('application/json')) {
+      // Handle JSON input for test mode (without file)
+      const body = await request.json();
+      
+      options = {
+        preprocessing: {
+          applyCLAHE: body.applyCLAHE ?? false,
+          claheClipLimit: body.claheClipLimit ?? 2.0,
+          enhanceEdges: body.enhanceEdges ?? false,
+          edgeStrength: body.edgeStrength ?? 1.2,
+          deskew: body.deskew ?? false,
+          normalize: body.normalize ?? false,
+        },
+        useVLMRecommendations: body.useVLMRecommendations ?? false,
+        enhanceWithVLM: body.enhanceWithVLM ?? false,
+        language: body.language ?? 'eng',
+        outputDir: './tmp/perf-test'
+      };
+
+      useAdvancedImageProcessing = body.useAdvancedImageProcessing ?? false;
+      useTensorOCR = body.useTensorOCR ?? false;
+      multiScaleProcessing = body.multiScaleProcessing ?? false;
+      useNeuralEnhancement = body.useNeuralEnhancement ?? false;
+      applyDenoising = body.applyDenoising ?? false;
+      sharpenText = body.sharpenText ?? false;
+      adaptiveContrast = body.adaptiveContrast ?? false;
+      usePostProcessing = body.usePostProcessing ?? false;
+
+      // For JSON mode, use a test file if no file provided
+      if (body.mode === 'light' || body.mode === 'test') {
+        const testFilePath = path.resolve('./uploads/test-file.pdf');
+        if (fs.existsSync(testFilePath)) {
+          // Read the test file and create a buffer for processing
+          const testFileBuffer = fs.readFileSync(testFilePath);
+          // Create a mock file-like object for processing
+          file = {
+            name: 'test-file.pdf',
+            size: testFileBuffer.length,
+            type: 'application/pdf',
+            arrayBuffer: async () => testFileBuffer.buffer.slice(testFileBuffer.byteOffset, testFileBuffer.byteOffset + testFileBuffer.byteLength)
+          } as File;
+        }
+      }
+    } else {
+      return NextResponse.json({
+        success: false,
+        errorType: 'input_error',
+        error: 'Content-Type must be multipart/form-data (for file upload) or application/json (for test mode)',
+        supportedModes: {
+          'multipart/form-data': 'Upload and process a file',
+          'application/json': 'Test mode with sample file (use mode: "light" or "test")'
+        }
+      }, { status: 400 });
+    }
 
     if (!file) {
       return NextResponse.json({ 
         success: false, 
         errorType: 'input_error',
-        error: 'No file provided'
+        error: 'No file provided. For JSON mode, include {"mode": "light"} to use test file.'
       }, { status: 400 });
     }
-
-    // Process OCR Options from request
-    const options: EnhancedOCROptions = {
-      preprocessing: {
-        // Base preprocessing options
-        applyCLAHE: formData.get('applyCLAHE') === 'true',
-        claheClipLimit: parseFloat(formData.get('claheClipLimit') as string) || 2.0,
-        enhanceEdges: formData.get('enhanceEdges') === 'true',
-        edgeStrength: parseFloat(formData.get('edgeStrength') as string) || 1.2,
-        deskew: formData.get('deskew') === 'true',
-        normalize: formData.get('normalize') === 'true',
-      },
-      // Advanced options
-      useVLMRecommendations: formData.get('useVLMRecommendations') === 'true',
-      enhanceWithVLM: formData.get('enhanceWithVLM') === 'true',
-      language: (formData.get('language') as string) || 'eng',
-      outputDir: './tmp/perf-test'
-    };
-
-    // Process additional boolean options
-    const useAdvancedImageProcessing = formData.get('useAdvancedImageProcessing') === 'true';
-    const useTensorOCR = formData.get('useTensorOCR') === 'true';
-    const multiScaleProcessing = formData.get('multiScaleProcessing') === 'true';
-    const useNeuralEnhancement = formData.get('useNeuralEnhancement') === 'true';
-    const applyDenoising = formData.get('applyDenoising') === 'true';
-    const sharpenText = formData.get('sharpenText') === 'true';
-    const adaptiveContrast = formData.get('adaptiveContrast') === 'true';
-    const usePostProcessing = formData.get('usePostProcessing') === 'true';
 
     // Apply advanced options if requested
     if (useAdvancedImageProcessing) {

@@ -6,6 +6,7 @@ import { tmpdir } from 'os';
 
 export async function POST(request: NextRequest) {
   let enhancedOCRService: EnhancedOCRService | null = null;
+  const startTime = Date.now();
   
   try {
     const formData = await request.formData();
@@ -31,15 +32,24 @@ export async function POST(request: NextRequest) {
     const tempPath = join(tmpdir(), `upload_${Date.now()}_${file.name}`);
     await writeFile(tempPath, buffer);
 
-    // Process with enhanced OCR
+    // Process with enhanced OCR with timeout
     enhancedOCRService = new EnhancedOCRService();
-    const result = await enhancedOCRService.processDocument(tempPath, options);
+    
+    // Create a timeout promise
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Processing timeout')), 30000); // 30 second timeout
+    });
+
+    const result = await Promise.race([
+      enhancedOCRService.processDocument(tempPath, options),
+      timeoutPromise
+    ]) as any;
 
     return NextResponse.json({
       success: result.success,
       text: result.text,
       confidence: result.confidence,
-      processingTime: result.processingTime,
+      processingTime: result.processingTime || Date.now() - startTime,
       preprocessingOperations: result.preprocessingOperations,
       wordCount: result.wordCount,
       highlightedRegions: result.highlightedRegions?.length || 0,
@@ -48,10 +58,24 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Enhanced OCR API error:', error);
-    return NextResponse.json(
-      { error: 'Enhanced OCR processing failed', details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
+    
+    const processingTime = Date.now() - startTime;
+    
+    if (error instanceof Error && error.message === 'Processing timeout') {
+      return NextResponse.json({
+        success: false,
+        error: 'Processing timeout - operation took longer than 30 seconds',
+        processingTime,
+        timeout: true
+      }, { status: 408 });
+    }
+    
+    return NextResponse.json({
+      success: false,
+      error: 'Enhanced OCR processing failed', 
+      details: error instanceof Error ? error.message : String(error),
+      processingTime
+    }, { status: 500 });
   } finally {
     // Cleanup
     if (enhancedOCRService) {

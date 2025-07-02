@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { OCRProcessingStatus } from "./hipaa-ocr-status";
 import { 
   Shield, 
   Upload, 
@@ -18,7 +20,9 @@ import {
   AlertCircle,
   CheckCircle,
   X,
-  Eye
+  Eye,
+  Download,
+  Archive
 } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
@@ -26,12 +30,15 @@ interface ProcessedFile {
   fileName: string;
   success: boolean;
   averageConfidence?: number;
+  processId?: string;
+  downloadToken?: string;
   pages?: Array<{
     pageNumber: number;
     text: string;
     confidence: number;
   }>;
   downloadUrl?: string;
+  zipDownloadUrl?: string;
   error?: string;
 }
 
@@ -46,6 +53,8 @@ export function HIPAAFileUploader({ onFilesProcessed, className }: HIPAAFileUplo
   const [progress, setProgress] = useState(0);
   const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [currentProcessId, setCurrentProcessId] = useState<string | null>(null);
+  const { toast } = useToast();
   
   // OCR Options
   const [options, setOptions] = useState({
@@ -104,39 +113,51 @@ export function HIPAAFileUploader({ onFilesProcessed, className }: HIPAAFileUplo
     setIsProcessing(true);
     setProgress(0);
     setError(null);
-    setProcessedFiles([]);
 
-    try {
-      const formData = new FormData();
-      
-      // Add files
-      files.forEach(file => {
-        formData.append('files', file);
-      });
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
 
-      // Add options
-      Object.entries(options).forEach(([key, value]) => {
-        formData.append(key, value.toString());
-      });
+        // Add options
+        Object.entries(options).forEach(([key, value]) => {
+          formData.append(key, value.toString());
+        });
 
-      const response = await fetch('/api/hipaa-ocr', {
-        method: 'POST',
-        body: formData,
-      });
+        const response = await fetch('/api/hipaa-ocr', {
+          method: 'POST',
+          body: formData,
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Processing failed');
-      }
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Processing failed');
+        }
 
-      const result = await response.json();
+        const result = await response.json();
 
-      if (result.success) {
-        setProcessedFiles(result.results);
-        onFilesProcessed(result.results);
-        setProgress(100);
-        
-        // Clear files after successful processing
+        if (result.success) {
+          setCurrentProcessId(result.processId);
+          
+          const processedFile: ProcessedFile = {
+            fileName: file.name,
+            success: true,
+            processId: result.processId,
+            downloadToken: result.downloadToken,
+            averageConfidence: result.confidence,
+            downloadUrl: `/api/hipaa-download?fileId=${result.processId}&token=${result.downloadToken}`,
+            zipDownloadUrl: `/api/hipaa-download/zip?fileId=${result.processId}&token=${result.downloadToken}`,
+          };
+
+          setProcessedFiles(prev => [...prev, processedFile]);
+          onFilesProcessed([...processedFiles, processedFile]);
+
+          toast({
+            title: 'File Processed Successfully',
+            description: `${file.name} has been processed with ${result.confidence.toFixed(1)}% confidence`,
+            variant: 'default',
+          });
+        }
         setFiles([]);
       } else {
         throw new Error(result.error || 'Processing failed');

@@ -142,6 +142,54 @@ export class CleanupService {
     }
   }
 
+  /**
+   * Immediately clean up specified files securely
+   * @param filePaths Array of file paths to clean up
+   * @returns Promise<void>
+   */
+  public static async cleanupFiles(filePaths: string[]): Promise<void> {
+    const service = CleanupService.getInstance();
+    await Promise.all(filePaths.map(path => service.secureDelete(path)));
+  }
+
+  /**
+   * Securely delete a file by overwriting it before unlinking
+   * @param filePath Path to the file to delete
+   */
+  private async secureDelete(filePath: string): Promise<void> {
+    try {
+      if (!statSync(filePath).isFile()) {
+        return;
+      }
+
+      // Overwrite the file with random data before deleting
+      await this.overwriteFile(filePath);
+
+      // Delete the file
+      await unlink(filePath);
+      console.log(`Securely deleted file: ${filePath}`);
+    } catch (error) {
+      console.error(`Error during secure deletion of ${filePath}:`, error);
+    }
+  }
+
+  /**
+   * Overwrite a file with random data before deletion
+   * @param filePath Path to the file to overwrite
+   */
+  private async overwriteFile(filePath: string): Promise<void> {
+    const { writeFile } = await import('fs/promises');
+    const { randomBytes } = await import('crypto');
+
+    try {
+      const stats = await stat(filePath);
+      const randomData = randomBytes(stats.size);
+      await writeFile(filePath, randomData);
+    } catch (error) {
+      console.error(`Error overwriting file ${filePath}:`, error);
+    }
+  }
+
   public async performCleanup(): Promise<void> {
     console.log('Starting cleanup process...');
 

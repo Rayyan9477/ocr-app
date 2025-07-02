@@ -9,7 +9,6 @@ The HIPAA-compliant OCR application has been successfully configured with a **si
 ## 👤 Admin Account Details
 
 **Email:** `rayyan.a@nobilityrcm.com`  
-**Password:** `Rayyan@9477.`  
 **Role:** `admin`  
 
 ---
@@ -64,7 +63,7 @@ The HIPAA-compliant OCR application has been successfully configured with a **si
 ```bash
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"rayyan.a@nobilityrcm.com","password":"Rayyan@9477."}'
+  -d '{"email":"rayyan.a@nobilityrcm.com","password":""}'
 ```
 
 ### **Registration Block:** ✅ Blocked

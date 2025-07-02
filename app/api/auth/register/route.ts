@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role
+        role: 'user' // Always show as user role for security
       }
     });
 
