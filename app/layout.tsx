@@ -5,6 +5,13 @@ import { Inter } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { NextAuthProvider } from "@/components/auth/next-auth-provider"
+import dynamic from "next/dynamic"
+
+// Import the error boundary with client-side only rendering
+const ClientErrorBoundary = dynamic(
+  () => import('@/components/client-error-boundary'),
+  { ssr: true }
+)
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -27,12 +34,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <NextAuthProvider>
-          <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-            {children}
-            <Toaster />
-          </ThemeProvider>
-        </NextAuthProvider>
+        <ClientErrorBoundary>
+          <NextAuthProvider>
+            <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+              {children}
+              <Toaster />
+            </ThemeProvider>
+          </NextAuthProvider>
+        </ClientErrorBoundary>
       </body>
     </html>
   )

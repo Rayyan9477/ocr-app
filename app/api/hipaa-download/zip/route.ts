@@ -5,7 +5,7 @@ import path from 'path';
 import archiver from 'archiver';
 import crypto from 'crypto';
 import { Readable } from 'stream';
-import { cleanupFiles } from '@/lib/cleanup-service';
+import { CleanupService } from '@/lib/cleanup-service';
 
 const SECURE_STORAGE_PATH = process.env.SECURE_STORAGE_PATH || path.join(process.cwd(), 'secure_storage');
 const TEMP_ZIP_PATH = path.join(SECURE_STORAGE_PATH, 'temp_zip');
@@ -171,11 +171,11 @@ export async function GET(request: NextRequest) {
     response.on('finish', async () => {
       try {
         // Clean up temp zip file
-        await cleanupFiles([zipPath]);
+        await CleanupService.cleanupFiles([zipPath]);
 
         // Clean up original files if using token (one-time download)
         if (token) {
-          await cleanupFiles(validFiles.map(f => f.path));
+          await CleanupService.cleanupFiles(validFiles.map(f => f.path));
           await authService.invalidateDownloadToken(token);
         }
       } catch (error) {

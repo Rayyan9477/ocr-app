@@ -23,6 +23,7 @@ import { HIPAAAuth } from "@/components/hipaa-auth";
 import { HIPAAFileUploader } from "@/components/hipaa-file-uploader";
 import { AuditDashboard } from "@/components/audit-dashboard";
 import { UserManagement } from "@/components/user-management";
+import { ClientOnly } from "@/components/client-only";
 
 interface User {
   id: string;
@@ -122,7 +123,9 @@ export default function HIPAACompliantOCR() {
             </p>
           </div>
           
-          <HIPAAAuth onAuthSuccess={handleAuthSuccess} />
+          <ClientOnly>
+            <HIPAAAuth onAuthSuccess={handleAuthSuccess} />
+          </ClientOnly>
           
           <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <h3 className="font-semibold text-blue-900 mb-2">Compliance Features</h3>
@@ -238,12 +241,16 @@ export default function HIPAACompliantOCR() {
           </TabsList>
 
           <TabsContent value="process" className="mt-6">
-            <HIPAAFileUploader onFilesProcessed={handleFilesProcessed} />
+            <ClientOnly>
+              <HIPAAFileUploader onFilesProcessed={handleFilesProcessed} />
+            </ClientOnly>
           </TabsContent>
 
           <TabsContent value="audit" className="mt-6">
             {user.role !== 'viewer' ? (
-              <AuditDashboard />
+              <ClientOnly>
+                <AuditDashboard />
+              </ClientOnly>
             ) : (
               <Alert>
                 <AlertCircle className="h-4 w-4" />
@@ -376,7 +383,9 @@ export default function HIPAACompliantOCR() {
 
           <TabsContent value="users" className="mt-6">
             {user.role === 'admin' ? (
-              <UserManagement currentUser={user} />
+              <ClientOnly>
+                <UserManagement currentUser={user} />
+              </ClientOnly>
             ) : (
               <Alert>
                 <AlertCircle className="h-4 w-4" />

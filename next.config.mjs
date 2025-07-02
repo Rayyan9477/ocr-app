@@ -48,26 +48,42 @@ const nextConfig = {
     ]
   },
   webpack: (config, { isServer, dev }) => {
-    // Improve chunk loading for development
-    if (dev && !isServer) {
+    // Improve chunk loading for development and production
+    if (!isServer) {
       config.optimization = {
         ...config.optimization,
         splitChunks: {
           chunks: 'all',
+          maxInitialRequests: 25,
+          minSize: 20000,
           cacheGroups: {
-            default: {
-              minChunks: 1,
-              priority: -20,
+            default: false,
+            vendors: false,
+            framework: {
+              chunks: 'all',
+              name: 'framework',
+              test: /(?<!node_modules.*)[\\/]node_modules[\\/](react|react-dom|scheduler|next|use-subscription)[\\/]/,
+              priority: 40,
+              enforce: true,
               reuseExistingChunk: true,
             },
-            vendor: {
+            lib: {
               test: /[\\/]node_modules[\\/]/,
-              name: 'vendors',
-              priority: -10,
               chunks: 'all',
+              name(module, chunks) {
+                const moduleFileName = module
+                  .identifier()
+                  .split('/')
+                  .reduceRight((item) => item);
+                return `npm.${moduleFileName.replace(/(\W|_)/g, '')}`;
+              },
+              priority: 30,
+              minChunks: 1,
+              reuseExistingChunk: true,
             },
           },
         },
+        runtimeChunk: { name: 'runtime' },
       };
       
       // Disable webpack cache in development to prevent chunk loading issues
