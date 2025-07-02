@@ -5,7 +5,11 @@ const nextConfig = {
   poweredByHeader: false,
   experimental: {
     largePageDataBytes: 128 * 1024 * 1024,
+    optimizeCss: false,
   },
+  // Disable static optimization for development with ngrok
+  staticPageGenerationTimeout: 1000,
+  generateEtags: false,
   async headers() {
     return [
       {
@@ -43,7 +47,33 @@ const nextConfig = {
       }
     ]
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
+    // Improve chunk loading for development
+    if (dev && !isServer) {
+      config.optimization = {
+        ...config.optimization,
+        splitChunks: {
+          chunks: 'all',
+          cacheGroups: {
+            default: {
+              minChunks: 1,
+              priority: -20,
+              reuseExistingChunk: true,
+            },
+            vendor: {
+              test: /[\\/]node_modules[\\/]/,
+              name: 'vendors',
+              priority: -10,
+              chunks: 'all',
+            },
+          },
+        },
+      };
+      
+      // Disable webpack cache in development to prevent chunk loading issues
+      config.cache = false;
+    }
+
     // Fixes npm packages that depend on `fs` module
     if (!isServer) {
       config.resolve.fallback = {

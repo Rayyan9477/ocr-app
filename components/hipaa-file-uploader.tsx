@@ -114,59 +114,86 @@ export function HIPAAFileUploader({ onFilesProcessed, className }: HIPAAFileUplo
     setProgress(0);
     setError(null);
 
-    for (const file of files) {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
+    try {
+      const formData = new FormData();
+      
+      // Append all files with the correct field name 'files'
+      files.forEach(file => {
+        formData.append('files', file);
+      });
 
-        // Add options
-        Object.entries(options).forEach(([key, value]) => {
-          formData.append(key, value.toString());
-        });
+      // Add options
+      Object.entries(options).forEach(([key, value]) => {
+        formData.append(key, value.toString());
+      });
 
-        const response = await fetch('/api/hipaa-ocr', {
-          method: 'POST',
-          body: formData,
-        });
+      const response = await fetch('/api/hipaa-ocr', {
+        method: 'POST',
+        body: formData,
+      });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Processing failed');
-        }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Processing failed');
+      }
 
-        const result = await response.json();
+      const result = await response.json();
 
-        if (result.success) {
-          setCurrentProcessId(result.processId);
-          
-          const processedFile: ProcessedFile = {
-            fileName: file.name,
-            success: true,
-            processId: result.processId,
-            downloadToken: result.downloadToken,
-            averageConfidence: result.confidence,
-            downloadUrl: `/api/hipaa-download?fileId=${result.processId}&token=${result.downloadToken}`,
-            zipDownloadUrl: `/api/hipaa-download/zip?fileId=${result.processId}&token=${result.downloadToken}`,
-          };
+      if (result.success && result.results) {
+        // Process the results array from the API
+        const newProcessedFiles: ProcessedFile[] = result.results.map((fileResult: any, index: number) => ({
+          fileName: fileResult.fileName,
+          success: fileResult.success,
+          processId: `${Date.now()}-${index}`, // Generate a simple process ID
+          downloadToken: undefined, // No token needed for immediate processing
+          averageConfidence: fileResult.confidence,
+          downloadUrl: fileResult.downloadUrl, // Use the URL provided by the API
+          zipDownloadUrl: undefined, // Will be set if available
+          error: fileResult.error,
+          pages: fileResult.text ? [{
+            pageNumber: 1,
+            text: fileResult.text,
+            confidence: fileResult.confidence || 0
+          }] : undefined
+        }));
 
-          setProcessedFiles(prev => [...prev, processedFile]);
-          onFilesProcessed([...processedFiles, processedFile]);
+        setProcessedFiles(prev => [...prev, ...newProcessedFiles]);
+        onFilesProcessed([...processedFiles, ...newProcessedFiles]);
 
+        // Show success toast for successfully processed files
+        const successfulFiles = newProcessedFiles.filter(f => f.success);
+        if (successfulFiles.length > 0) {
           toast({
-            title: 'File Processed Successfully',
-            description: `${file.name} has been processed with ${result.confidence.toFixed(1)}% confidence`,
+            title: 'Files Processed Successfully',
+            description: `${successfulFiles.length} file(s) processed successfully`,
             variant: 'default',
           });
         }
-        setFiles([]);
+
+        // Show error toast for failed files
+        const failedFiles = newProcessedFiles.filter(f => !f.success);
+        if (failedFiles.length > 0) {
+          toast({
+            title: 'Some Files Failed',
+            description: `${failedFiles.length} file(s) failed to process`,
+            variant: 'destructive',
+          });
+        }
       } else {
         throw new Error(result.error || 'Processing failed');
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'An error occurred');
-      setProgress(0);
+      toast({
+        title: 'Processing Error',
+        description: error instanceof Error ? error.message : 'An error occurred',
+        variant: 'destructive',
+      });
     } finally {
+      // Clear files after processing attempt
+      setFiles([]);
       setIsProcessing(false);
+      setProgress(0);
     }
   };
 

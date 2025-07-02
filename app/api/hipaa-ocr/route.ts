@@ -293,7 +293,20 @@ export async function POST(request: NextRequest) {
 
     // Parse form data
     const formData = await request.formData();
+    
+    // Debug logging - check what form data keys are present
+    const formDataKeys = Array.from(formData.keys());
+    addProcessingLog(sessionId, 'debug', `Form data keys received: ${formDataKeys.join(', ')}`);
+    
+    // Check for files under different possible keys
     const files = formData.getAll('files') as File[];
+    const singleFile = formData.get('file') as File;
+    addProcessingLog(sessionId, 'debug', `Files found: ${files.length} under 'files' key`);
+    if (singleFile) {
+      addProcessingLog(sessionId, 'debug', `Single file found under 'file' key: ${singleFile.name}`);
+      files.push(singleFile);
+    }
+    
     const options = {
       language: formData.get('language') as string || 'eng',
       confidenceThreshold: parseInt(formData.get('confidenceThreshold') as string || '85'),
