@@ -8,6 +8,10 @@ export async function middleware(request: NextRequest) {
 
   // Get the path
   const path = request.nextUrl.pathname
+  console.log(`Processing middleware request for path: ${path}`);
+
+  // Note: Direct file access is now handled by middleware.files.ts
+  // This prevents conflicts between multiple middleware handlers
 
   // Check if authentication is required
   const requireAuth = process.env.REQUIRE_AUTHENTICATION === 'true'
@@ -17,6 +21,7 @@ export async function middleware(request: NextRequest) {
     '/api/auth/signin',
     '/api/auth/callback',
     '/api/health',
+    '/api/direct-file',
     '/auth/signin',
     '/auth/error',
     '/favicon.ico',
@@ -85,7 +90,8 @@ export const config = {
      * 1. _next/static (static files)
      * 2. _next/image (image optimization files)
      * 3. favicon.ico (favicon file)
+     * 4. PDF files (handled by middleware.files.ts)
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.pdf).*)',
   ],
 }

@@ -35,13 +35,18 @@ function generateOutputFilename(inputPath: string, engineName: string, suffix: s
   const inputBasename = path.basename(inputPath);
   const nameWithoutExt = path.parse(inputBasename).name;
   
-  // Remove timestamp prefix if it exists (for uploaded files)
-  const cleanName = nameWithoutExt.replace(/^\d+_/, '');
+  // If the input already has a timestamp prefix, use that to maintain consistency
+  // This format matches what we set in the smart-ocr route
+  const timestampMatch = nameWithoutExt.match(/^input_(\d+)_/);
+  const timestamp = timestampMatch ? timestampMatch[1] : Date.now();
   
-  // Generate timestamp for unique naming
-  const timestamp = Date.now();
+  // For smart OCR processing, use a consistent output name pattern
+  if (suffix === 'smart_ocr') {
+    return `input_${timestamp}_smart_ocr.pdf`;
+  }
   
-  return `${cleanName}_${timestamp}_${suffix}.pdf`;
+  // For other engine-specific processing
+  return `input_${timestamp}_${suffix}.pdf`;
 }
 
 export interface OCREngine {

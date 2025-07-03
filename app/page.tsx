@@ -680,6 +680,8 @@ export default function Home() {
     addProcessedFile({
       name: data.outputFile,
       path: `/api/download?file=${encodeURIComponent(data.outputFile)}`,
+      // Add timestamp to prevent caching issues
+      processedAt: new Date().toISOString()
     });
     
     return data;
@@ -972,8 +974,7 @@ export default function Home() {
           >
             <span className="text-gray-800 font-medium">{file.name}</span>
             <a
-              href={file.path}
-              download
+              href={`/api/download?file=${encodeURIComponent(file.name)}&t=${Date.now()}`}
               className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 text-primary rounded-md hover:bg-primary/20 transition-colors duration-200"
             >
               <Download className="h-4 w-4" />

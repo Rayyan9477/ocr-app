@@ -10,6 +10,29 @@ const nextConfig = {
   // Disable static optimization for development with ngrok
   staticPageGenerationTimeout: 1000,
   generateEtags: false,
+  
+  // Add rewrites for direct file access
+  async rewrites() {
+    return [
+      {
+        source: '/input_:timestamp_smart_ocr.pdf',
+        destination: '/api/direct-file/input_:timestamp_smart_ocr.pdf',
+      },
+      {
+        source: '/:filename_:timestamp_smart_ocr.pdf',
+        destination: '/api/direct-file/:filename_:timestamp_smart_ocr.pdf',
+      },
+      {
+        source: '/:filename_ocr.pdf',
+        destination: '/api/direct-file/:filename_ocr.pdf',
+      },
+      {
+        source: '/:filename_forced_ocr.pdf',
+        destination: '/api/direct-file/:filename_forced_ocr.pdf',
+      }
+    ];
+  },
+  
   async headers() {
     return [
       {
