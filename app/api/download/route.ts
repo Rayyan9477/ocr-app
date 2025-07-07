@@ -7,99 +7,127 @@ import appConfig from "@/lib/config";
 
 async function findFile(fileName: string): Promise<string | null> {
   const processedDir = appConfig.processedDir;
+  const baseName = path.parse(fileName).name;
+  const extension = path.parse(fileName).ext;
+  
+  // If we're already looking for a file with _ocr suffix
+  if (baseName.endsWith('_ocr')) {
+    const exactPath = join(processedDir, fileName);
+    if (existsSync(exactPath)) {
+      console.log(`Download API: Found exact OCR file: ${fileName}`);
+      return exactPath;
+    }
+    
+    // Try without the _ocr suffix to find the original file name with _ocr suffix
+    const originalName = baseName.replace('_ocr', '');
+    const originalPath = join(processedDir, `${originalName}_ocr${extension}`);
+    if (existsSync(originalPath)) {
+      console.log(`Download API: Found OCR file from modified request: ${originalPath}`);
+      return originalPath;
+    }
+  }
+  
+  // Clean the base name by removing any timestamp prefix
+  const cleanedBaseName = baseName.replace(/^input_\d+_/, '');
 
-  // Try exact match first
-  const exactPath = join(processedDir, fileName);
-  if (existsSync(exactPath)) {
-    console.log(`Download API: Found exact match for ${fileName}`);
-    return exactPath;
+  // Standard naming: filename_ocr.pdf
+  const ocrFileName = `${cleanedBaseName}_ocr${extension}`;
+  const ocrPath = join(processedDir, ocrFileName);
+  if (existsSync(ocrPath)) {
+    console.log(`Download API: Found OCR file for ${fileName}: ${ocrFileName}`);
+    return ocrPath;
   }
 
-  // Try the enhanced directory if it exists
-  const enhancedPath = join(processedDir, 'enhanced', fileName);
+  // Secondary: Try the enhanced directory
+  const enhancedPath = join(processedDir, 'enhanced', ocrFileName);
   if (existsSync(enhancedPath)) {
-    console.log(`Download API: Found enhanced version for ${fileName}`);
+    console.log(`Download API: Found enhanced OCR file for ${fileName}: ${ocrFileName}`);
     return enhancedPath;
   }
-
-  // If not found, try different variations
-  const baseName = path.parse(fileName).name;
   
-  // Try to find smart OCR files with timestamps
-  const smartOcrFiles = await findSmartOcrFiles(processedDir, baseName);
-  if (smartOcrFiles.length > 0) {
-    console.log(`Download API: Found smart OCR file for ${fileName}: ${path.basename(smartOcrFiles[0])}`);
-    return smartOcrFiles[0];
+  // Also try the exact file in enhanced directory
+  const enhancedExactPath = join(processedDir, 'enhanced', fileName);
+  if (existsSync(enhancedExactPath)) {
+    console.log(`Download API: Found enhanced exact file: ${fileName}`);
+    return enhancedExactPath;
   }
   
-  // Try standard OCR format
-  const standardOcrPath = join(processedDir, `${baseName}_ocr.pdf`);
-  if (existsSync(standardOcrPath)) {
-    console.log(`Download API: Found standard OCR file for ${fileName}: ${path.basename(standardOcrPath)}`);
-    return standardOcrPath;
-  }
-  
-  // Try forced OCR format
-  const forcedOcrPath = join(processedDir, `${baseName}_forced_ocr.pdf`);
-  if (existsSync(forcedOcrPath)) {
-    console.log(`Download API: Found forced OCR file for ${fileName}: ${path.basename(forcedOcrPath)}`);
-    return forcedOcrPath;
-  }
-
-  // Last resort: search for any file that contains the baseName
+  // Last resort: search for any file that contains the baseName with _ocr
   try {
     const files = await readdir(processedDir);
+    
+    // First try exact filename match
+    if (files.includes(fileName)) {
+      console.log(`Download API: Found exact file match: ${fileName}`);
+      return join(processedDir, fileName);
+    }
+    
+    // Then try finding any file with the cleanedBaseName and _ocr suffix
     const possibleMatch = files.find(file => 
-      file.includes(baseName) && (file.endsWith('.pdf') || file.endsWith('.txt'))
+      (file.includes(`${cleanedBaseName}_ocr`) || 
+       file === `${cleanedBaseName}${extension}` ||
+       file === fileName) && 
+      (file.endsWith('.pdf') || file.endsWith('.txt'))
     );
     
     if (possibleMatch) {
-      console.log(`Download API: Found possible match for ${fileName}: ${possibleMatch}`);
+      console.log(`Download API: Found possible OCR match for ${fileName}: ${possibleMatch}`);
       return join(processedDir, possibleMatch);
     }
+    
+    // If baseName already has _ocr suffix, try with the base name without it
+    if (baseName.endsWith('_ocr')) {
+      const baseWithoutOcr = baseName.replace('_ocr', '');
+      const matchWithoutOcr = files.find(file => 
+        file.includes(baseWithoutOcr) && 
+        (file.endsWith('.pdf') || file.endsWith('.txt'))
+      );
+      
+      if (matchWithoutOcr) {
+        console.log(`Download API: Found match without _ocr suffix for ${fileName}: ${matchWithoutOcr}`);
+        return join(processedDir, matchWithoutOcr);
+      }
+    }
   } catch (err) {
-    console.error('Error searching for similar files:', err);
+    console.error('Error searching for OCR files:', err);
   }
-
-  console.log(`Download API: No file found for ${fileName}`);
-  return null;
-}
-
-async function findSmartOcrFiles(
-  dir: string,
-  baseName: string
-): Promise<string[]> {
+  
+  // Final fallback: Search for any file with the same name (ignoring prefixes/suffixes)
+  // This is especially useful when we're looking for filenames like superbill2_ocr.pdf
   try {
-    const files = await readdir(dir);
+    const fileNameWithoutExtension = baseName.replace('_ocr', '');
     
-    // First, try exact pattern matching
-    const timestampPattern = new RegExp(`${baseName}_\\d+_smart_ocr\\.pdf$`);
-    let matches = files
-      .filter(file => timestampPattern.test(file))
-      .map(file => join(dir, file));
-    
-    if (matches.length === 0 && baseName.startsWith('input_')) {
-      // If no matches and it's an input file, try finding any input_*_smart_ocr.pdf
-      const inputPattern = /input_\d+_smart_ocr\.pdf$/;
-      matches = files
-        .filter(file => inputPattern.test(file))
-        .map(file => join(dir, file));
+    // Recursive function to search all subdirectories
+    async function searchDirectory(directory: string): Promise<string | null> {
+      const entries = await readdir(directory, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = join(directory, entry.name);
+        
+        if (entry.isDirectory()) {
+          // Recursively search subdirectories
+          const result = await searchDirectory(fullPath);
+          if (result) return result;
+        } else if (entry.name.includes(fileNameWithoutExtension) && 
+                  (entry.name.endsWith('.pdf') || entry.name.endsWith('.txt'))) {
+          console.log(`Download API: Found file by deep search: ${entry.name}`);
+          return fullPath;
+        }
+      }
+      
+      return null;
     }
     
-    if (matches.length === 0) {
-      // If still no matches, try a more relaxed pattern
-      const relaxedPattern = new RegExp(`${baseName}.*_smart_ocr\\.pdf$`);
-      matches = files
-        .filter(file => relaxedPattern.test(file))
-        .map(file => join(dir, file));
+    const deepSearchResult = await searchDirectory(processedDir);
+    if (deepSearchResult) {
+      return deepSearchResult;
     }
-    
-    // Sort by name (which includes timestamp) with most recent first
-    return matches.sort().reverse();
   } catch (err) {
-    console.error('Error finding smart OCR files:', err);
-    return [];
+    console.error('Error during deep search for files:', err);
   }
+
+  console.log(`Download API: No OCR file found for ${fileName}`);
+  return null;
 }
 
 export async function GET(request: NextRequest) {
@@ -117,7 +145,15 @@ export async function GET(request: NextRequest) {
     const sanitizedFileName = path.basename(fileName);
 
     // Find the actual file
-    const filePath = await findFile(sanitizedFileName);
+    let filePath = await findFile(sanitizedFileName);
+
+    // If not found and the filename doesn't end with _ocr.pdf, try adding it
+    if (!filePath && !sanitizedFileName.endsWith('_ocr.pdf') && sanitizedFileName.endsWith('.pdf')) {
+      const baseNameWithoutExt = path.basename(sanitizedFileName, '.pdf');
+      const fileNameWithOcr = `${baseNameWithoutExt}_ocr.pdf`;
+      console.log(`Download API: Original file not found, trying with OCR suffix: ${fileNameWithOcr}`);
+      filePath = await findFile(fileNameWithOcr);
+    }
 
     if (!filePath) {
       console.error(`Download API: File not found: ${sanitizedFileName}`);

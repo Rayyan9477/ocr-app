@@ -35,18 +35,11 @@ function generateOutputFilename(inputPath: string, engineName: string, suffix: s
   const inputBasename = path.basename(inputPath);
   const nameWithoutExt = path.parse(inputBasename).name;
   
-  // If the input already has a timestamp prefix, use that to maintain consistency
-  // This format matches what we set in the smart-ocr route
-  const timestampMatch = nameWithoutExt.match(/^input_(\d+)_/);
-  const timestamp = timestampMatch ? timestampMatch[1] : Date.now();
+  // Remove any timestamp prefix that might exist
+  const cleanedName = nameWithoutExt.replace(/^input_\d+_/, '');
   
-  // For smart OCR processing, use a consistent output name pattern
-  if (suffix === 'smart_ocr') {
-    return `input_${timestamp}_smart_ocr.pdf`;
-  }
-  
-  // For other engine-specific processing
-  return `input_${timestamp}_${suffix}.pdf`;
+  // Use a consistent output name pattern with just _ocr suffix
+  return `${cleanedName}_ocr.pdf`;
 }
 
 export interface OCREngine {
@@ -592,7 +585,7 @@ export class MultiEngineOCR {
       command += ` pdf`;
       return command;
     } else if (engine.name === 'ocrmypdf') {
-      let command = `ocrmypdf --language ${language} --deskew --rotate-pages --force-ocr`;
+      let command = `/usr/local/bin/ocrmypdf-fix --language ${language} --deskew --rotate-pages --force-ocr`;
       
       // Support large images
       command += ` --max-image-mpixels 0`;

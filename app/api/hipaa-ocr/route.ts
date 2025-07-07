@@ -59,7 +59,8 @@ async function processFileImmediately(
     addProcessingLog(sessionId, 'info', `File saved temporarily: ${path.basename(inputPath)}`);
     
     // Process with OCRmyPDF in memory without retention
-    outputPath = path.join(tempDir, `output_${file.name}`);
+    const fileBaseName = path.basename(file.name, path.extname(file.name));
+    outputPath = path.join(tempDir, `${fileBaseName}_ocr${path.extname(file.name)}`);
     
     await auditLogger.logEvent({
       userId: sessionId,
@@ -71,7 +72,7 @@ async function processFileImmediately(
     
     // Build OCRmyPDF command with HIPAA-compliant settings
     const ocrCommand = [
-      'ocrmypdf',
+      '/usr/local/bin/ocrmypdf-fix',
       '--force-ocr',      // Force OCR even if text exists
       '--clean',          // Clean up artifacts
       '--deskew',         // Correct page skew

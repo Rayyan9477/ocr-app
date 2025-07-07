@@ -92,11 +92,13 @@ export async function POST(request: NextRequest) {
     // Save the uploaded file
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const timestamp = Date.now();
-    const fileName = `input_${timestamp}_${file.name}`;
+    const originalFileName = file.name;
+    const fileName = `input_${timestamp}_${originalFileName}`;
     inputPath = path.join(uploadsDir, fileName);
     
-    // Ensure the timestamp is included in the output file name for consistent handling
-    const outputFileName = `input_${timestamp}_smart_ocr.pdf`;
+    // Clean output file name - just base name of original file with _ocr suffix
+    const originalBaseName = path.parse(originalFileName).name;
+    const outputFileName = `${originalBaseName}_ocr.pdf`;
     
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     fs.writeFileSync(inputPath, fileBuffer);

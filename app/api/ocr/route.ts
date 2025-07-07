@@ -98,7 +98,7 @@ const buildOCRCommand = (inputPath: string, outputPath: string, options: any = {
     rotate = "0"
   } = options;
 
-  let command = `ocrmypdf `;
+  let command = `/usr/local/bin/ocrmypdf-fix `;
 
   // Add options
   if (language) command += `--language ${language} `;
@@ -192,7 +192,11 @@ export const POST = async (request: NextRequest) => {
     
     // Determine output path
     const processedDir = join(process.cwd(), "processed");
-    const outputPath = join(processedDir, `${path.basename(fileName, '.pdf')}_${Date.now()}_ocr.pdf`);
+    
+    // Extract original filename, removing any timestamp prefix that might exist
+    const inputBasename = path.basename(fileName, '.pdf');
+    const cleanedName = inputBasename.replace(/^input_\d+_/, '');
+    const outputPath = join(processedDir, `${cleanedName}_ocr.pdf`);
     
     // Build and execute OCR command
     const command = buildOCRCommand(inputPath, outputPath, options);
@@ -273,10 +277,14 @@ export const POST = async (request: NextRequest) => {
         
         // Create a new command with force-ocr enabled and PDF output type to avoid bloat
         const retryOptions = { ...options, force: true };
+        
+        // Extract original filename, removing any timestamp prefix that might exist
+        const inputBasename = path.basename(fileName, '.pdf');
+        const cleanedName = inputBasename.replace(/^input_\d+_/, '');
         const retryOutputPath = join(
           process.cwd(),
           "processed",
-          `${path.basename(fileName, '.pdf')}_${Date.now()}_forced_ocr.pdf`
+          `${cleanedName}_ocr.pdf`
         );
         
         const retryCommand = buildOCRCommand(inputPath, retryOutputPath, retryOptions);

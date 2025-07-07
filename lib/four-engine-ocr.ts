@@ -73,7 +73,7 @@ export class FourEngineOCRService {
     {
       name: 'ocrmypdf',
       command: (input, output, lang, options) => {
-        let cmd = `ocrmypdf --language ${lang} --deskew --rotate-pages --force-ocr`;
+        let cmd = `/usr/local/bin/ocrmypdf-fix --language ${lang} --deskew --rotate-pages --force-ocr`;
         if (options?.preserveLayout) cmd += ' --pdf-renderer hocr';
         if (options?.medicalTerminology) cmd += ' --tesseract-config medical_config.cfg';
         cmd += ` "${input}" "${output}"`;

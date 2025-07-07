@@ -26,8 +26,11 @@ export function createJsonResponse(data: any, status: number = 200) {
  * @returns Formatted output filename
  */
 export function generateOutputFilename(inputPath: string, engineName: string, suffix: string = 'ocr'): string {
-  const baseName = path.basename(inputPath, path.extname(inputPath));
-  return `${baseName}_${engineName}_${suffix}${path.extname(inputPath) === '.pdf' ? '.pdf' : '.txt'}`;
+  const inputBasename = path.basename(inputPath, path.extname(inputPath));
+  // Remove any timestamp prefix that might exist
+  const cleanedName = inputBasename.replace(/^input_\d+_/, '');
+  // Just use _ocr as suffix, ignore engine name and custom suffix
+  return `${cleanedName}_ocr${path.extname(inputPath) === '.pdf' ? '.pdf' : '.txt'}`;
 }
 
 /**

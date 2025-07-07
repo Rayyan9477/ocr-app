@@ -55,17 +55,14 @@ export class EnhancedTesseractEngine implements OCREngine {
     
     try {
       logger.info('Initializing EnhancedTesseractEngine');
-      this.worker = await createWorker({
+      // In v6, createWorker handles language loading and initialization
+      this.worker = await createWorker(this.options.lang!, this.options.oem!, {
         logger: message => {
           if (process.env.DEBUG) {
             logger.debug(`Tesseract: ${JSON.stringify(message)}`);
           }
         }
       });
-      
-      // Initialize with the language model
-      await this.worker.loadLanguage(this.options.lang!);
-      await this.worker.initialize(this.options.lang!);
       
       // Set PSM based on whether handwriting optimization is enabled
       if (this.options.enableHandwritingOptimization) {
@@ -184,21 +181,30 @@ export class EnhancedTesseractEngine implements OCREngine {
       // Read the image file
       const imageBuffer = fs.readFileSync(processedPath);
       
-      // Recognize text from the image
-      const result = await this.worker!.recognize(imageBuffer);
+      // Recognize text from the image with v6 compatible options
+      // Enable blocks output for detailed analysis
+      const result = await this.worker!.recognize(imageBuffer, {}, {
+        blocks: true, // Enable blocks output format
+        hocr: false,  // Disable hOCR to save memory
+        tsv: false    // Disable TSV to save memory
+      });
       
       // Filter out low-confidence words if threshold is set
       let filteredText = result.data.text;
       let overallConfidence = result.data.confidence;
       
-      if (this.options.confidenceThreshold && this.options.confidenceThreshold > 0) {
-        const lines = result.data.lines || [];
-        const filteredLines = lines.map(line => {
-          const words = line.words.filter(word => word.confidence >= this.options.confidenceThreshold!);
-          return words.map(w => w.text).join(' ');
-        }).filter(line => line.trim().length > 0);
+      if (this.options.confidenceThreshold && this.options.confidenceThreshold > 0 && result.data.blocks) {
+        // Extract words from blocks structure in v6 format
+        const words = result.data.blocks
+          .map((block: any) => block.paragraphs || [])
+          .flat()
+          .map((paragraph: any) => paragraph.lines || [])
+          .flat()
+          .map((line: any) => line.words || [])
+          .flat();
         
-        filteredText = filteredLines.join('\n');
+        const filteredWords = words.filter((word: any) => word.confidence >= this.options.confidenceThreshold!);
+        filteredText = filteredWords.map((w: any) => w.text).join(' ');
       }
       
       // Post-process text for handwritten content if optimization is enabled
