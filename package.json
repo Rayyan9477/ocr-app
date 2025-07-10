@@ -20,6 +20,9 @@
     "validate:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').initializeEnhancedOCR()\""
   },
   "dependencies": {
+    "@azure/arm-appservice": "^17.0.0",
+    "@azure/arm-resources": "^6.1.0",
+    "@azure/identity": "^4.10.2",
     "@hookform/resolvers": "^3.9.1",
     "@panva/hkdf": "^1.2.1",
     "@radix-ui/react-accordion": "1.2.2",
