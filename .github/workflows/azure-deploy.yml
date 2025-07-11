@@ -40,9 +40,40 @@ jobs:
     - name: Build
       run: npm run build
 
+    - name: Create deployment package
+      run: |
+        # Use the Next.js standalone build for deployment
+        mkdir -p deployment
+        
+        # Copy the standalone build directory contents
+        cp -r .next/standalone/* deployment/
+        
+        # Copy the static files to the deployment .next directory
+        mkdir -p deployment/.next
+        cp -r .next/static deployment/.next/static
+        
+        # Copy all the build files from standalone .next to deployment .next
+        cp -r .next/standalone/.next/* deployment/.next/
+        
+        # Copy deployment configuration files
+        cp web.config deployment/
+        cp iisnode.yml deployment/
+        cp .deployment deployment/
+        
+        # Verify the deployment structure
+        echo "Deployment structure:"
+        ls -la deployment/
+        echo "Server.js exists:"
+        ls -la deployment/server.js
+        echo ".next directory:"
+        ls -la deployment/.next/
+        
+        # Set the deployment path
+        echo "DEPLOYMENT_PATH=deployment" >> $GITHUB_ENV
+
     - name: 'Deploy to Azure App Service'
       uses: azure/webapps-deploy@v2
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+        package: deployment

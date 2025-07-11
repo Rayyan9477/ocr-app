@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Enable standalone output for better Azure App Service compatibility
   output: 'standalone',
   serverExternalPackages: ['@tensorflow/tfjs-node'],
   poweredByHeader: false,
