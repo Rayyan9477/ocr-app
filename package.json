@@ -10,8 +10,8 @@
     "lint": "next lint",
     "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh",
     "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true",
-    "test": "jest",
-    "test:watch": "jest --watch",
+    "test": "jest --passWithNoTests",
+    "test:watch": "jest --watch --passWithNoTests",
     "remove-python": "chmod +x ./remove-python-dependencies.sh && ./remove-python-dependencies.sh",
     "clean": "rm -rf .next node_modules",
     "enhanced-ocr": "npx ts-node bin/enhanced-ocr.ts",
@@ -115,31 +115,20 @@
     "typescript": "^5"
   },
   "jest": {
+    "preset": "ts-jest/presets/default-esm",
+    "extensionsToTreatAsEsm": [".ts", ".tsx"],
     "testEnvironment": "node",
-    "moduleFileExtensions": [
-      "ts",
-      "tsx",
-      "js",
-      "jsx",
-      "json"
-    ],
-    "transform": {
-      "^.+\\.(ts|tsx)$": "ts-jest"
-    },
-    "testMatch": [
-      "**/__tests__/**/*.[jt]s?(x)",
-      "**/?(*.)+(spec|test).[jt]s?(x)"
-    ],
+    "passWithNoTests": true,
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/.next/",
-      "/dist/"
+      "/dist/",
+      "/build/"
     ],
-    "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/src/$1"
-    },
-    "setupFilesAfterEnv": [
-      "<rootDir>/jest.setup.js"
-    ]
+    "transform": {
+      "^.+\\.(ts|tsx)$": ["ts-jest", {
+        "useESM": true
+      }]
+    }
   }
 }

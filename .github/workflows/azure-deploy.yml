@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - recovered-changes
   workflow_dispatch:
 
 env:
@@ -26,10 +27,18 @@ jobs:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
 
-    - name: npm install and build
-      run: |
-        npm install
-        npm run build
+    - name: npm install
+      run: npm install
+
+    - name: Clean build artifacts
+      run: rm -rf .next dist build
+
+    - name: Run tests
+      run: npm test
+      continue-on-error: false
+
+    - name: Build
+      run: npm run build
 
     - name: 'Deploy to Azure App Service'
       uses: azure/webapps-deploy@v2
