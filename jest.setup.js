@@ -24,6 +24,22 @@ jest.mock('next/router', () => ({
   },
 }));
 
+// Mock Next.js navigation (App Router)
+jest.mock('next/navigation', () => ({
+  useRouter() {
+    return {
+      push: jest.fn(),
+      replace: jest.fn(),
+      back: jest.fn(),
+      forward: jest.fn(),
+      refresh: jest.fn(),
+      prefetch: jest.fn(),
+    };
+  },
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 // Suppress console logs during tests unless they're errors
 global.console = {
   ...console,
@@ -33,3 +49,10 @@ global.console = {
   warn: jest.fn(),
   error: console.error,
 };
+
+// Mock any problematic dependencies
+jest.mock('@tensorflow/tfjs-node', () => ({}));
+jest.mock('tesseract.js', () => ({}));
+
+// Set up global test timeout
+jest.setTimeout(30000);

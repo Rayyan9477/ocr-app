@@ -67,6 +67,12 @@ tmp/processing/
 tmp/*
 !tmp/.gitkeep
 
+# Deployment files
+deployment/
+deployment.zip
+*.deployment
+deployment-*.zip
+
 # Processed files
 processed/*
 !processed/.gitkeep

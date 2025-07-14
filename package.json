@@ -13,7 +13,7 @@
     "lint": "next lint",
     "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh",
     "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true",
-    "test": "jest --passWithNoTests",
+    "test": "jest --passWithNoTests --verbose",
     "test:watch": "jest --watch --passWithNoTests",
     "remove-python": "chmod +x ./remove-python-dependencies.sh && ./remove-python-dependencies.sh",
     "clean": "rm -rf .next node_modules",
@@ -70,6 +70,7 @@
     "cmdk": "1.0.4",
     "date-fns": "^2.28.0",
     "embla-carousel-react": "8.5.1",
+    "express": "^4.21.2",
     "form-data": "^4.0.2",
     "fuse.js": "^7.1.0",
     "helmet": "^8.1.0",
@@ -78,6 +79,7 @@
     "long": "^5.3.2",
     "lucide-react": "^0.454.0",
     "mock-aws-s3": "^4.0.2",
+    "multer": "^1.4.5-lts.1",
     "next": "15.2.4",
     "next-auth": "^4.24.11",
     "next-themes": "^0.4.4",
@@ -104,7 +106,9 @@
     "@testing-library/jest-dom": "^6.4.2",
     "@testing-library/react": "^14.2.1",
     "@types/bcryptjs": "^3.0.0",
+    "@types/express": "^4.17.21",
     "@types/jest": "^29.5.14",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.15.34",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
@@ -119,20 +123,35 @@
     "typescript": "^5"
   },
   "jest": {
-    "preset": "ts-jest/presets/default-esm",
-    "extensionsToTreatAsEsm": [".ts", ".tsx"],
+    "preset": "ts-jest",
     "testEnvironment": "node",
     "passWithNoTests": true,
+    "verbose": true,
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/.next/",
       "/dist/",
-      "/build/"
+      "/build/",
+      "/deployment/"
     ],
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
     "transform": {
       "^.+\\.(ts|tsx)$": ["ts-jest", {
-        "useESM": true
+        "useESM": false
       }]
+    },
+    "moduleFileExtensions": ["ts", "tsx", "js", "jsx", "json"],
+    "collectCoverageFrom": [
+      "**/*.{ts,tsx}",
+      "!**/*.d.ts",
+      "!**/node_modules/**",
+      "!**/.next/**",
+      "!**/deployment/**"
+    ],
+    "testTimeout": 30000,
+    "maxWorkers": 1,
+    "haste": {
+      "enableSymlinks": false
     }
   }
 }

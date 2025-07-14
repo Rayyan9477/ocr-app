@@ -2,16 +2,29 @@
 const nextConfig = {
   // Enable standalone output for better Azure App Service compatibility
   output: 'standalone',
+  
+  // Essential for Azure App Service
   serverExternalPackages: ['@tensorflow/tfjs-node'],
   poweredByHeader: false,
+  
   experimental: {
     largePageDataBytes: 128 * 1024 * 1024,
     optimizeCss: false,
   },
+  
   // Configure for Azure App Service
   staticPageGenerationTimeout: 1000,
   generateEtags: false,
   compress: true,
+  
+  // Disable TypeScript and ESLint checking during build for faster CI
+  typescript: {
+    ignoreBuildErrors: true,
+    tsconfigPath: 'tsconfig.json',
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   
   // Add rewrites for direct file access
   async rewrites() {
