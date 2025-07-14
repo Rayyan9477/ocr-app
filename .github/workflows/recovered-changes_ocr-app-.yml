@@ -28,9 +28,63 @@ jobs:
           npm install
           npm run build --if-present
           npm run test --if-present
+        env:
+          NODE_ENV: production
+
+      - name: Create deployment package
+        run: |
+          # Remove unnecessary files and dev dependencies
+          rm -rf node_modules/.cache
+          rm -rf .next/cache
+          rm -rf test
+          rm -rf __tests__
+          
+          # Create a clean deployment package
+          mkdir -p deployment
+          
+          # Copy necessary files
+          cp -r .next deployment/
+          cp -r public deployment/
+          cp package*.json deployment/
+          cp server.js deployment/
+          cp web.config deployment/
+          cp startup.sh deployment/
+          cp next.config.mjs deployment/
+          
+          # Copy required directories (create if they don't exist)
+          mkdir -p deployment/uploads
+          mkdir -p deployment/processed
+          mkdir -p deployment/output
+          mkdir -p deployment/tmp
+          mkdir -p deployment/logs
+          mkdir -p deployment/audit_logs
+          mkdir -p deployment/secure_storage
+          
+          # Copy other necessary directories if they exist
+          [ -d "components" ] && cp -r components deployment/
+          [ -d "lib" ] && cp -r lib deployment/
+          [ -d "utils" ] && cp -r utils deployment/
+          [ -d "services" ] && cp -r services deployment/
+          [ -d "models" ] && cp -r models deployment/
+          [ -d "config" ] && cp -r config deployment/
+          [ -d "hooks" ] && cp -r hooks deployment/
+          [ -d "ui" ] && cp -r ui deployment/
+          [ -d "app" ] && cp -r app deployment/
+          [ -d "api" ] && cp -r api deployment/
+          [ -d "bin" ] && cp -r bin deployment/
+          [ -d "styles" ] && cp -r styles deployment/
+          [ -d "src" ] && cp -r src deployment/
+          
+          # Install production dependencies in deployment folder
+          cd deployment
+          npm ci --only=production
+          cd ..
 
       - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+        run: |
+          cd deployment
+          zip -r ../release.zip . -x "node_modules/.cache/*" ".next/cache/*"
+          cd ..
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -41,7 +95,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    
+    environment:
+      name: 'Production'
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     
     steps:
       - name: Download artifact from build job
@@ -60,3 +116,4 @@ jobs:
           slot-name: 'Production'
           package: .
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF }}
+          startup-command: 'chmod +x startup.sh && ./startup.sh'

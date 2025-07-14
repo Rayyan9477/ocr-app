@@ -8,9 +8,10 @@ const nextConfig = {
     largePageDataBytes: 128 * 1024 * 1024,
     optimizeCss: false,
   },
-  // Disable static optimization for development with ngrok
+  // Configure for Azure App Service
   staticPageGenerationTimeout: 1000,
   generateEtags: false,
+  compress: true,
   
   // Add rewrites for direct file access
   async rewrites() {

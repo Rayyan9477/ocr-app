@@ -2,11 +2,12 @@
   "name": "OCR-Project",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.js",
+    "start:azure": "chmod +x ./start.sh && ./start.sh",
+    "start:next": "next start",
     "start:custom": "node server.cjs",
     "start:local": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next start",
     "lint": "next lint",
@@ -19,7 +20,9 @@
     "enhanced-ocr": "npx ts-node bin/enhanced-ocr.ts",
     "test:enhanced-ocr": "chmod +x ./test-enhanced-preprocessing.sh && ./test-enhanced-preprocessing.sh",
     "setup:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').createDefaultEnvConfig()\"",
-    "validate:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').initializeEnhancedOCR()\""
+    "validate:enhanced-ocr": "npx ts-node -e \"require('./lib/enhanced-ocr-config').initializeEnhancedOCR()\"",
+    "postinstall": "echo 'Post-install completed'",
+    "prestart": "echo 'Starting OCR application...'"
   },
   "dependencies": {
     "@azure/arm-appservice": "^17.0.0",

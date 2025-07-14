@@ -19,16 +19,21 @@ jobs:
     environment: production
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
 
-    - name: npm install
-      run: npm install
+    - name: Clean installation
+      run: |
+        rm -rf node_modules package-lock.json
+        npm cache clean --force
+
+    - name: Install dependencies
+      run: npm install --production=false
 
     - name: Clean build artifacts
       run: rm -rf .next dist build
@@ -37,43 +42,112 @@ jobs:
       run: npm test
       continue-on-error: false
 
-    - name: Build
-      run: npm run build
-
-    - name: Create deployment package
+    - name: Build Next.js app
       run: |
-        # Use the Next.js standalone build for deployment
+        npm run build
+        echo "Build completed successfully"
+
+    - name: Create deployment package for Azure
+      run: |
+        echo "Creating deployment package..."
+        
+        # Create deployment directory
         mkdir -p deployment
         
-        # Copy the standalone build directory contents
-        cp -r .next/standalone/* deployment/
+        # Copy standalone build
+        if [ -d ".next/standalone" ]; then
+          cp -r .next/standalone/* deployment/
+          echo "Copied standalone build"
+        else
+          echo "No standalone build found, copying full app"
+          cp -r . deployment/
+          rm -rf deployment/node_modules
+          rm -rf deployment/.git
+        fi
         
-        # Copy the static files to the deployment .next directory
-        mkdir -p deployment/.next
-        cp -r .next/static deployment/.next/static
+        # Copy static files
+        if [ -d ".next/static" ]; then
+          mkdir -p deployment/.next/static
+          cp -r .next/static/* deployment/.next/static/
+          echo "Copied static files"
+        fi
         
-        # Copy all the build files from standalone .next to deployment .next
-        cp -r .next/standalone/.next/* deployment/.next/
+        # Copy public assets
+        if [ -d "public" ]; then
+          cp -r public deployment/
+          echo "Copied public assets"
+        fi
         
-        # Copy deployment configuration files
-        cp web.config deployment/
-        cp iisnode.yml deployment/
-        cp .deployment deployment/
+        # Copy essential configuration files
+        cp package.json deployment/
+        cp web.config deployment/ 2>/dev/null || echo "web.config not found, will use default"
+        cp startup.sh deployment/ 2>/dev/null || echo "startup.sh not found"
+        cp server.js deployment/
         
-        # Verify the deployment structure
-        echo "Deployment structure:"
+        # Ensure server.js exists and is executable
+        if [ ! -f "deployment/server.js" ]; then
+          echo "Creating server.js for Azure deployment"
+          cat > deployment/server.js << 'EOF'
+const { createServer } = require('http')
+const { parse } = require('url')
+const next = require('next')
+
+const dev = process.env.NODE_ENV !== 'production'
+const hostname = process.env.HOSTNAME || '0.0.0.0'
+const port = process.env.PORT || 8080
+
+const app = next({ dev, hostname, port })
+const handle = app.getRequestHandler()
+
+app.prepare().then(() => {
+  createServer(async (req, res) => {
+    try {
+      const parsedUrl = parse(req.url, true)
+      await handle(req, res, parsedUrl)
+    } catch (err) {
+      console.error('Error occurred handling', req.url, err)
+      res.statusCode = 500
+      res.end('internal server error')
+    }
+  }).listen(port, hostname, () => {
+    console.log(\`> Ready on http://\${hostname}:\${port}\`)
+  })
+}).catch((err) => {
+  console.error('Failed to prepare Next.js app:', err)
+  process.exit(1)
+})
+EOF
+        fi
+        
+        # Create required directories
+        mkdir -p deployment/uploads deployment/processed deployment/output deployment/tmp deployment/logs
+        
+        # Create a minimal package.json for deployment if standalone
+        if [ -d ".next/standalone" ]; then
+          cat > deployment/package.json << 'EOF'
+{
+  "name": "ocr-app",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}
+EOF
+        fi
+        
+        # Verify deployment structure
+        echo "=== Deployment structure ==="
         ls -la deployment/
-        echo "Server.js exists:"
-        ls -la deployment/server.js
-        echo ".next directory:"
-        ls -la deployment/.next/
-        
-        # Set the deployment path
-        echo "DEPLOYMENT_PATH=deployment" >> $GITHUB_ENV
+        echo "=== Server.js exists ==="
+        ls -la deployment/server.js 2>/dev/null || echo "server.js not found!"
+        echo "=== .next directory ==="
+        ls -la deployment/.next/ 2>/dev/null || echo ".next directory not found!"
 
     - name: 'Deploy to Azure App Service'
-      uses: azure/webapps-deploy@v2
+      uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: deployment
+        startup-command: 'node server.js'
