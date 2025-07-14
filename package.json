@@ -73,7 +73,6 @@
     "form-data": "^4.0.2",
     "fuse.js": "^7.1.0",
     "helmet": "^8.1.0",
-    "img2pdf": "^1.0.7",
     "input-otp": "1.4.1",
     "jsonwebtoken": "^9.0.2",
     "long": "^5.3.2",
