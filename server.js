@@ -14,14 +14,27 @@ console.log('Port:', port)
 console.log('Hostname:', hostname)
 
 // Ensure required directories exist
-const requiredDirs = ['uploads', 'processed', 'output', 'tmp', 'logs', 'audit_logs', 'secure_storage']
+const requiredDirs = ['uploads', 'processed', 'output', 'tmp', 'logs', 'audit_logs', 'secure_storage', '.next/cache']
 requiredDirs.forEach(dir => {
   const dirPath = path.join(process.cwd(), dir)
   if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true })
-    console.log(`Created directory: ${dirPath}`)
+    try {
+      fs.mkdirSync(dirPath, { recursive: true })
+      console.log(`Created directory: ${dirPath}`)
+    } catch (err) {
+      console.warn(`Warning: Could not create directory ${dirPath}:`, err.message)
+    }
   }
 })
+
+// Create health endpoint file for monitoring
+try {
+  const healthFilePath = path.join(process.cwd(), 'tmp', 'health.json')
+  fs.writeFileSync(healthFilePath, JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }))
+  console.log(`Created health file: ${healthFilePath}`)
+} catch (err) {
+  console.warn('Warning: Could not create health file:', err.message)
+}
 
 // Create Next.js app
 const app = next({ 

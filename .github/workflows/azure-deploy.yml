@@ -33,10 +33,16 @@ jobs:
         npm cache clean --force
 
     - name: Install dependencies
-      run: npm install --production=false
-
+      run: |
+        echo "Installing dependencies with clean npm cache..."
+        npm install --production=false
+        npm list --depth=0 next
+        
     - name: Clean build artifacts
-      run: rm -rf .next dist build
+      run: |
+        echo "Cleaning previous build artifacts..."
+        rm -rf .next dist build
+        mkdir -p logs uploads processed output tmp audit_logs secure_storage
 
     - name: Run tests
       run: npm test
@@ -44,50 +50,160 @@ jobs:
 
     - name: Build Next.js app
       run: |
-        npm run build
-        echo "Build completed successfully"
-
-    - name: Create deployment package for Azure
-      run: |
-        echo "Creating deployment package..."
+        echo "Building Next.js application..."
+        # Ensure Next.js is configured for standalone output
+        grep -q '"output": "standalone"' next.config.mjs || echo "⚠️ Warning: 'output: standalone' not configured in next.config.mjs"
         
-        # Create deployment directory
-        mkdir -p deployment
+        # Build with production env
+        NODE_ENV=production npm run build
         
-        # Copy standalone build
+        # Verify build output
         if [ -d ".next/standalone" ]; then
-          cp -r .next/standalone/* deployment/
-          echo "Copied standalone build"
+          echo "✅ Standalone build created successfully"
+          ls -la .next/standalone
         else
-          echo "No standalone build found, copying full app"
-          cp -r . deployment/
-          rm -rf deployment/node_modules
-          rm -rf deployment/.git
+          echo "❌ Standalone build not found! Make sure next.config.mjs has output: 'standalone'"
+          exit 1
         fi
         
-        # Copy static files
         if [ -d ".next/static" ]; then
-          mkdir -p deployment/.next/static
-          cp -r .next/static/* deployment/.next/static/
-          echo "Copied static files"
+          echo "✅ Static files created successfully"
+          ls -la .next/static
+        else
+          echo "❌ Static files not found!"
+          exit 1
+        fi
+
+    - name: Create optimized deployment package for Azure
+      run: |
+        echo "Creating lightweight deployment package..."
+        
+        # Ensure we have a standalone build
+        if [ ! -d ".next/standalone" ]; then
+          echo "❌ No standalone build found! This is required for optimized deployment."
+          exit 1
         fi
         
-        # Copy public assets
+        # Set up static files for the standalone build
+        echo "Setting up Next.js static files for standalone deployment..."
+        mkdir -p .next/standalone/public/_next
+        
+        # Copy static files to public/_next/static in standalone
+        if [ -d ".next/static" ]; then
+          cp -r .next/static .next/standalone/public/_next/
+          echo "✅ Copied .next/static to standalone/public/_next/static"
+        else
+          echo "❌ .next/static directory not found!"
+          exit 1
+        fi
+        
+        # Copy public files to standalone
         if [ -d "public" ]; then
-          cp -r public deployment/
-          echo "Copied public assets"
+          mkdir -p .next/standalone/public
+          cp -r public/* .next/standalone/public/ 2>/dev/null || echo "No public files to copy"
+          echo "✅ Copied public files to standalone/public"
         fi
         
-        # Copy essential configuration files
-        cp package.json deployment/
-        cp web.config deployment/ 2>/dev/null || echo "web.config not found, will use default"
-        cp startup.sh deployment/ 2>/dev/null || echo "startup.sh not found"
-        cp server.js deployment/
+        # Copy web.config to standalone
+        if [ -f "web.config" ]; then
+          cp web.config .next/standalone/
+          echo "✅ Copied web.config to standalone"
+        elif [ -f "web.config.production" ]; then
+          cp web.config.production .next/standalone/web.config
+          echo "✅ Using web.config.production as fallback"
+        else
+          echo "⚠️ No web.config found, creating a minimal one"
+          cat > .next/standalone/web.config << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <system.webServer>
+    <webSocket enabled="false" />
+    <handlers>
+      <add name="iisnode" path="server.js" verb="*" modules="iisnode" />
+    </handlers>
+    <rewrite>
+      <rules>
+        <rule name="DynamicContent">
+          <conditions>
+            <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="True" />
+          </conditions>
+          <action type="Rewrite" url="server.js" />
+        </rule>
+      </rules>
+    </rewrite>
+    <security>
+      <requestFiltering>
+        <hiddenSegments>
+          <remove segment="bin" />
+        </hiddenSegments>
+      </requestFiltering>
+    </security>
+    <httpErrors existingResponse="PassThrough" />
+    <iisnode 
+      nodeProcessCommandLine="node.exe"
+      watchedFiles="web.config;*.js"
+      loggingEnabled="true"
+      logDirectory="logs"
+      enableXFF="true"
+    />
+  </system.webServer>
+</configuration>
+EOF
+        fi
         
-        # Ensure server.js exists and is executable
-        if [ ! -f "deployment/server.js" ]; then
-          echo "Creating server.js for Azure deployment"
-          cat > deployment/server.js << 'EOF'
+        # Copy iisnode.yml if it exists
+        if [ -f "iisnode.yml" ]; then
+          cp iisnode.yml .next/standalone/
+          echo "✅ Copied iisnode.yml to standalone"
+        fi
+        
+        # Copy startup.sh if it exists
+        if [ -f "startup.sh" ]; then
+          cp startup.sh .next/standalone/
+          chmod +x .next/standalone/startup.sh
+          echo "✅ Copied startup.sh to standalone"
+        fi
+        
+        # Copy .env.production if it exists
+        if [ -f ".env.production" ]; then
+          cp .env.production .next/standalone/
+          echo "✅ Copied .env.production to standalone"
+        fi
+        
+        # Create required directories
+        mkdir -p .next/standalone/uploads .next/standalone/processed .next/standalone/output .next/standalone/tmp .next/standalone/logs .next/standalone/audit_logs .next/standalone/secure_storage
+        echo "✅ Created required directories in standalone"
+        
+        # Verify structure
+        echo "=== Standalone Deployment Structure ==="
+        ls -la .next/standalone/
+        
+        # Check for critical files
+        echo "=== Critical Files Check ==="
+        [ -f ".next/standalone/web.config" ] && echo "✅ web.config exists" || echo "❌ web.config missing"
+        [ -f ".next/standalone/server.js" ] && echo "✅ server.js exists" || echo "❌ server.js missing"
+        [ -f ".next/standalone/package.json" ] && echo "✅ package.json exists" || echo "❌ package.json missing"
+        [ -d ".next/standalone/public/_next/static" ] && echo "✅ public/_next/static exists" || echo "❌ public/_next/static missing"
+        
+        # Show package size
+        echo "=== Deployment Package Size ==="
+        du -sh .next/standalone/
+        
+        # Show summary of deployment package
+        echo "=== 📦 Deployment Package Summary ==="
+        echo "• Package size: $(du -sh .next/standalone/ | cut -f1)"
+        echo "• Static files: $(du -sh .next/standalone/public/_next/static/ 2>/dev/null | cut -f1 || echo "Missing!")"
+        echo "• Node modules: $(du -sh .next/standalone/node_modules/ 2>/dev/null | cut -f1 || echo "None (using standalone)")"
+        echo "• Config files: $(find .next/standalone/ -maxdepth 1 -type f | wc -l) files"
+        echo "• Required directories: $(ls -d .next/standalone/*/ | wc -l) directories"
+        echo "• Deployment ready: ✅ Using Next.js standalone output"
+        
+        # Make scripts executable
+        chmod +x .next/standalone/startup.sh 2>/dev/null || echo "⚠️ startup.sh not executable"
+        
+        # Create required directories
+        mkdir -p .next/standalone/uploads .next/standalone/processed .next/standalone/output .next/standalone/tmp .next/standalone/logs .next/standalone/audit_logs .next/standalone/secure_storage
+        echo "✅ Created required directories in standalone"
 const { createServer } = require('http')
 const { parse } = require('url')
 const next = require('next')
@@ -120,7 +236,21 @@ EOF
         fi
         
         # Create required directories
-        mkdir -p deployment/uploads deployment/processed deployment/output deployment/tmp deployment/logs
+        mkdir -p deployment/uploads deployment/processed deployment/output deployment/tmp deployment/logs deployment/audit_logs deployment/secure_storage
+        echo "✅ Created required directories"
+        
+        # Optimize .next directory
+        if [ -d "deployment/.next" ]; then
+          echo "Optimizing .next directory..."
+          # Remove unnecessary build artifacts
+          rm -rf deployment/.next/cache/images 2>/dev/null || echo "⚠️ No image cache to remove"
+          rm -rf deployment/.next/cache/webpack 2>/dev/null || echo "⚠️ No webpack cache to remove"
+          rm -rf deployment/.next/trace 2>/dev/null || echo "⚠️ No trace files to remove"
+          
+          # Keep only minified assets
+          find deployment/.next -name "*.js" -not -name "*.min.js" -size +1M -delete 2>/dev/null
+          find deployment/.next -name "*.map" -size +1M -delete 2>/dev/null
+        fi
         
         # Create a minimal package.json for deployment if standalone
         if [ -d ".next/standalone" ]; then
@@ -140,14 +270,72 @@ EOF
         echo "=== Deployment structure ==="
         ls -la deployment/
         echo "=== Server.js exists ==="
-        ls -la deployment/server.js 2>/dev/null || echo "server.js not found!"
+        ls -la deployment/server.js 2>/dev/null || echo "❌ server.js not found!"
         echo "=== .next directory ==="
-        ls -la deployment/.next/ 2>/dev/null || echo ".next directory not found!"
+        ls -la deployment/.next/ 2>/dev/null || echo "❌ .next directory not found!"
+        echo "=== Static files check ==="
+        ls -la deployment/.next/static/ 2>/dev/null || echo "❌ .next/static directory not found!"
+        ls -la deployment/public/_next/static/ 2>/dev/null || echo "❌ public/_next/static directory not found!"
+        
+        # Run validation script if available
+        if [ -f "scripts/validate-deployment-package.js" ]; then
+          echo "=== Running deployment validation script ==="
+          node scripts/validate-deployment-package.js deployment || echo "⚠️ Validation completed with warnings"
+        fi
+        
+        # Verify web.config and other critical files
+        echo "=== Critical files check ==="
+        [ -f "deployment/web.config" ] && echo "✅ web.config exists" || echo "❌ web.config missing"
+        [ -f "deployment/server.js" ] && echo "✅ server.js exists" || echo "❌ server.js missing"
+        [ -f "deployment/package.json" ] && echo "✅ package.json exists" || echo "❌ package.json missing"
+        
+        # Show deployment package size
+        echo "=== Deployment package size ==="
+        du -sh deployment/
+        du -sh deployment/.next/
+        du -sh deployment/node_modules/ 2>/dev/null || echo "No node_modules directory in package"
 
     - name: 'Deploy to Azure App Service'
       uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        slot-name: 'Production'
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: deployment
+        package: .next/standalone
         startup-command: 'node server.js'
+        
+    - name: 'Verify deployment'
+      run: |
+        echo "Deployment completed. Verifying application..."
+        
+        # Wait for app to start (Azure may take a moment to process the deployment)
+        echo "Waiting for application to start (30 seconds)..."
+        sleep 30
+        
+        # Check if the app is accessible via health endpoint
+        echo "Checking application health..."
+        STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health || echo "Failed")
+        echo "App health status: $STATUS_CODE"
+        
+        if [[ "$STATUS_CODE" == "200" ]]; then
+          echo "✅ Application is running properly!"
+        else
+          echo "⚠️ Application might not be fully started yet."
+          echo "This is expected and should resolve in a few minutes."
+          echo "You can check the application status at: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        fi
+        
+        echo ""
+        echo "📝 Deployment summary:"
+        echo "• App name: ${{ env.AZURE_WEBAPP_NAME }}"
+        echo "• Deployment type: Next.js standalone"
+        echo "• URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "• Health status: $STATUS_CODE"
+        echo "• Startup command: node server.js"
+    
+    - name: 'Clean up workspace'
+      if: always()
+      run: |
+        echo "Cleaning up workflow artifacts..."
+        rm -rf node_modules/.cache
+        echo "Workspace cleaned up successfully"

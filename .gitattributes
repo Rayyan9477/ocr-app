@@ -1,0 +1,73 @@
+# Set Git attributes for deployment optimization
+
+# Files to exclude from deployment
+*.md              export-ignore
+LICENSE           export-ignore
+.gitignore        export-ignore
+.gitattributes    export-ignore
+.github/          export-ignore
+.vscode/          export-ignore
+__tests__/        export-ignore
+test/             export-ignore
+tests/            export-ignore
+docs/             export-ignore
+*.test.*          export-ignore
+*.spec.*          export-ignore
+jest.config.js    export-ignore
+tsconfig.json     export-ignore
+Dockerfile*       export-ignore
+docker-compose*   export-ignore
+*.config.js       export-ignore
+*.config.ts       export-ignore
+*.config.mjs      export-ignore
+tailwind.config.ts export-ignore
+postcss.config.mjs export-ignore
+jbig2enc/         export-ignore
+check-jbig2.sh    export-ignore
+test-*.sh         export-ignore
+test-*.py         export-ignore
+validate-deployment.js export-ignore
+.eslintrc*        export-ignore
+.prettier*        export-ignore
+.babelrc*         export-ignore
+
+# Important files not to ignore
+!next.config.mjs   -export-ignore
+!server.js         -export-ignore
+!server.cjs        -export-ignore
+!web.config        -export-ignore
+!iisnode.yml       -export-ignore
+!startup.sh        -export-ignore
+
+# Set line endings
+*.js              text eol=lf
+*.jsx             text eol=lf
+*.ts              text eol=lf
+*.tsx             text eol=lf
+*.json            text eol=lf
+*.md              text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.html            text eol=lf
+*.css             text eol=lf
+*.scss            text eol=lf
+*.sh              text eol=lf
+web.config        text eol=lf
+iisnode.yml       text eol=lf
+.env*             text eol=lf
+
+# Binary files
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.ico             binary
+*.woff            binary
+*.woff2           binary
+*.ttf             binary
+*.eot             binary
+*.pdf             binary
+*.zip             binary
+*.gz              binary
+*.tgz             binary
+*.tar             binary

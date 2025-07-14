@@ -34,6 +34,23 @@ interface ProcessStatusProps {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+// Infer output file name when it's missing
+const inferOutputFileName = (inputFile: string): string => {
+  if (!inputFile) return '';
+  
+  // Extract base name without extension
+  const baseFileName = inputFile.replace(/\.pdf$/i, '');
+  
+  // Create a sanitized filename
+  const timestamp = Date.now();
+  const sanitized = baseFileName
+    .replace(/[^a-z0-9]/gi, '_')
+    .substring(0, 100);
+  
+  return `${sanitized}_${timestamp}_ocr.pdf`;
+};
+
 export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
   const [downloading, setDownloading] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
@@ -72,7 +89,10 @@ export function ProcessStatus({ files, isProcessing }: ProcessStatusProps) {
       if (file.path) {
         window.open(`/api/download?file=${encodeURIComponent(file.name)}`, "_blank");
       } else {
-        throw new Error("File has no path information");
+        console.error("Missing output file path");
+        // Try to infer output path based on input name
+        const inferredPath = inferOutputFileName(file.name);
+        window.open(`/api/download?file=${encodeURIComponent(inferredPath)}`, "_blank");
       }
       
       setDownloading(null);

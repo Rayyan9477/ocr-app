@@ -1,0 +1,125 @@
+# Files and directories that should be excluded from deployment
+
+# Version control
+.git/
+.github/
+.gitattributes
+.gitignore
+
+# Editor configurations
+.vscode/
+.idea/
+*.sublime-*
+.editorconfig
+
+# Documentation files
+*.md
+!README.md
+!AZURE_DEPLOYMENT.md
+docs/
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+HIPAA_*.md
+IMPLEMENTATION_*.md
+TESTING_*.md
+TESSERACT_*.md
+FILE_DOWNLOAD_*.md
+PROJECT_*.md
+
+# Development and testing
+__tests__/
+test/
+tests/
+*.test.*
+*.spec.*
+jest.config.js
+jest.setup.js
+cypress.json
+cypress/
+coverage/
+test-*.sh
+test-*.py
+test-admin-only.sh
+test-all-routes.sh
+test-file-download.sh
+test-hipaa-api.py
+test-hipaa-complete.sh
+test-ocr-functionality.sh
+test-user-management.sh
+validate-deployment.js
+
+# Build artifacts
+.next/cache/
+.next/trace/
+.next/server/*.map
+node_modules/
+node_modules/.bin/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Development configs
+*.config.js
+*.config.ts
+*.config.mjs
+postcss.config.mjs
+tailwind.config.ts
+!next.config.mjs
+
+# Source maps
+**/*.map
+
+# TypeScript source (keep declaration files)
+*.ts
+*.tsx
+!*.d.ts
+!next-env.d.ts
+tsconfig.json
+tsconfig.*.json
+
+# Temporary files and logs
+tmp/
+*.tmp
+logs/
+audit_logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+cleanup.log
+
+# Runtime generated files and directories
+processed/
+uploads/
+output/
+secure_storage/
+*.backup
+*.bak
+
+# Environment variables
+.env
+.env.*
+!.env.production
+
+# Docker related
+Dockerfile
+Dockerfile.production
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore
+get-docker.sh
+
+# Project-specific
+jbig2enc/
+check-jbig2.sh
+demo-hipaa-app.sh
+cookies.txt
+components.json
+
+# Keep essential files
+!server.js
+!server.cjs
+!web.config
+!iisnode.yml
+!startup.sh
+!ensure-permissions.sh

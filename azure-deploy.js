@@ -4,7 +4,7 @@ const { ResourceManagementClient } = require("@azure/arm-resources");
 
 const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
 const resourceGroupName = "ocr-app-rg";
-const webAppName = "ocr-app-" + Math.random().toString(36).substring(7);
+const webAppName = "ocr-app-service";
 const location = "eastus";
 
 async function main() {
@@ -47,11 +47,11 @@ async function main() {
         location: location,
         serverFarmId: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroupName}/providers/Microsoft.Web/serverfarms/${planName}`,
         siteConfig: {
-          linuxFxVersion: "NODE|18-lts",
+          linuxFxVersion: "NODE|20-lts",
           appSettings: [
             {
               name: "WEBSITE_NODE_DEFAULT_VERSION",
-              value: "~18",
+              value: "~20",
             },
             {
               name: "SCM_DO_BUILD_DURING_DEPLOYMENT",

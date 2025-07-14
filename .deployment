@@ -3,3 +3,4 @@ project = .
 SCM_DO_BUILD_DURING_DEPLOYMENT = true
 SCM_BUILD_ARGS = --no-optional
 command = node server.js
+WEBSITE_NODE_DEFAULT_VERSION = ~20
