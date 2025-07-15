@@ -4,7 +4,7 @@ name: Build and Deploy OCR App to Azure
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "recovered-changes" ]
   workflow_dispatch:
 
 permissions:
@@ -96,11 +96,14 @@ jobs:
 
     - name: Create optimized deployment package
       run: |
-        # Make deployment script executable
-        chmod +x ./create-deployment-package.sh
+        # Install zip utility if not available
+        sudo apt-get install -y zip
         
-        # Create deployment package with comprehensive error handling
-        ./create-deployment-package.sh 2>&1 | tee deployment.log
+        # Use final deployment script for reliable packaging
+        chmod +x ./create-deployment-package-final.sh
+        
+        # Create deployment package
+        ./create-deployment-package-final.sh 2>&1 | tee deployment.log
         
         # Verify deployment package was created
         if [ ! -f "deployment.zip" ]; then
@@ -110,11 +113,10 @@ jobs:
           exit 1
         fi
         
-        # Show package size and contents summary
+        # Show package info
         echo "✅ Deployment package created successfully"
         echo "Package size: $(du -h deployment.zip | cut -f1)"
-        echo "Package contents preview:"
-        unzip -l deployment.zip | head -20
+        echo "Critical files verified in deployment log above"
 
     - name: Deploy to Azure App Service
       uses: azure/webapps-deploy@v3
