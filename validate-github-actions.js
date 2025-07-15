@@ -251,7 +251,9 @@ class WorkflowValidator {
   validateSecrets(workflow) {
     const workflowContent = fs.readFileSync(this.workflowPath, 'utf8');
     
-    if (workflowContent.includes('AZURE_WEBAPP_PUBLISH_PROFILE')) {
+    if (workflowContent.includes('AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF')) {
+      this.addCheck('✅ Azure publish profile secret referenced');
+    } else if (workflowContent.includes('AZURE_WEBAPP_PUBLISH_PROFILE')) {
       this.addCheck('✅ Azure publish profile secret referenced');
     } else {
       this.addError('Missing Azure publish profile secret');
