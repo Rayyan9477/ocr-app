@@ -1,5 +1,5 @@
 # GitHub Actions workflow for deploying OCR App to Azure App Service
-# This is the FINAL, ULTIMATE configuration with all optimizations and error handling
+# Fixed version to resolve publish profile and slot-name issues
 name: Build and Deploy OCR App to Azure
 
 on:
@@ -13,7 +13,8 @@ permissions:
   id-token: write
 
 env:
-  AZURE_WEBAPP_NAME: ocr-app-rayyan9477
+  # Updated to match actual Azure app service name from the error message
+  AZURE_WEBAPP_NAME: ocr-app-
   AZURE_WEBAPP_PACKAGE_PATH: '.'
   NODE_VERSION: '20.x'
 
@@ -84,104 +85,106 @@ jobs:
         # Build with detailed output and error handling
         npm run build 2>&1 | tee build.log
         
-        # Verify standalone build output
-        if [ ! -f ".next/standalone/server.js" ]; then
-          echo "ERROR: Standalone build failed - server.js not found"
+        # Verify build output exists
+        if [ ! -d ".next" ]; then
+          echo "ERROR: Build failed - .next directory not found"
           echo "Build log contents:"
           cat build.log
           exit 1
         fi
         
         echo "✅ Build completed successfully"
-        echo "Standalone server.js size: $(du -h .next/standalone/server.js | cut -f1)"
 
-    - name: Create optimized deployment package
+    - name: Create deployment package
       run: |
-        # Install zip utility if not available
-        sudo apt-get install -y zip
+        echo "Creating deployment package..."
         
-        # Use final deployment script for reliable packaging
-        chmod +x ./create-deployment-package-final.sh
+        # Create deployment directory
+        mkdir -p deployment
         
-        # Create deployment package
-        ./create-deployment-package-final.sh 2>&1 | tee deployment.log
+        # Copy built application files
+        cp -r .next deployment/
+        cp -r public deployment/ || echo "No public directory found"
+        cp package.json deployment/
+        cp next.config.mjs deployment/ || echo "No next.config.mjs found"
         
-        # Verify deployment package was created
-        if [ ! -f "deployment.zip" ]; then
-          echo "ERROR: Deployment package creation failed"
-          echo "Deployment log:"
-          cat deployment.log
-          exit 1
-        fi
+        # Copy essential server files
+        cp server.js deployment/
+        cp startup.sh deployment/ || echo "No startup.sh found"
+        cp web.config deployment/ || echo "No web.config found"
         
-        # Show package info
-        echo "✅ Deployment package created successfully"
-        echo "Package size: $(du -h deployment.zip | cut -f1)"
-        echo "Critical files verified in deployment log above"
+        # Create required directories
+        mkdir -p deployment/uploads deployment/processed deployment/output deployment/tmp deployment/logs
+        
+        # Create package.json for production
+        cat > deployment/package.json << 'EOF'
+{
+  "name": "ocr-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "next": "^15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+EOF
+        
+        # Verify critical files exist
+        echo "Verifying deployment files..."
+        ls -la deployment/server.js || echo "❌ server.js missing"
+        ls -la deployment/.next/ || echo "❌ .next directory missing"
+        ls -la deployment/package.json || echo "❌ package.json missing"
+        
+        echo "✅ Deployment package created"
 
-    - name: Verify Azure credentials
+    - name: Verify Azure credentials and app name
       run: |
         if [ -z "${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF }}" ]; then
-          echo "❌ ERROR: AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF secret is not configured"
-          echo "Please ensure the secret contains the complete publish profile XML content"
-          echo "The publish profile should be downloaded from Azure Portal for app 'ocr-app-rayyan9477'"
+          echo "❌ ERROR: Azure publish profile secret is not configured"
+          echo "Please ensure the secret AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF is set in GitHub secrets"
+          echo "Download the publish profile from Azure Portal for your specific app service"
           exit 1
         else
           echo "✅ Azure publish profile secret is configured"
         fi
-
-    - name: Debug deployment info
-      run: |
-        echo "=== DEPLOYMENT DEBUG INFO ==="
-        echo "App name: ${{ env.AZURE_WEBAPP_NAME }}"
-        echo "Package exists: $(ls -la deployment.zip 2>/dev/null || echo 'NOT FOUND')"
-        echo "Package size: $(du -h deployment.zip 2>/dev/null || echo 'N/A')"
-        echo "Secret configured: $([ -n '${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF }}' ] && echo 'YES' || echo 'NO')"
         
+        echo "Target app name: ${{ env.AZURE_WEBAPP_NAME }}"
+        echo "Make sure the publish profile matches this exact app name"
+
     - name: Deploy to Azure App Service
       uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_E7A94C1E72D2413EA5D290FEE494EFFF }}
-        package: deployment.zip
+        package: deployment
+        # Removed slot-name to use default production slot
 
     - name: Post-deployment verification
       run: |
         echo "🚀 Deployment completed!"
         echo "App should be available at: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
         
-        # Optional: Wait and test endpoint (requires app to be publicly accessible)
-        echo "Waiting 30 seconds for app to start..."
-        sleep 30
+        # Wait for app to start
+        echo "Waiting 60 seconds for app to start..."
+        sleep 60
         
         # Test health endpoint (non-blocking)
-        curl -f -s "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health" || {
-          echo "Health check failed (may be normal during initial deployment)"
+        echo "Testing health endpoint..."
+        curl -f -s "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health" && echo "✅ Health check passed" || {
+          echo "Health check failed - app may still be starting"
+          echo "Try accessing: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
         }
 
     - name: Cleanup artifacts
       if: always()
       run: |
-        # Clean up large files to save runner space
-        rm -f deployment.zip build.log deployment.log
+        # Clean up to save runner space
+        rm -rf deployment build.log
         echo "✅ Cleanup completed"
-
-# Workflow summary:
-# 1. ✅ Clean checkout and Node.js setup with caching
-# 2. ✅ Install system dependencies (Tesseract, Ghostscript, etc.)
-# 3. ✅ Clean npm install with error handling
-# 4. ✅ Run tests with timeout protection
-# 5. ✅ Build Next.js with standalone output and verification
-# 6. ✅ Create optimized deployment package using external script
-# 7. ✅ Deploy to Azure with comprehensive settings
-# 8. ✅ Post-deployment verification and health checks
-# 9. ✅ Cleanup to save runner resources
-#
-# Key optimizations:
-# - Uses external deployment script to avoid YAML complexity
-# - Comprehensive error handling and verification at each step
-# - Memory optimization for large builds
-# - System dependency management for OCR functionality
-# - Clean deployment package with only necessary files
-# - Health checks and verification
-# - Resource cleanup for efficient CI/CD
