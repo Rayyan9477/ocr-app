@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next dev",
-    "build": "next build",
+    "dev": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && npx next dev",
+    "build": "npx next build",
     "start": "node server.js",
     "start:azure": "chmod +x ./start.sh && ./start.sh",
-    "start:next": "next start",
+    "start:next": "npx next start",
     "start:custom": "node server.cjs",
-    "start:local": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && next start",
-    "lint": "next lint",
+    "start:local": "chmod +x ./ensure-permissions.sh ./check-jbig2.sh && ./ensure-permissions.sh && npx next start",
+    "lint": "npx next lint",
     "check-jbig2": "chmod +x ./check-jbig2.sh && ./check-jbig2.sh",
     "setup-deps": "apt-get update && apt-get install -y imagemagick pdftk && sed -i 's/rights=\"none\" pattern=\"PDF\"/rights=\"read|write\" pattern=\"PDF\"/' /etc/ImageMagick-6/policy.xml || true",
     "test": "jest --passWithNoTests --verbose",
@@ -109,9 +109,11 @@
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.14",
     "@types/multer": "^1.4.12",
-    "@types/node": "^22.15.34",
-    "@types/react": "^18.2.0",
+    "@types/node": "22.16.4",
+    "@types/react": "18.3.23",
     "@types/react-dom": "^18.2.0",
+    "eslint": "9.31.0",
+    "eslint-config-next": "15.4.1",
     "glob": "^11.0.3",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
@@ -120,7 +122,7 @@
     "rimraf": "^6.0.1",
     "tailwindcss": "^3.4.17",
     "ts-jest": "^29.4.0",
-    "typescript": "^5"
+    "typescript": "5.8.3"
   },
   "jest": {
     "preset": "ts-jest",
@@ -134,13 +136,24 @@
       "/build/",
       "/deployment/"
     ],
-    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ],
     "transform": {
-      "^.+\\.(ts|tsx)$": ["ts-jest", {
-        "useESM": false
-      }]
+      "^.+\\.(ts|tsx)$": [
+        "ts-jest",
+        {
+          "useESM": false
+        }
+      ]
     },
-    "moduleFileExtensions": ["ts", "tsx", "js", "jsx", "json"],
+    "moduleFileExtensions": [
+      "ts",
+      "tsx",
+      "js",
+      "jsx",
+      "json"
+    ],
     "collectCoverageFrom": [
       "**/*.{ts,tsx}",
       "!**/*.d.ts",
