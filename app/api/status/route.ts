@@ -5,7 +5,7 @@ import { existsSync } from "fs"
 import os from "os"
 
 // Helper function to create consistent JSON responses
-const createJsonResponse = (data: any, status: number = 200) => {
+const createJsonResponse = (data: Record<string, unknown>, status: number = 200) => {
   return new NextResponse(
     JSON.stringify(data),
     {

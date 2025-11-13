@@ -66,11 +66,16 @@ export function useChunkErrorHandler() {
     
     // Set up global error handler
     window.onerror = function(message, source, lineno, colno, error) {
-      return handleChunkError(error || new Error(String(message)))
+      // Create an ErrorEvent-like object for handleChunkError
+      const errorEvent = {
+        error: error || new Error(String(message)),
+        preventDefault: () => {},
+      } as ErrorEvent
+      return handleChunkError(errorEvent)
     }
-    
+
     // Also handle promise rejections related to chunks
-    window.addEventListener('unhandledrejection', (event) => {
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const error = event.reason
       if (error && (
         error.message?.includes('ChunkLoadError') ||
@@ -84,12 +89,14 @@ export function useChunkErrorHandler() {
         }, 100)
         event.preventDefault()
       }
-    })
-    
+    }
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+
     // Cleanup
     return () => {
       window.onerror = originalErrorHandler
-      window.removeEventListener('unhandledrejection', handleChunkError)
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
   }, [])
   

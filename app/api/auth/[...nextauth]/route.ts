@@ -19,8 +19,8 @@ const handler = NextAuth({
         try {
           // Authenticate using our HIPAA auth service
           const result = await authService.authenticate(credentials.email, credentials.password);
-          
-          if (!result.success) {
+
+          if (!result || !result.success) {
             return null;
           }
 
@@ -48,14 +48,14 @@ const handler = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = user.role;
+        token.role = (user as any).role;
       }
       return token;
     },
     async session({ session, token }) {
-      if (token) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as string;
+      if (token && session.user) {
+        (session.user as any).id = token.id as string;
+        (session.user as any).role = token.role as string;
       }
       return session;
     }

@@ -70,9 +70,9 @@ export function OCRProcessingStatus({ processId }: { processId: string }) {
         toast({
           title: 'Processing Error',
           description: data.details.error,
-          variant: 'destructive'
+          variant: 'error'
         });
-        
+
         eventSource.close();
       }
     };
@@ -82,7 +82,7 @@ export function OCRProcessingStatus({ processId }: { processId: string }) {
       toast({
         title: 'Connection Error',
         description: 'Lost connection to processing stream',
-        variant: 'destructive'
+        variant: 'error'
       });
       eventSource.close();
     };

@@ -4,7 +4,7 @@ import { authService, auditLogger } from '@/lib/hipaa-auth-singleton';
 export async function POST(request: NextRequest) {
   try {
     const { email, password, mfaCode } = await request.json();
-    const ipAddress = request.ip || 'unknown';
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
     const userAgent = request.headers.get('user-agent') || 'unknown';
 
     // Validate input
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       resource: 'auth',
       outcome: 'FAILURE',
       details: { error: error instanceof Error ? error.message : 'Unknown error' },
-      ipAddress: request.ip || 'unknown',
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
       userAgent: request.headers.get('user-agent') || 'unknown',
       sessionId: 'none'
     });

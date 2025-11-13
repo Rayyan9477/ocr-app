@@ -49,7 +49,7 @@ export function loadConfig(): SimpleOCRConfig {
     logger.info('Loaded Simple OCR configuration');
     return config!;
   } catch (error) {
-    logger.warn('Failed to load config, using defaults:', error);
+    logger.warn(`Failed to load config, using defaults: ${error instanceof Error ? error.message : String(error)}`);
 
     // Return default configuration
     config = {

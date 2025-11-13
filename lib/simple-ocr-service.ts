@@ -162,7 +162,7 @@ export class SimpleOCRService {
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      logger.error('PDF OCR processing failed:', error);
+      logger.error(`PDF OCR processing failed: ${error instanceof Error ? error.message : String(error)}`);
 
       return {
         success: false,
@@ -196,7 +196,7 @@ export class SimpleOCRService {
         pageCount: 1
       };
     } catch (error) {
-      logger.error('Image OCR processing failed:', error);
+      logger.error(`Image OCR processing failed: ${error instanceof Error ? error.message : String(error)}`);
 
       return {
         success: false,
@@ -241,7 +241,7 @@ export class SimpleOCRService {
       logger.info(`Searchable PDF created: ${outputPath}`);
       return outputPath;
     } catch (error) {
-      logger.error('Failed to create searchable PDF:', error);
+      logger.error(`Failed to create searchable PDF: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
