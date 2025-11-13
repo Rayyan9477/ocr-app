@@ -1,14 +1,9 @@
 import { NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { writeFile, unlink } from "fs/promises";
+import { writeFile, unlink, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
-import appConfig from "@/lib/config";
 
-const execPromise = promisify(exec);
-
-// Add a helper function to create consistent JSON responses
+// Helper function to create consistent JSON responses
 const createJsonResponse = (data: any, status: number = 200) => {
   return new NextResponse(
     JSON.stringify(data),
@@ -23,18 +18,17 @@ const createJsonResponse = (data: any, status: number = 200) => {
 
 interface DependencyCheck {
   name: string;
-  command: string;
+  module: string;
   version?: string;
   available: boolean;
   error?: string;
-  optional?: boolean;
+  type: 'required' | 'optional';
 }
 
 interface DirectoryStatus {
   path: string;
   exists: boolean;
   writable: boolean;
-  permissions?: string;
   error?: string;
 }
 
@@ -43,157 +37,130 @@ export async function GET() {
     const dependencies: DependencyCheck[] = [];
     const directories: DirectoryStatus[] = [];
 
-    // Check OCRmyPDF
+    // Check tesseract.js (required for OCR)
     try {
-      const { stdout: ocrVersion } = await execPromise("ocrmypdf --version");
+      const tesseract = await import('tesseract.js');
       dependencies.push({
-        name: "OCRmyPDF",
-        command: "ocrmypdf",
-        version: ocrVersion.trim(),
-        available: true
+        name: "Tesseract.js",
+        module: "tesseract.js",
+        version: "6.0.1", // From package.json
+        available: true,
+        type: 'required'
       });
     } catch (error) {
       dependencies.push({
-        name: "OCRmyPDF",
-        command: "ocrmypdf",
-        available: false,
-        error: (error as Error).message
-      });
-    }
-
-    // Check Tesseract
-    try {
-      const { stdout: tessVersion } = await execPromise("tesseract --version");
-      const versionMatch = tessVersion.match(/tesseract ([0-9.]+)/i);
-      dependencies.push({
-        name: "Tesseract OCR",
-        command: "tesseract",
-        version: versionMatch ? versionMatch[1] : tessVersion.trim().split("\n")[0],
-        available: true
-      });
-    } catch (error) {
-      dependencies.push({
-        name: "Tesseract OCR",
-        command: "tesseract",
-        available: false,
-        error: (error as Error).message
-      });
-    }
-
-    // Check Ghostscript
-    try {
-      const { stdout: gsVersion } = await execPromise("gs --version");
-      dependencies.push({
-        name: "Ghostscript",
-        command: "gs",
-        version: gsVersion.trim(),
-        available: true
-      });
-    } catch (error) {
-      dependencies.push({
-        name: "Ghostscript",
-        command: "gs",
-        available: false,
-        error: (error as Error).message
-      });
-    }
-
-    // Check jbig2
-    try {
-      // First check if it's in the standard path
-      let jbig2Path = '/usr/bin/jbig2';
-      let jbig2Version = '';
-      let jbig2Found = false;
-      
-      // Try standard path first
-      try {
-        const { stdout } = await execPromise(`/usr/bin/jbig2 --version`);
-        jbig2Version = stdout.trim();
-        jbig2Path = '/usr/bin/jbig2';
-        jbig2Found = true;
-      } catch {
-        // Try configured path if standard path fails
-        try {
-          const { stdout } = await execPromise(`${appConfig.jbig2Path} --version`);
-          jbig2Version = stdout.trim();
-          jbig2Path = appConfig.jbig2Path;
-          jbig2Found = true;
-        } catch {
-          // Try using 'which' to find the binary
-          try {
-            const { stdout: whichOutput } = await execPromise('which jbig2');
-            jbig2Path = whichOutput.trim();
-            const { stdout } = await execPromise(`${jbig2Path} --version`);
-            jbig2Version = stdout.trim();
-            jbig2Found = true;
-          } catch {
-            jbig2Found = false;
-          }
-        }
-      }
-      
-      dependencies.push({
-        name: "jbig2enc",
-        command: jbig2Path,
-        version: jbig2Found ? jbig2Version : undefined,
-        available: jbig2Found,
-        error: jbig2Found ? undefined : "jbig2 not found or not working. Install with: sudo apt install jbig2",
-        optional: true // Mark as optional but improves PDF compression
-      });
-    } catch (error) {
-      dependencies.push({
-        name: "jbig2enc",
-        command: appConfig.jbig2Path,
+        name: "Tesseract.js",
+        module: "tesseract.js",
         available: false,
         error: (error as Error).message,
-        optional: true // Mark as optional
+        type: 'required'
       });
     }
 
-    // Check unpaper
+    // Check pdf-lib (required for PDF processing)
     try {
-      const { stdout: unpaperVersion } = await execPromise("unpaper --version || echo 'not found'");
-      const available = !unpaperVersion.includes('not found');
+      const pdfLib = await import('pdf-lib');
       dependencies.push({
-        name: "unpaper",
-        command: "unpaper",
-        version: available ? unpaperVersion.trim() : undefined,
-        available: available,
-        error: available ? undefined : "unpaper not found",
-        optional: true // Mark as optional
+        name: "PDF-Lib",
+        module: "pdf-lib",
+        version: "1.17.1", // From package.json
+        available: true,
+        type: 'required'
       });
     } catch (error) {
       dependencies.push({
-        name: "unpaper",
-        command: "unpaper",
+        name: "PDF-Lib",
+        module: "pdf-lib",
         available: false,
         error: (error as Error).message,
-        optional: true // Mark as optional
+        type: 'required'
+      });
+    }
+
+    // Check sharp (required for image processing)
+    try {
+      const sharp = await import('sharp');
+      dependencies.push({
+        name: "Sharp",
+        module: "sharp",
+        version: "0.33.2", // From package.json
+        available: true,
+        type: 'required'
+      });
+    } catch (error) {
+      dependencies.push({
+        name: "Sharp",
+        module: "sharp",
+        available: false,
+        error: (error as Error).message,
+        type: 'required'
+      });
+    }
+
+    // Check Simple OCR Service
+    try {
+      const simpleOCR = await import('@/lib/simple-ocr-service');
+      dependencies.push({
+        name: "Simple OCR Service",
+        module: "@/lib/simple-ocr-service",
+        available: true,
+        type: 'required'
+      });
+    } catch (error) {
+      dependencies.push({
+        name: "Simple OCR Service",
+        module: "@/lib/simple-ocr-service",
+        available: false,
+        error: (error as Error).message,
+        type: 'required'
       });
     }
 
     // Check directory permissions
     const uploadDir = join(process.cwd(), "uploads");
     const processedDir = join(process.cwd(), "processed");
-    
+
+    // Ensure directories exist
+    await ensureDirectory(uploadDir);
+    await ensureDirectory(processedDir);
+
     const uploadDirStatus = await checkDirectoryPermissions(uploadDir);
     const processedDirStatus = await checkDirectoryPermissions(processedDir);
-    
+
     directories.push(uploadDirStatus);
     directories.push(processedDirStatus);
 
+    // Check Node.js environment
+    const nodeVersion = process.version;
+    const platform = process.platform;
+    const arch = process.arch;
+
+    const allRequired = dependencies
+      .filter(dep => dep.type === 'required')
+      .every(dep => dep.available);
+
+    const directoriesOk = directories.every(dir => dir.writable);
+
     return createJsonResponse({
       success: true,
+      system: {
+        type: "Simple OCR (Cross-Platform)",
+        description: "JavaScript-only OCR using tesseract.js, pdf-lib, and sharp",
+        platform,
+        arch,
+        nodeVersion,
+        noDependencies: "No system dependencies required!"
+      },
       dependencies,
       directories,
-      // Only required dependencies must be available for the system to work
-      allRequiredAvailable: dependencies
-        .filter(dep => !dep.optional)
-        .every(dep => dep.available),
-      // Include overall status too
-      allDependenciesAvailable: dependencies.every(dep => dep.available),
-      // Directory permissions status
-      directoriesOk: directories.every(dir => dir.writable)
+      status: {
+        allRequiredAvailable: allRequired,
+        directoriesOk,
+        ready: allRequired && directoriesOk
+      },
+      message: allRequired && directoriesOk
+        ? "✓ All dependencies available - OCR service ready!"
+        : "⚠ Some dependencies missing - check details above"
     });
   } catch (error) {
     console.error("Error checking dependencies:", error);
@@ -205,8 +172,15 @@ export async function GET() {
   }
 }
 
+// Ensure directory exists
+async function ensureDirectory(dirPath: string): Promise<void> {
+  if (!existsSync(dirPath)) {
+    await mkdir(dirPath, { recursive: true });
+  }
+}
+
 // Check directory permissions
-const checkDirectoryPermissions = async (dirPath: string): Promise<DirectoryStatus> => {
+async function checkDirectoryPermissions(dirPath: string): Promise<DirectoryStatus> {
   if (!existsSync(dirPath)) {
     return {
       path: dirPath,
@@ -218,24 +192,14 @@ const checkDirectoryPermissions = async (dirPath: string): Promise<DirectoryStat
 
   try {
     // Check if directory is writable by writing a test file
-    const testFile = join(dirPath, "test-permission-check.txt");
+    const testFile = join(dirPath, ".write-test");
     await writeFile(testFile, "test");
     await unlink(testFile);
-    
-    // Get directory permissions for reporting
-    let permissions: string | undefined = undefined;
-    try {
-      const { stdout } = await execPromise(`ls -la "${dirPath}" | head -n 2 | tail -n 1`);
-      permissions = stdout.trim() || undefined;
-    } catch (e) {
-      // Continue if getting permissions fails
-    }
-    
+
     return {
       path: dirPath,
       exists: true,
-      writable: true, 
-      permissions,
+      writable: true
     };
   } catch (error) {
     return {
@@ -245,4 +209,4 @@ const checkDirectoryPermissions = async (dirPath: string): Promise<DirectoryStat
       error: (error as Error).message
     };
   }
-};
+}
