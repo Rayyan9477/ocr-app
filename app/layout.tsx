@@ -1,7 +1,6 @@
 import type React from "react"
 import "./globals.css"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { NextAuthProvider } from "@/components/auth/next-auth-provider"
@@ -12,8 +11,6 @@ const ClientErrorBoundary = dynamic(
   () => import('@/components/client-error-boundary'),
   { ssr: true }
 )
-
-const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "OCR Application",
@@ -33,7 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className="font-sans">
         <ClientErrorBoundary>
           <NextAuthProvider>
             <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>

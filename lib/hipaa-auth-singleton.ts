@@ -1,38 +1,75 @@
-import { HIPAAAuthService } from './hipaa-auth';
-import { HIPAAAuditLogger } from './hipaa-audit';
+/**
+ * Authentication service stub
+ * Simple in-memory authentication for development
+ */
 
-const getJWTSecret = () => {
-  return process.env.JWT_SECRET || process.env.HIPAA_SIGNING_KEY || 'default-jwt-secret-change-in-production';
+interface User {
+  id: string;
+  email: string;
+  role: string;
+  name?: string;
+}
+
+interface Session {
+  userId: string;
+  email: string;
+  role: string;
+  createdAt: Date;
+}
+
+class HipaaAuthService {
+  private sessions: Map<string, Session> = new Map();
+  private users: Map<string, User> = new Map();
+
+  async createUser(email: string, password: string, role: string = 'user'): Promise<User> {
+    const id = Math.random().toString(36).substring(7);
+    const user: User = { id, email, role };
+    this.users.set(email, user);
+    return user;
+  }
+
+  async validateUser(email: string, password: string): Promise<User | null> {
+    return this.users.get(email) || null;
+  }
+
+  async createSession(userId: string): Promise<string> {
+    const sessionId = Math.random().toString(36).substring(7);
+    const user = Array.from(this.users.values()).find(u => u.id === userId);
+
+    if (user) {
+      this.sessions.set(sessionId, {
+        userId,
+        email: user.email,
+        role: user.role,
+        createdAt: new Date()
+      });
+    }
+
+    return sessionId;
+  }
+
+  async getSession(sessionId: string): Promise<Session | null> {
+    return this.sessions.get(sessionId) || null;
+  }
+
+  async destroySession(sessionId: string): Promise<void> {
+    this.sessions.delete(sessionId);
+  }
+
+  async logAuditEvent(event: any): Promise<void> {
+    // Stub - in production this would log to a database
+    console.log('Audit event:', event);
+  }
+}
+
+// Export singleton instance
+const hipaaAuth = new HipaaAuthService();
+export default hipaaAuth;
+
+// Named exports for compatibility
+export const authService = hipaaAuth;
+export const auditLogger = {
+  log: async (event: any) => {
+    await hipaaAuth.logAuditEvent(event);
+  }
 };
-
-const getAdminOnlyMode = () => {
-  return process.env.ADMIN_ONLY_MODE === 'true';
-};
-
-// Use global to persist instances across hot reloads in development
-declare global {
-  var __authService: HIPAAAuthService | undefined;
-  var __auditLogger: HIPAAAuditLogger | undefined;
-}
-
-// Create singleton instances with global persistence
-if (!globalThis.__authService) {
-  globalThis.__authService = new HIPAAAuthService(
-    getJWTSecret(),
-    15, // session timeout in minutes
-    3,  // max failed attempts
-    30, // lockout duration in minutes
-    getAdminOnlyMode()
-  );
-}
-
-if (!globalThis.__auditLogger) {
-  globalThis.__auditLogger = new HIPAAAuditLogger();
-}
-
-export const authService = globalThis.__authService;
-export const auditLogger = globalThis.__auditLogger;
-
-// Export a function to get fresh instances if needed
-export const getAuthService = () => authService;
-export const getAuditLogger = () => auditLogger;

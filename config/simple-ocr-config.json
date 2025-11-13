@@ -1,0 +1,36 @@
+{
+  "ocr": {
+    "defaultLanguage": "eng",
+    "supportedLanguages": [
+      "eng",
+      "fra",
+      "deu",
+      "spa",
+      "por",
+      "ita",
+      "rus",
+      "chi_sim",
+      "jpn",
+      "kor"
+    ],
+    "defaultOptions": {
+      "deskew": true,
+      "enhanceContrast": true,
+      "removeNoise": true
+    },
+    "processing": {
+      "maxFileSize": "50MB",
+      "timeout": 300000,
+      "imageDensity": 300
+    }
+  },
+  "storage": {
+    "uploadDir": "uploads",
+    "processedDir": "processed",
+    "retentionDays": 7
+  },
+  "performance": {
+    "workerReuse": true,
+    "maxConcurrentJobs": 5
+  }
+}
