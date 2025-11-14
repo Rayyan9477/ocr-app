@@ -11,7 +11,8 @@
     "test": "jest --passWithNoTests --verbose",
     "test:watch": "jest --watch --passWithNoTests",
     "clean": "rimraf .next node_modules",
-    "postinstall": "echo 'Install completed - Simple OCR ready to use'"
+    "postinstall": "echo 'Install completed - Simple OCR ready to use'",
+    "setup:tessdata": "node scripts/setup-tessdata.mjs"
   },
   "dependencies": {
     "@azure/arm-appservice": "^17.0.0",

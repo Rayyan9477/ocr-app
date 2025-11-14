@@ -54,7 +54,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Rate limiting
-  const ip = request.ip ?? 'unknown'
+  const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
   const rateLimit = {
     window: parseInt(process.env.RATE_LIMIT_WINDOW ?? '15'),
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS ?? '100')

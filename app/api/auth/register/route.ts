@@ -4,7 +4,7 @@ import { authService, auditLogger } from '@/lib/hipaa-auth-singleton';
 export async function POST(request: NextRequest) {
   try {
     const { email, password, role = 'user' } = await request.json();
-    const ipAddress = request.ip || 'unknown';
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
     const userAgent = request.headers.get('user-agent') || 'unknown';
 
     // Check if we're in admin-only mode

@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     
     // Promise to track the completion of the zip creation
     const archiveComplete = new Promise((resolve, reject) => {
-      output.on('close', resolve);
+      output.on('close', () => resolve(undefined));
       output.on('error', reject);
       archive.on('error', reject);
     });
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     // Clean up the temporary zip file
     const { unlink } = await import('fs/promises');
     await unlink(zipFilePath).catch(err => {
-      logger.error("Error deleting temporary zip file:", err);
+      logger.error(`Error deleting temporary zip file: ${err instanceof Error ? err.message : String(err)}`);
       // Don't throw, as we still want to return the zip to the user
     });
 
@@ -103,10 +103,13 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    logger.error("Error creating zip file:", error);
+    logger.error(`Error creating zip file: ${error instanceof Error ? error.message : String(error)}`);
     return new NextResponse(
-      JSON.stringify({ error: "Failed to create ZIP archive", details: error.message }), 
-      { 
+      JSON.stringify({
+        error: "Failed to create ZIP archive",
+        details: error instanceof Error ? error.message : String(error)
+      }),
+      {
         status: 500,
         headers: {
           'Content-Type': 'application/json'

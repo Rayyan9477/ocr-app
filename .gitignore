@@ -17,11 +17,13 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env*
+# env files (but keep .env.example)
 .env
-.env.*
-.env-*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
 
 # vercel
 .vercel
@@ -48,6 +50,11 @@ test_*.png
 test_*.jpg
 test_*.tif
 test_*.tiff
+
+# Tesseract language data (download with npm run setup:tessdata)
+public/tessdata/
+*.traineddata
+*.traineddata.gz
 
 # Integration test files
 *-integration.js

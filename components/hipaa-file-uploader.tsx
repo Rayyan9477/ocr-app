@@ -176,7 +176,7 @@ export function HIPAAFileUploader({ onFilesProcessed, className }: HIPAAFileUplo
           toast({
             title: 'Some Files Failed',
             description: `${failedFiles.length} file(s) failed to process`,
-            variant: 'destructive',
+            variant: 'error',
           });
         }
       } else {
@@ -187,7 +187,7 @@ export function HIPAAFileUploader({ onFilesProcessed, className }: HIPAAFileUplo
       toast({
         title: 'Processing Error',
         description: error instanceof Error ? error.message : 'An error occurred',
-        variant: 'destructive',
+        variant: 'error',
       });
     } finally {
       // Clear files after processing attempt

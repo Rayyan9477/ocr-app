@@ -38,7 +38,7 @@ async function ensureDirectories() {
 /**
  * Create JSON response helper
  */
-function createJsonResponse(data: any, status: number = 200) {
+function createJsonResponse(data: Record<string, unknown>, status: number = 200) {
   return NextResponse.json(data, { status });
 }
 
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
       message: 'OCR processing completed successfully'
     });
   } catch (error) {
-    logger.error('OCR processing error:', error);
+    logger.error(`OCR processing error: ${error instanceof Error ? error.message : String(error)}`);
 
     return createJsonResponse(
       {

@@ -28,10 +28,10 @@ export async function POST(request: NextRequest) {
       action: 'USER_LOGOUT',
       resource: 'auth',
       outcome: 'SUCCESS',
-      details: { sessionId: session.id },
-      ipAddress: request.ip || 'unknown',
+      details: { sessionId: 'session-id-placeholder' },
+      ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown',
       userAgent: request.headers.get('user-agent') || 'unknown',
-      sessionId: session.id
+      sessionId: 'session-id-placeholder'
     });
 
     // Revoke session
