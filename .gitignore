@@ -51,6 +51,11 @@ test_*.jpg
 test_*.tif
 test_*.tiff
 
+# Tesseract language data (download with npm run setup:tessdata)
+public/tessdata/
+*.traineddata
+*.traineddata.gz
+
 # Integration test files
 *-integration.js
 *-integration-*.js

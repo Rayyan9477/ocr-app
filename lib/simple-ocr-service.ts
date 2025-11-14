@@ -41,13 +41,9 @@ export class SimpleOCRService {
     if (!this.worker) {
       logger.info(`Initializing Tesseract worker with language: ${language}`);
 
-      // Configure worker for Node.js environment
+      // Create worker with default configuration
+      // Tesseract.js will automatically detect the environment (Node.js vs browser)
       this.worker = await createWorker(language, 1, {
-        // Disable CORS and use local worker files for Node.js
-        workerPath: typeof window === 'undefined'
-          ? require.resolve('tesseract.js/src/worker-script/node/index.js')
-          : undefined,
-        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
         logger: (m) => {
           if (m.status === 'recognizing text') {
             logger.debug(`OCR Progress: ${Math.round(m.progress * 100)}%`);
