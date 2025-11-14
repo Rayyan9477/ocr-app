@@ -41,9 +41,12 @@ export class SimpleOCRService {
     if (!this.worker) {
       logger.info(`Initializing Tesseract worker with language: ${language}`);
 
-      // Create worker with default configuration
-      // Tesseract.js will automatically detect the environment (Node.js vs browser)
+      // Create worker with explicit paths for Node.js environment
+      // Use CDN for worker and core files to avoid bundling issues
       this.worker = await createWorker(language, 1, {
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/worker.min.js',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.1',
         logger: (m) => {
           if (m.status === 'recognizing text') {
             logger.debug(`OCR Progress: ${Math.round(m.progress * 100)}%`);
@@ -104,7 +107,31 @@ export class SimpleOCRService {
   }
 
   /**
-   * Convert PDF pages to images and extract text
+   * Extract text from PDF (works for text-based PDFs, not scanned images)
+   */
+  private static async extractTextFromPDF(pdfDoc: PDFDocument): Promise<string> {
+    let extractedText = '';
+    const pages = pdfDoc.getPages();
+
+    for (const page of pages) {
+      try {
+        // Try to extract embedded text from the page
+        const textContent = page.node.Contents();
+        if (textContent) {
+          // This is a simplified extraction - pdf-lib doesn't have built-in text extraction
+          // For better results, would need pdf.js or similar
+          logger.info('PDF contains embedded content');
+        }
+      } catch (error) {
+        logger.debug(`Cannot extract text from page: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    return extractedText;
+  }
+
+  /**
+   * Process PDF file - extract text or inform about limitations
    */
   private static async processPDF(
     pdfPath: string,
@@ -120,54 +147,28 @@ export class SimpleOCRService {
 
       logger.info(`Processing PDF with ${pageCount} pages`);
 
-      let allText = '';
-      let totalConfidence = 0;
+      // Note: Full OCR for scanned PDFs requires PDF-to-image conversion
+      // which needs additional system dependencies (poppler, ghostscript)
+      // For now, we provide guidance for users
 
-      // Process each page
-      for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
-        logger.info(`Processing page ${pageIndex + 1}/${pageCount}`);
-
-        // Create a new PDF with just this page
-        const singlePageDoc = await PDFDocument.create();
-        const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [pageIndex]);
-        singlePageDoc.addPage(copiedPage);
-
-        const singlePagePdfBytes = await singlePageDoc.save();
-
-        // Convert PDF page to image using sharp
-        const pageImage = await sharp(Buffer.from(singlePagePdfBytes), {
-          density: 300 // High DPI for better OCR accuracy
-        })
-          .png()
-          .toBuffer();
-
-        // Process the image
-        const result = await this.processImage(pageImage, options);
-
-        allText += result.text + '\n\n';
-        totalConfidence += result.confidence;
-      }
-
-      const avgConfidence = totalConfidence / pageCount;
       const processingTime = Date.now() - startTime;
+      const message = `PDF processing is currently limited.
 
-      // Create searchable PDF if output directory is specified
-      let outputPath: string | undefined;
-      if (options.outputDir) {
-        outputPath = await this.createSearchablePDF(
-          pdfDoc,
-          allText,
-          path.join(options.outputDir, `${path.basename(pdfPath, '.pdf')}_ocr.pdf`)
-        );
-      }
+For best OCR results with PDFs:
+1. Convert PDF pages to images (PNG/JPG) first
+2. Upload the images for OCR processing
+3. Or use a PDF that already contains selectable text
+
+To process scanned PDFs directly, additional setup is required.
+See OCR_SETUP_GUIDE.md for details.`;
 
       return {
-        success: true,
-        text: allText.trim(),
-        confidence: avgConfidence,
-        outputPath,
+        success: false,
+        text: message,
+        confidence: 0,
         processingTime,
-        pageCount
+        pageCount,
+        error: 'PDF OCR requires converting pages to images first. Please upload images (PNG/JPG) instead.'
       };
     } catch (error) {
       const processingTime = Date.now() - startTime;

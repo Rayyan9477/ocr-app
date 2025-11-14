@@ -153,6 +153,11 @@ export async function GET() {
       },
       dependencies,
       directories,
+      // Top-level status fields for frontend compatibility
+      allRequiredAvailable: allRequired,
+      allDependenciesAvailable: allAvailable,
+      directoriesOk,
+      ready: allRequired && directoriesOk,
       status: {
         allRequiredAvailable: allRequired,
         directoriesOk,

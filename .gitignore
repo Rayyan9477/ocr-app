@@ -97,4 +97,5 @@ __pycache__/
 nanovlm_env
 nanovlm_env/
 *.bak
-*.fix
+*.fixuploads/*.png
+uploads/*.pdf
