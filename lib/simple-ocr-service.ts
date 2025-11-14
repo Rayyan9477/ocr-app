@@ -40,7 +40,20 @@ export class SimpleOCRService {
   private static async getWorker(language: string = 'eng') {
     if (!this.worker) {
       logger.info(`Initializing Tesseract worker with language: ${language}`);
-      this.worker = await createWorker(language);
+
+      // Configure worker for Node.js environment
+      this.worker = await createWorker(language, 1, {
+        // Disable CORS and use local worker files for Node.js
+        workerPath: typeof window === 'undefined'
+          ? require.resolve('tesseract.js/src/worker-script/node/index.js')
+          : undefined,
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+        logger: (m) => {
+          if (m.status === 'recognizing text') {
+            logger.debug(`OCR Progress: ${Math.round(m.progress * 100)}%`);
+          }
+        }
+      });
     }
     return this.worker;
   }
