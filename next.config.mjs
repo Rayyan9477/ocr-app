@@ -4,7 +4,8 @@ const nextConfig = {
   output: 'standalone',
   
   // Essential for Azure App Service
-  serverExternalPackages: ['@tensorflow/tfjs-node'],
+  // Exclude packages that need native module resolution from webpack bundling
+  serverExternalPackages: ['@tensorflow/tfjs-node', 'tesseract.js', 'tesseract.js-core', 'sharp'],
   poweredByHeader: false,
   
   experimental: {

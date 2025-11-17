@@ -139,6 +139,8 @@ export async function GET() {
       .filter(dep => dep.type === 'required')
       .every(dep => dep.available);
 
+    const allAvailable = dependencies.every(dep => dep.available);
+
     const directoriesOk = directories.every(dir => dir.writable);
 
     return createJsonResponse({

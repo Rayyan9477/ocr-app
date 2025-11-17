@@ -11,7 +11,8 @@
     "test": "jest --passWithNoTests --verbose",
     "test:watch": "jest --watch --passWithNoTests",
     "clean": "rimraf .next node_modules",
-    "postinstall": "echo 'Install completed - Simple OCR ready to use'",
+    "postinstall": "npm run setup:tesseract && echo 'Install completed - Simple OCR ready to use'",
+    "setup:tesseract": "mkdir -p public/tesseract && cp node_modules/tesseract.js/dist/worker.min.js public/tesseract/ && cp node_modules/tesseract.js-core/tesseract-core.wasm.js public/tesseract/ 2>/dev/null || true",
     "setup:tessdata": "node scripts/setup-tessdata.mjs"
   },
   "dependencies": {

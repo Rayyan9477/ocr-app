@@ -41,12 +41,14 @@ export class SimpleOCRService {
     if (!this.worker) {
       logger.info(`Initializing Tesseract worker with language: ${language}`);
 
-      // Create worker with explicit paths for Node.js environment
-      // Use CDN for worker and core files to avoid bundling issues
+      // Use local language files from public directory
+      const publicDir = path.resolve(process.cwd(), 'public');
+      const langPath = `file://${publicDir}/tessdata`;
+
+      // Let Tesseract.js auto-detect Node.js environment and use appropriate worker
+      // No need to specify workerPath or corePath for server-side usage
       this.worker = await createWorker(language, 1, {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/worker.min.js',
-        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.1',
+        langPath,
         logger: (m) => {
           if (m.status === 'recognizing text') {
             logger.debug(`OCR Progress: ${Math.round(m.progress * 100)}%`);
